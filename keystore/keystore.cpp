@@ -1295,7 +1295,7 @@ static const State STATE_ANY = (State) 0;
 static struct action {
     ResponseCode (*run)(KeyStore* keyStore, int sock, uid_t uid, Value* param1, Value* param2,
             Value* param3);
-    int8_t code;
+    command_code_t code;
     State state;
     uint32_t perm;
     int lengths[MAX_PARAM];
@@ -1327,11 +1327,11 @@ static struct user {
     uid_t euid;
     uint32_t perms;
 } users[] = {
-    {AID_SYSTEM,   ~0,         ~0},
+    {AID_SYSTEM,   (uid_t)~0,  (uint32_t)~0},
     {AID_VPN,      AID_SYSTEM, P_GET | P_SIGN | P_VERIFY },
     {AID_WIFI,     AID_SYSTEM, P_GET | P_SIGN | P_VERIFY },
     {AID_ROOT,     AID_SYSTEM, P_GET},
-    {~0,           ~0,         P_TEST | P_GET | P_INSERT | P_DELETE | P_EXIST | P_SAW |
+    {(uid_t)~0,    (uid_t)~0,  P_TEST | P_GET | P_INSERT | P_DELETE | P_EXIST | P_SAW |
                                P_SIGN | P_VERIFY},
 };
 
