@@ -607,6 +607,32 @@ int32_t KeyStoreService::generateKey(const String16& name, const KeymasterArgume
     const auto* device = mKeyStore->getDevice();
     const auto* fallback = mKeyStore->getFallbackDevice();
     std::vector<keymaster_key_param_t> opParams(params.params);
+
+    for (auto param: params.params)
+    {
+        switch (param.tag) {
+            case KM_TAG_SOTER_AUTO_SIGNED_COMMON_KEY_WHEN_GET_PUBLIC_KEY:
+            {
+                uid_t callingUid = IPCThreadState::self()->getCallingUid();
+                Blob keyBlob;
+                String8 name8(reinterpret_cast<const char*>(param.blob.data),
+                                                    param.blob.data_length);
+                ResponseCode responseCode = mKeyStore->getKeyForName(&keyBlob,
+                    name8, callingUid, TYPE_KEYMASTER_10);
+                if (responseCode != ::NO_ERROR) {
+                    return responseCode;
+                }
+                opParams.push_back(keymaster_param_blob(
+                        KM_TAG_SOTER_AUTO_SIGNED_COMMON_KEY_WHEN_GET_PUBLIC_KEY_BLOB,
+                        keyBlob.getValue(),
+                        keyBlob.getLength()));
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
     const keymaster_key_param_set_t inParams = {opParams.data(), opParams.size()};
     if (device == NULL) {
         return ::SYSTEM_ERROR;
