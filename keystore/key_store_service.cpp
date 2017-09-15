@@ -1692,6 +1692,13 @@ int32_t KeyStoreService::upgradeKeyBlob(const String16& name, uid_t uid,
 
     String8 filename(mKeyStore->getKeyNameForUidWithDir(name8, uid, ::TYPE_KEYMASTER_10));
     rc = mKeyStore->del(filename.string(), ::TYPE_ANY, get_user_id(uid));
+    if (rc == ::KEY_NOT_FOUND){
+        uid_t euid = get_keystore_euid(uid);
+        if ((euid != uid) && (euid == AID_WIFI)) {
+            filename=mKeyStore->getKeyNameForUidWithDir(name8, euid, ::TYPE_KEYMASTER_10);
+            rc=mKeyStore->del(filename.string(), ::TYPE_ANY, get_user_id(euid));
+        }
+    }
     if (rc != ::NO_ERROR) {
         return rc;
     }
