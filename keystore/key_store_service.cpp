@@ -526,7 +526,7 @@ String16 KeyStoreService::grant(const String16& name, int32_t granteeUid) {
         return String16();
     }
 
-    return String16(mKeyStore->addGrant(filename.string(), String8(name).string(), granteeUid).c_str());
+    return String16(mKeyStore->addGrant(String8(name).string(), granteeUid, callingUid).c_str());
 }
 
 KeyStoreServiceReturnCode KeyStoreService::ungrant(const String16& name, int32_t granteeUid) {
@@ -543,8 +543,8 @@ KeyStoreServiceReturnCode KeyStoreService::ungrant(const String16& name, int32_t
         return (errno != ENOENT) ? ResponseCode::SYSTEM_ERROR : ResponseCode::KEY_NOT_FOUND;
     }
 
-    return mKeyStore->removeGrant(filename.string(), granteeUid) ? ResponseCode::NO_ERROR
-                                                                 : ResponseCode::KEY_NOT_FOUND;
+    return mKeyStore->removeGrant(name8, granteeUid) ? ResponseCode::NO_ERROR
+                                                     : ResponseCode::KEY_NOT_FOUND;
 }
 
 int64_t KeyStoreService::getmtime(const String16& name, int32_t uid) {
@@ -800,7 +800,26 @@ KeyStoreService::getKeyCharacteristics(const String16& name, const hidl_vec<uint
 
     KeyStoreServiceReturnCode rc =
         mKeyStore->getKeyForName(&keyBlob, name8, targetUid, TYPE_KEYMASTER_10);
-    if (!rc.isOk()) {
+    if (rc == ResponseCode::UNINITIALIZED) {
+        /*
+         * If we fail reading the blob because the master key is missing we try to retrieve the
+         * key characteristics from the characteristics file. This happens when auth-bound
+         * keys are used after a screen lock has been removed by the user.
+         */
+        rc = mKeyStore->getKeyForName(&keyBlob, name8, targetUid, TYPE_KEY_CHARACTERISTICS);
+        if (!rc.isOk()) {
+            return rc;
+        }
+        AuthorizationSet keyCharacteristics;
+        // TODO write one shot stream buffer to avoid copying (twice here)
+        std::string charBuffer(reinterpret_cast<const char*>(keyBlob.getValue()),
+                               keyBlob.getLength());
+        std::stringstream charStream(charBuffer);
+        keyCharacteristics.Deserialize(&charStream);
+
+        outCharacteristics->softwareEnforced = keyCharacteristics.hidl_data();
+        return rc;
+    } else if (!rc.isOk()) {
         return rc;
     }
 
@@ -1078,7 +1097,10 @@ void KeyStoreService::begin(const sp<IBinder>& appToken, const String16& name, K
     // If per-operation auth is needed we need to begin the operation and
     // the client will need to authorize that operation before calling
     // update. Any other auth issues stop here.
-    if (!authResult.isOk() && authResult != ResponseCode::OP_AUTH_NEEDED) return;
+    if (!authResult.isOk() && authResult != ResponseCode::OP_AUTH_NEEDED) {
+        result->resultCode = authResult;
+        return;
+    }
 
     addAuthTokenToParams(&opParams, authToken);
 
