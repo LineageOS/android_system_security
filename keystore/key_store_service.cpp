@@ -595,7 +595,8 @@ Status KeyStoreService::get_pubkey(const String16& name, ::std::vector<uint8_t>*
 Status KeyStoreService::grant(const String16& name, int32_t granteeUid,
                               ::android::String16* aidl_return) {
     uid_t callingUid = IPCThreadState::self()->getCallingUid();
-    auto result = checkBinderPermissionAndKeystoreState(P_GRANT);
+    auto result =
+        checkBinderPermissionAndKeystoreState(P_GRANT, /*targetUid=*/-1, /*checkUnlocked=*/false);
     if (!result.isOk()) {
         *aidl_return = String16();
         return Status::ok();
@@ -616,7 +617,8 @@ Status KeyStoreService::grant(const String16& name, int32_t granteeUid,
 
 Status KeyStoreService::ungrant(const String16& name, int32_t granteeUid, int32_t* aidl_return) {
     uid_t callingUid = IPCThreadState::self()->getCallingUid();
-    KeyStoreServiceReturnCode result = checkBinderPermissionAndKeystoreState(P_GRANT);
+    KeyStoreServiceReturnCode result =
+        checkBinderPermissionAndKeystoreState(P_GRANT, /*targetUid=*/-1, /*checkUnlocked=*/false);
     if (!result.isOk()) {
         *aidl_return = static_cast<int32_t>(result);
         return Status::ok();
@@ -1438,8 +1440,9 @@ Status KeyStoreService::finish(const sp<IBinder>& token, const KeymasterArgument
         op.device->finish(op.handle, inParams,
                           ::std::vector<uint8_t>() /* TODO(swillden): wire up input to finish() */,
                           signature, authToken, VerificationToken(), hidlCb));
-    mOperationMap.removeOperation(token);
+    // removeOperation() will free the memory 'op' used, so the order is important
     mAuthTokenTable.MarkCompleted(op.handle);
+    mOperationMap.removeOperation(token);
 
     // just a reminder: on success result->resultCode was set in the callback. So we only overwrite
     // it if there was a communication error indicated by the ErrorCode.
