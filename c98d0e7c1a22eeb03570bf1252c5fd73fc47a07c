@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "afaaf361_4981cbc2",
+        "filename": "keystore/keymaster_enforcement.cpp",
+        "patchSetId": 1
+      },
+      "lineNbr": 355,
+      "author": {
+        "id": 17257
+      },
+      "writtenOn": "2018-07-31T06:25:19Z",
+      "side": 1,
+      "message": "I don\u0027t think this is a necessary change?",
+      "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
+      "unresolved": false
+    }
+  ]
+}
