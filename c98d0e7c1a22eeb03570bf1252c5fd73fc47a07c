@@ -16,6 +16,24 @@
       "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
       "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "9e57ff88_a9f7d681",
+        "filename": "keystore/keymaster_enforcement.cpp",
+        "patchSetId": 1
+      },
+      "lineNbr": 355,
+      "author": {
+        "id": 18568
+      },
+      "writtenOn": "2018-07-31T08:03:06Z",
+      "side": 1,
+      "message": "maybe?i directly picked whole commit from caf",
+      "parentUuid": "afaaf361_4981cbc2",
+      "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
+      "unresolved": false
     }
   ]
 }
