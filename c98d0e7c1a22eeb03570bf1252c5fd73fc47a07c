@@ -34,6 +34,24 @@
       "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
       "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "427a7daf_c6f3c1e0",
+        "filename": "keystore/keymaster_enforcement.cpp",
+        "patchSetId": 1
+      },
+      "lineNbr": 355,
+      "author": {
+        "id": 11883
+      },
+      "writtenOn": "2018-07-31T13:12:40Z",
+      "side": 1,
+      "message": "It\u0027s used\nKM_TAG_SOTER_AUTO_SIGNED_COMMON_KEY_WHEN_GET_PUBLIC_KEY_BLOB is casted to Tag and then this method is used ...",
+      "parentUuid": "9e57ff88_a9f7d681",
+      "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
+      "unresolved": false
     }
   ]
 }
