@@ -52,6 +52,24 @@
       "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
       "unresolved": false
+    },
+    {
+      "key": {
+        "uuid": "78c380dd_52ff3c21",
+        "filename": "keystore/keymaster_enforcement.cpp",
+        "patchSetId": 1
+      },
+      "lineNbr": 355,
+      "author": {
+        "id": 18568
+      },
+      "writtenOn": "2018-08-01T10:25:46Z",
+      "side": 1,
+      "message": "i removed this and soter stuffs still working..",
+      "parentUuid": "427a7daf_c6f3c1e0",
+      "revId": "c98d0e7c1a22eeb03570bf1252c5fd73fc47a07c",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71",
+      "unresolved": false
     }
   ]
 }
