@@ -14,6 +14,7 @@
 
 //! This crate implements the Android Keystore 2.0 service.
 
+pub mod apc;
 pub mod auth_token_handler;
 pub mod database;
 pub mod enforcements;
@@ -21,6 +22,7 @@ pub mod error;
 pub mod globals;
 /// Internal Representation of Key Parameter and convenience functions.
 pub mod key_parameter;
+pub mod legacy_blob;
 pub mod operation;
 pub mod permission;
 pub mod security_level;
