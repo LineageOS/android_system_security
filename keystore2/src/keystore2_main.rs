@@ -16,12 +16,17 @@
 
 use binder::Interface;
 use keystore2::apc::ApcManager;
+use keystore2::authorization::AuthorizationManager;
+use keystore2::background_task_handler::Message;
+use keystore2::globals::{BACKGROUND_TASK_HANDLER, ENFORCEMENTS};
 use keystore2::service::KeystoreService;
 use log::{error, info};
 use std::panic;
+use std::sync::mpsc::channel;
 
 static KS2_SERVICE_NAME: &str = "android.system.keystore2";
 static APC_SERVICE_NAME: &str = "android.security.apc";
+static AUTHORIZATION_SERVICE_NAME: &str = "android.security.authorization";
 
 /// Keystore 2.0 takes one argument which is a path indicating its designated working directory.
 fn main() {
@@ -50,6 +55,17 @@ fn main() {
         panic!("Must specify a working directory.");
     }
 
+    // initialize the channel via which the enforcement module and background task handler module
+    // communicate, and hand over the sender and receiver ends to the respective objects.
+    let (sender, receiver) = channel::<Message>();
+    ENFORCEMENTS.set_sender_to_bth(sender);
+    BACKGROUND_TASK_HANDLER.start_bth(receiver).unwrap_or_else(|e| {
+        panic!("Failed to start background task handler because of {:?}.", e);
+    });
+
+    info!("Starting thread pool now.");
+    binder::ProcessState::start_thread_pool();
+
     let ks_service = KeystoreService::new_native_binder().unwrap_or_else(|e| {
         panic!("Failed to create service {} because of {:?}.", KS2_SERVICE_NAME, e);
     });
@@ -64,10 +80,15 @@ fn main() {
         panic!("Failed to register service {} because of {:?}.", APC_SERVICE_NAME, e);
     });
 
-    info!("Successfully registered Keystore 2.0 service.");
+    let authorization_service = AuthorizationManager::new_native_binder().unwrap_or_else(|e| {
+        panic!("Failed to create service {} because of {:?}.", AUTHORIZATION_SERVICE_NAME, e);
+    });
+    binder::add_service(AUTHORIZATION_SERVICE_NAME, authorization_service.as_binder())
+        .unwrap_or_else(|e| {
+            panic!("Failed to register service {} because of {:?}.", AUTHORIZATION_SERVICE_NAME, e);
+        });
 
-    info!("Starting thread pool now.");
-    binder::ProcessState::start_thread_pool();
+    info!("Successfully registered Keystore 2.0 service.");
 
     info!("Joining thread pool now.");
     binder::ProcessState::join_thread_pool();
