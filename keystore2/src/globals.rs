@@ -16,20 +16,56 @@
 //! database connections and connections to services that Keystore needs
 //! to talk to.
 
+use crate::async_task::AsyncTask;
+use crate::background_task_handler::BackgroundTaskHandler;
+use crate::enforcements::Enforcements;
+use crate::gc::Gc;
+use crate::legacy_blob::LegacyBlobLoader;
 use crate::super_key::SuperKeyManager;
 use crate::utils::Asp;
 use crate::{
     database::KeystoreDB,
-    error::{map_binder_status_code, Error, ErrorCode},
+    error::{map_binder_status, map_binder_status_code, Error, ErrorCode},
 };
-use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
-};
+use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
+use android_hardware_security_keymint::binder::StatusCode;
+use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::{Context, Result};
 use lazy_static::lazy_static;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::{cell::RefCell, sync::Once};
+
+static DB_INIT: Once = Once::new();
+
+/// Open a connection to the Keystore 2.0 database. This is called during the initialization of
+/// the thread local DB field. It should never be called directly. The first time this is called
+/// we also call KeystoreDB::cleanup_leftovers to restore the key lifecycle invariant. See the
+/// documentation of cleanup_leftovers for more details.
+fn create_thread_local_db() -> KeystoreDB {
+    let mut db = KeystoreDB::new(
+        // Keystore changes to the database directory on startup
+        // (see keystore2_main.rs).
+        &std::env::current_dir().expect("Could not get the current working directory."),
+    )
+    .expect("Failed to open database.");
+    DB_INIT.call_once(|| {
+        log::info!("Touching Keystore 2.0 database for this first time since boot.");
+        log::info!("Calling cleanup leftovers.");
+        let n = db.cleanup_leftovers().expect("Failed to cleanup database on startup.");
+        if n != 0 {
+            log::info!(
+                concat!(
+                    "Cleaned up {} failed entries. ",
+                    "This indicates keystore crashed during key generation."
+                ),
+                n
+            );
+        }
+        Gc::notify_gc();
+    });
+    db
+}
 
 thread_local! {
     /// Database connections are not thread safe, but connecting to the
@@ -37,14 +73,7 @@ thread_local! {
     /// used by only one thread. So we store one database connection per
     /// thread in this thread local key.
     pub static DB: RefCell<KeystoreDB> =
-            RefCell::new(
-                KeystoreDB::new(
-                    // Keystore changes to the database directory on startup
-                    // (see keystor2_main.rs).
-                    &std::env::current_dir()
-                    .expect("Could not get the current working directory.")
-                )
-                .expect("Failed to open database."));
+            RefCell::new(create_thread_local_db());
 }
 
 lazy_static! {
@@ -52,11 +81,28 @@ lazy_static! {
     pub static ref SUPER_KEY: SuperKeyManager = Default::default();
     /// Map of KeyMint devices.
     static ref KEY_MINT_DEVICES: Mutex<HashMap<SecurityLevel, Asp>> = Default::default();
+    /// Timestamp service.
+    static ref TIME_STAMP_DEVICE: Mutex<Option<Asp>> = Default::default();
+    /// A single on-demand worker thread that handles deferred tasks with two different
+    /// priorities.
+    pub static ref ASYNC_TASK: AsyncTask = Default::default();
+    /// Singeleton for enforcements.
+    pub static ref ENFORCEMENTS: Enforcements = Enforcements::new();
+    /// Background task handler is initialized and exists globally.
+    /// The other modules (e.g. enforcements) communicate with it via a channel initialized during
+    /// keystore startup.
+    pub static ref BACKGROUND_TASK_HANDLER: BackgroundTaskHandler = BackgroundTaskHandler::new();
+    /// LegacyBlobLoader is initialized and exists globally.
+    /// The same directory used by the database is used by the LegacyBlobLoader as well.
+    pub static ref LEGACY_BLOB_LOADER: LegacyBlobLoader = LegacyBlobLoader::new(
+        &std::env::current_dir().expect("Could not get the current working directory."));
 }
 
 static KEYMINT_SERVICE_NAME: &str = "android.hardware.security.keymint.IKeyMintDevice";
 
 /// Make a new connection to a KeyMint device of the given security level.
+/// If no native KeyMint device can be found this function also brings
+/// up the compatibility service and attempts to connect to the legacy wrapper.
 fn connect_keymint(security_level: SecurityLevel) -> Result<Asp> {
     let service_name = match security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => format!("{}/default", KEYMINT_SERVICE_NAME),
@@ -67,9 +113,29 @@ fn connect_keymint(security_level: SecurityLevel) -> Result<Asp> {
         }
     };
 
-    let keymint: Box<dyn IKeyMintDevice> =
-        map_binder_status_code(binder::get_interface(&service_name))
-            .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?;
+    let keymint = map_binder_status_code(binder::get_interface(&service_name))
+        .context("In connect_keymint: Trying to connect to genuine KeyMint service.")
+        .or_else(|e| {
+            match e.root_cause().downcast_ref::<Error>() {
+                Some(Error::BinderTransaction(StatusCode::NAME_NOT_FOUND)) => {
+                    // This is a no-op if it was called before.
+                    keystore2_km_compat::add_keymint_device_service();
+
+                    let keystore_compat_service: Box<dyn IKeystoreCompatService> =
+                        map_binder_status_code(binder::get_interface("android.security.compat"))
+                            .context("In connect_keymint: Trying to connect to compat service.")?;
+                    map_binder_status(keystore_compat_service.getKeyMintDevice(security_level))
+                        .map_err(|e| match e {
+                            Error::BinderTransaction(StatusCode::NAME_NOT_FOUND) => {
+                                Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)
+                            }
+                            e => e,
+                        })
+                        .context("In connext_keymint: Trying to get Legacy wrapper.")
+                }
+                _ => Err(e),
+            }
+        })?;
 
     Ok(Asp::new(keymint.as_binder()))
 }
@@ -81,11 +147,58 @@ pub fn get_keymint_device(security_level: SecurityLevel) -> Result<Asp> {
     if let Some(dev) = devices_map.get(&security_level) {
         Ok(dev.clone())
     } else {
-        let dev = connect_keymint(security_level).map_err(|e| {
-            anyhow::anyhow!(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-                .context(format!("In get_keymint_device: {:?}", e))
-        })?;
+        let dev = connect_keymint(security_level).context("In get_keymint_device.")?;
         devices_map.insert(security_level, dev.clone());
+        Ok(dev)
+    }
+}
+
+static TIME_STAMP_SERVICE_NAME: &str = "android.hardware.security.secureclock.ISecureClock";
+
+/// Make a new connection to a secure clock service.
+/// If no native SecureClock device can be found brings up the compatibility service and attempts
+/// to connect to the legacy wrapper.
+fn connect_secureclock() -> Result<Asp> {
+    let secureclock = map_binder_status_code(binder::get_interface(TIME_STAMP_SERVICE_NAME))
+        .context("In connect_secureclock: Trying to connect to genuine secure clock service.")
+        .or_else(|e| {
+            match e.root_cause().downcast_ref::<Error>() {
+                Some(Error::BinderTransaction(StatusCode::NAME_NOT_FOUND)) => {
+                    // This is a no-op if it was called before.
+                    keystore2_km_compat::add_keymint_device_service();
+
+                    let keystore_compat_service: Box<dyn IKeystoreCompatService> =
+                        map_binder_status_code(binder::get_interface("android.security.compat"))
+                            .context(
+                                "In connect_secureclock: Trying to connect to compat service.",
+                            )?;
+
+                    // Legacy secure clock services were only implemented by TEE.
+                    map_binder_status(keystore_compat_service.getSecureClock())
+                        .map_err(|e| match e {
+                            Error::BinderTransaction(StatusCode::NAME_NOT_FOUND) => {
+                                Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)
+                            }
+                            e => e,
+                        })
+                        .context("In connect_secureclock: Trying to get Legacy wrapper.")
+                }
+                _ => Err(e),
+            }
+        })?;
+
+    Ok(Asp::new(secureclock.as_binder()))
+}
+
+/// Get the timestamp service that verifies auth token timeliness towards security levels with
+/// different clocks.
+pub fn get_timestamp_service() -> Result<Asp> {
+    let mut ts_device = TIME_STAMP_DEVICE.lock().unwrap();
+    if let Some(dev) = &*ts_device {
+        Ok(dev.clone())
+    } else {
+        let dev = connect_secureclock().context("In get_timestamp_service.")?;
+        *ts_device = Some(dev.clone());
         Ok(dev)
     }
 }

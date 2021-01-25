@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//TODO: remove this after implementing the methods.
-#![allow(dead_code)]
-
 //! This is the Keystore 2.0 Enforcements module.
 // TODO: more description to follow.
 use crate::auth_token_handler::AuthTokenHandler;
+use crate::background_task_handler::Message;
 use crate::database::AuthTokenEntry;
 use crate::error::Error as KeystoreError;
 use crate::globals::DB;
@@ -25,11 +23,15 @@ use crate::key_parameter::{KeyParameter, KeyParameterValue};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, ErrorCode::ErrorCode as Ec, HardwareAuthToken::HardwareAuthToken,
     HardwareAuthenticatorType::HardwareAuthenticatorType, KeyPurpose::KeyPurpose,
-    SecurityLevel::SecurityLevel, Tag::Tag, Timestamp::Timestamp,
+    SecurityLevel::SecurityLevel, Tag::Tag,
+};
+use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
+    TimeStampToken::TimeStampToken, Timestamp::Timestamp,
 };
 use android_system_keystore2::aidl::android::system::keystore2::OperationChallenge::OperationChallenge;
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -41,25 +43,40 @@ pub struct Enforcements {
     // This maps the operation challenge to an optional auth token, to maintain op-auth tokens
     // in-memory, until they are picked up and given to the operation by authorise_update_finish().
     op_auth_map: Mutex<HashMap<i64, Option<HardwareAuthToken>>>,
+    // sender end of the channel via which the enforcement module communicates with the
+    // background task handler (bth). This is of type Mutex in an Option because it is initialized
+    // after the global enforcement object is created.
+    sender_to_bth: Mutex<Option<Sender<Message>>>,
 }
 
 impl Enforcements {
-    /// Creates an enforcement object with the two data structures it holds.
+    /// Creates an enforcement object with the two data structures it holds and the sender as None.
     pub fn new() -> Self {
         Enforcements {
             device_unlocked_set: Mutex::new(HashSet::new()),
             op_auth_map: Mutex::new(HashMap::new()),
+            sender_to_bth: Mutex::new(None),
         }
+    }
+
+    /// Initialize the sender_to_bth field, using the given sender end of a channel.
+    pub fn set_sender_to_bth(&self, sender: Sender<Message>) {
+        // It is ok to unwrap here because there is no chance of poisoning this mutex.
+        let mut sender_guard = self.sender_to_bth.lock().unwrap();
+        *sender_guard = Some(sender);
     }
 
     /// Checks if update or finish calls are authorized. If the operation is based on per-op key,
     /// try to receive the auth token from the op_auth_map. We assume that by the time update/finish
     /// is called, the auth token has been delivered to keystore. Therefore, we do not wait for it
     /// and if the auth token is not found in the map, an error is returned.
+    /// This method is called only during the first call to update or if finish is called right
+    /// after create operation, because the operation caches the authorization decisions and tokens
+    /// from previous calls to enforcement module.
     pub fn authorize_update_or_finish(
         &self,
         key_params: &[KeyParameter],
-        op_challenge: Option<OperationChallenge>,
+        op_challenge: Option<&OperationChallenge>,
     ) -> Result<AuthTokenHandler> {
         let mut user_auth_type: Option<HardwareAuthenticatorType> = None;
         let mut user_secure_ids = Vec::<i64>::new();
@@ -137,8 +154,8 @@ impl Enforcements {
     /// With regard to auth tokens, the following steps are taken:
     /// If the key is time-bound, find a matching auth token from the database.
     /// If the above step is successful, and if the security level is STRONGBOX, return a
-    /// VerificationRequired variant of the AuthTokenHandler with the found auth token to signal
-    /// the operation that it may need to obtain a verification token from TEE KeyMint.
+    /// TimestampRequired variant of the AuthTokenHandler with the found auth token to signal
+    /// the operation that it may need to obtain a timestamp token from TEE KeyMint.
     /// If the security level is not STRONGBOX, return a Token variant of the AuthTokenHandler with
     /// the found auth token to signal the operation that no more authorization required.
     /// If the key is per-op, return an OpAuthRequired variant of the AuthTokenHandler to signal
@@ -150,8 +167,7 @@ impl Enforcements {
         purpose: KeyPurpose,
         key_params: &[KeyParameter],
         op_params: &[KeyParameter],
-        // security_level will be used in the next CL
-        _security_level: SecurityLevel,
+        security_level: SecurityLevel,
     ) -> Result<AuthTokenHandler> {
         match purpose {
             // Allow SIGN, DECRYPT for both symmetric and asymmetric keys.
@@ -188,11 +204,14 @@ impl Enforcements {
         // reduce the number of for loops on key parameters from 3 to 1, compared to legacy keystore
         let mut key_purpose_authorized: bool = false;
         let mut is_time_out_key: bool = false;
-        let mut auth_type: Option<HardwareAuthenticatorType> = None;
+        let mut user_auth_type: Option<HardwareAuthenticatorType> = None;
         let mut no_auth_required: bool = false;
         let mut caller_nonce_allowed = false;
         let mut user_id: i32 = -1;
         let mut user_secure_ids = Vec::<i64>::new();
+        let mut key_time_out: Option<i64> = None;
+        let mut allow_while_on_body = false;
+        let mut unlocked_device_required = false;
 
         // iterate through key parameters, recording information we need for authorization
         // enforcements later, or enforcing authorizations in place, where applicable
@@ -201,11 +220,12 @@ impl Enforcements {
                 KeyParameterValue::NoAuthRequired => {
                     no_auth_required = true;
                 }
-                KeyParameterValue::AuthTimeout(_) => {
+                KeyParameterValue::AuthTimeout(t) => {
                     is_time_out_key = true;
+                    key_time_out = Some(*t as i64);
                 }
                 KeyParameterValue::HardwareAuthenticatorType(a) => {
-                    auth_type = Some(*a);
+                    user_auth_type = Some(*a);
                 }
                 KeyParameterValue::KeyPurpose(p) => {
                     // Note: if there can be multiple KeyPurpose key parameters (TODO: confirm this),
@@ -248,12 +268,10 @@ impl Enforcements {
                     user_id = *u;
                 }
                 KeyParameterValue::UnlockedDeviceRequired => {
-                    // check the device locked status. If locked, operations on the key are not
-                    // allowed.
-                    if self.is_device_locked(user_id) {
-                        return Err(KeystoreError::Km(Ec::DEVICE_LOCKED))
-                            .context("In authorize_create: device is locked.");
-                    }
+                    unlocked_device_required = true;
+                }
+                KeyParameterValue::AllowWhileOnBody => {
+                    allow_while_on_body = true;
                 }
                 // NOTE: as per offline discussion, sanitizing key parameters and rejecting
                 // create operation if any non-allowed tags are present, is not done in
@@ -279,8 +297,8 @@ impl Enforcements {
         }
 
         // if either of auth_type or secure_id is present and the other is not present, return error
-        if (auth_type.is_some() && user_secure_ids.is_empty())
-            || (auth_type.is_none() && !user_secure_ids.is_empty())
+        if (user_auth_type.is_some() && user_secure_ids.is_empty())
+            || (user_auth_type.is_none() && !user_secure_ids.is_empty())
         {
             return Err(KeystoreError::Km(Ec::KEY_USER_NOT_AUTHENTICATED)).context(
                 "In authorize_create: Auth required, but either auth type or secure ids
@@ -298,14 +316,48 @@ impl Enforcements {
             );
         }
 
+        if unlocked_device_required {
+            // check the device locked status. If locked, operations on the key are not
+            // allowed.
+            log::info!("Checking for lockd device of user {}.", user_id);
+            if self.is_device_locked(user_id) {
+                return Err(KeystoreError::Km(Ec::DEVICE_LOCKED))
+                    .context("In authorize_create: device is locked.");
+            }
+        }
+
         if !user_secure_ids.is_empty() {
-            // per op auth token
+            // key requiring authentication per operation
             if !is_time_out_key {
                 return Ok(AuthTokenHandler::OpAuthRequired);
             } else {
-                //time out token
-                // TODO: retrieve it from the database
-                // - in an upcoming CL
+                // key requiring time-out based authentication
+                let auth_token = DB
+                    .with::<_, Result<HardwareAuthToken>>(|db| {
+                        let mut db = db.borrow_mut();
+                        match (user_auth_type, key_time_out) {
+                            (Some(auth_type), Some(key_time_out)) => {
+                                let matching_entry = db
+                                    .find_timed_auth_token_entry(
+                                        &user_secure_ids,
+                                        auth_type,
+                                        key_time_out,
+                                        allow_while_on_body,
+                                    )
+                                    .context("Failed to find timed auth token.")?;
+                                Ok(matching_entry.get_auth_token())
+                            }
+                            (_, _) => Err(KeystoreError::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                                .context("Authenticator type and/or key time out is not given."),
+                        }
+                    })
+                    .context("In authorize_create.")?;
+
+                if security_level == SecurityLevel::STRONGBOX {
+                    return Ok(AuthTokenHandler::TimestampRequired(auth_token));
+                } else {
+                    return Ok(AuthTokenHandler::Token(auth_token, None));
+                }
             }
         }
 
@@ -377,11 +429,65 @@ impl Enforcements {
             .context("In add_auth_token.")?;
         Ok(())
     }
+
+    /// This allows adding an entry to the op_auth_map, indexed by the operation challenge.
+    /// This is to be called by create_operation, once it has received the operation challenge
+    /// from keymint for an operation whose authorization decision is OpAuthRequired, as signalled
+    /// by the AuthTokenHandler.
+    pub fn insert_to_op_auth_map(&self, op_challenge: i64) {
+        let mut op_auth_map_guard = self.op_auth_map.lock().unwrap();
+        op_auth_map_guard.insert(op_challenge, None);
+    }
+
+    /// Requests a timestamp token from the background task handler which will retrieve it from
+    /// Timestamp Service or TEE KeyMint.
+    /// Once the create_operation receives an operation challenge from KeyMint, if it has
+    /// previously received a TimestampRequired variant of AuthTokenHandler during
+    /// authorize_create_operation, it calls this method to obtain a TimeStampToken.
+    pub fn request_timestamp_token(
+        &self,
+        auth_token: HardwareAuthToken,
+        op_challenge: OperationChallenge,
+    ) -> Result<AuthTokenHandler> {
+        // create a channel for this particular operation
+        let (op_sender, op_receiver) = channel::<(HardwareAuthToken, TimeStampToken)>();
+        // it is ok to unwrap here because there is no way this mutex gets poisoned.
+        let sender_guard = self.sender_to_bth.lock().unwrap();
+        if let Some(sender) = &*sender_guard {
+            let sender_cloned = sender.clone();
+            drop(sender_guard);
+            sender_cloned
+                .send(Message::Inputs((auth_token, op_challenge, op_sender)))
+                .map_err(|_| KeystoreError::sys())
+                .context(
+                    "In request_timestamp_token. Sending a request for a timestamp token
+             failed.",
+                )?;
+        }
+        Ok(AuthTokenHandler::Channel(op_receiver))
+    }
 }
 
 impl Default for Enforcements {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for Enforcements {
+    fn drop(&mut self) {
+        let sender_guard = self.sender_to_bth.lock().unwrap();
+        if let Some(sender) = &*sender_guard {
+            let sender_cloned = sender.clone();
+            drop(sender_guard);
+            // TODO: Verify how best to handle the error in this case.
+            sender_cloned.send(Message::Shutdown).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to send shutdown message to background task handler because of {:?}.",
+                    e
+                );
+            });
+        }
     }
 }
 

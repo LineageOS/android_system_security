@@ -28,9 +28,12 @@ aidl_interface {
 }
 
 aidl_interface {
-    name: "android.security.authorizations",
-    srcs: [ "android/security/authorizations/*.aidl" ],
-    imports: [ "android.hardware.security.keymint" ],
+    name: "android.security.authorization",
+    srcs: [ "android/security/authorization/*.aidl" ],
+    imports: [
+        "android.hardware.security.keymint",
+        "android.hardware.security.secureclock",
+    ],
     unstable: true,
     backend: {
         java: {
@@ -56,5 +59,27 @@ aidl_interface {
         rust: {
             enabled: true,
         },
+    },
+}
+
+aidl_interface {
+    name: "android.security.compat",
+    srcs: [ "android/security/compat/*.aidl" ],
+    imports: [
+        "android.hardware.security.keymint",
+        "android.hardware.security.secureclock",
+        "android.hardware.security.sharedsecret",
+    ],
+    unstable: true,
+    backend: {
+        java: {
+            sdk_version: "module_current",
+        },
+        rust: {
+            enabled: true,
+        },
+        ndk: {
+            enabled: true,
+        }
     },
 }

@@ -12,32 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This crate implements the Android Keystore 2.0 service.
-#![recursion_limit = "256"]
+package android.security.authorization;
 
-pub mod apc;
-pub mod auth_token_handler;
-pub mod authorization;
-pub mod background_task_handler;
-pub mod database;
-pub mod enforcements;
-pub mod error;
-pub mod globals;
-/// Internal Representation of Key Parameter and convenience functions.
-pub mod key_parameter;
-pub mod legacy_blob;
-pub mod operation;
-pub mod permission;
-pub mod security_level;
-pub mod service;
-pub mod utils;
-
-mod async_task;
-mod db_utils;
-mod gc;
-mod super_key;
-
-#[cfg(test)]
-mod test {
-    pub mod utils;
+@Backing(type="int")
+enum LockScreenEvent {
+    UNLOCK = 0,
+    LOCK = 1,
 }
