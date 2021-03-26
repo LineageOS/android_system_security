@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
-
 //! This module implements methods to load legacy keystore key blob files.
 
 use crate::{
@@ -227,7 +225,7 @@ impl LegacyBlobLoader {
     const LENGTH_OFFSET: usize = 4 + Self::IV_SIZE + Self::GCM_TAG_LENGTH;
     const IV_OFFSET: usize = 4;
     const AEAD_TAG_OFFSET: usize = Self::IV_OFFSET + Self::IV_SIZE;
-    const DIGEST_OFFSET: usize = Self::IV_OFFSET + Self::IV_SIZE;
+    const _DIGEST_OFFSET: usize = Self::IV_OFFSET + Self::IV_SIZE;
 
     /// Construct a new LegacyBlobLoader with a root path of `path` relative to which it will
     /// expect legacy key blob files.
@@ -965,8 +963,7 @@ impl LegacyBlobLoader {
                             let decrypted = match key_manager
                                 .get_per_boot_key_by_user_id(uid_to_android_user(uid))
                             {
-                                Some(key) => aes_gcm_decrypt(data, iv, tag, &(key.get_key()))
-                                    .context(
+                                Some(key) => key.aes_gcm_decrypt(data, iv, tag).context(
                                     "In load_by_uid_alias: while trying to decrypt legacy blob.",
                                 )?,
                                 None => {
