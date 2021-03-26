@@ -216,7 +216,7 @@ impl LegacyBlobLoader {
     // flags (1 Byte)
     // info (1 Byte)
     // initialization_vector (16 Bytes)
-    // integrity (MD5 digest or gcb tag) (16 Bytes)
+    // integrity (MD5 digest or gcm tag) (16 Bytes)
     // length (4 Bytes)
     const COMMON_HEADER_SIZE: usize = 4 + Self::IV_SIZE + Self::GCM_TAG_LENGTH + 4;
 
@@ -965,8 +965,7 @@ impl LegacyBlobLoader {
                             let decrypted = match key_manager
                                 .get_per_boot_key_by_user_id(uid_to_android_user(uid))
                             {
-                                Some(key) => aes_gcm_decrypt(data, iv, tag, &(key.get_key()))
-                                    .context(
+                                Some(key) => key.aes_gcm_decrypt(data, iv, tag).context(
                                     "In load_by_uid_alias: while trying to decrypt legacy blob.",
                                 )?,
                                 None => {
@@ -1043,16 +1042,22 @@ impl LegacyBlobLoader {
 
         let blob = match blob {
             Some(blob) => match blob {
-                Blob {
-                    value: BlobValue::PwEncrypted { iv, tag, data, salt, key_size }, ..
-                } => {
-                    let key = pw
-                        .derive_key(Some(&salt), key_size)
-                        .context("In load_super_key: Failed to derive key from password.")?;
-                    let blob = aes_gcm_decrypt(&data, &iv, &tag, &key).context(
-                        "In load_super_key: while trying to decrypt legacy super key blob.",
-                    )?;
-                    Some(blob)
+                Blob { flags, value: BlobValue::PwEncrypted { iv, tag, data, salt, key_size } } => {
+                    if (flags & flags::ENCRYPTED) != 0 {
+                        let key = pw
+                            .derive_key(Some(&salt), key_size)
+                            .context("In load_super_key: Failed to derive key from password.")?;
+                        let blob = aes_gcm_decrypt(&data, &iv, &tag, &key).context(
+                            "In load_super_key: while trying to decrypt legacy super key blob.",
+                        )?;
+                        Some(blob)
+                    } else {
+                        // In 2019 we had some unencrypted super keys due to b/141955555.
+                        Some(
+                            data.try_into()
+                                .context("In load_super_key: Trying to convert key into ZVec")?,
+                        )
+                    }
                 }
                 _ => {
                     return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED)).context(
