@@ -47,10 +47,6 @@ fn main() {
     // Saying hi.
     info!("Keystore2 is starting.");
 
-    // Initialize the per boot database.
-    let _keep_me_alive = keystore2::database::KeystoreDB::keep_perboot_db_alive()
-        .expect("Failed to initialize the perboot database.");
-
     let mut args = std::env::args();
     args.next().expect("That's odd. How is there not even a first argument?");
 
@@ -60,7 +56,7 @@ fn main() {
     // For the ground truth check the service startup rule for init (typically in keystore2.rc).
     let id_rotation_state = if let Some(dir) = args.next() {
         let db_path = Path::new(&dir);
-        *keystore2::globals::DB_PATH.lock().expect("Could not lock DB_PATH.") =
+        *keystore2::globals::DB_PATH.write().expect("Could not lock DB_PATH.") =
             db_path.to_path_buf();
         IdRotationState::new(&db_path)
     } else {
@@ -125,7 +121,7 @@ fn main() {
     }
 
     let vpnprofilestore = VpnProfileStore::new_native_binder(
-        &keystore2::globals::DB_PATH.lock().expect("Could not get DB_PATH."),
+        &keystore2::globals::DB_PATH.read().expect("Could not get DB_PATH."),
     );
     binder::add_service(VPNPROFILESTORE_SERVICE_NAME, vpnprofilestore.as_binder()).unwrap_or_else(
         |e| {
