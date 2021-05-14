@@ -16,11 +16,10 @@ use keystore2_selinux::{check_access, Context};
 use nix::sched::sched_setaffinity;
 use nix::sched::CpuSet;
 use nix::unistd::getpid;
-use std::cmp::min;
 use std::thread;
 use std::{
     sync::{atomic::AtomicU8, atomic::Ordering, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy)]
@@ -73,122 +72,116 @@ fn test_concurrent_check_access() {
             .with_min_level(log::Level::Debug),
     );
 
-    static AVS: &[(&str, &str, &str, &str)] = &[
-        ("u:object_r:keystore:s0", "u:r:untrusted_app:s0:c0,c1,c2,c3", "use", "keystore2_key"),
-        ("u:object_r:su_key:s0", "u:r:su:s0", "get_info", "keystore2_key"),
-        ("u:object_r:shell_key:s0", "u:r:shell:s0", "delete", "keystore2_key"),
-        ("u:object_r:keystore:s0", "u:r:system_server:s0", "add_auth", "keystore2"),
-        ("u:object_r:keystore:s0", "u:r:su:s0", "change_user", "keystore2"),
-        (
-            "u:object_r:vold_key:s0",
-            "u:r:vold:s0",
-            "convert_storage_key_to_ephemeral",
-            "keystore2_key",
-        ),
-    ];
-
     let cpus = num_cpus::get();
-
     let turnpike = Arc::new(AtomicU8::new(0));
-
+    let complete_count = Arc::new(AtomicU8::new(0));
     let mut threads: Vec<thread::JoinHandle<()>> = Vec::new();
 
-    let goals: Arc<Vec<AtomicU8>> = Arc::new((0..cpus).map(|_| AtomicU8::new(0)).collect());
-
-    let turnpike_clone = turnpike.clone();
-    let goals_clone = goals.clone();
-
-    threads.push(thread::spawn(move || {
-        let mut cpu_set = CpuSet::new();
-        cpu_set.set(0).unwrap();
-        sched_setaffinity(getpid(), &cpu_set).unwrap();
-        let mut cat_count: CatCount = Default::default();
-
-        log::info!("Thread 0 reached turnpike");
-        loop {
-            turnpike_clone.fetch_add(1, Ordering::Relaxed);
-            loop {
-                match turnpike_clone.load(Ordering::Relaxed) {
-                    0 => break,
-                    255 => {
-                        goals_clone[0].store(1, Ordering::Relaxed);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-
-            for _ in 0..100 {
-                let (tctx, sctx, perm, class) = (
-                    Context::new("u:object_r:keystore:s0").unwrap(),
-                    Context::new(&format!(
-                        "u:r:untrusted_app:s0:{}",
-                        cat_count.next().make_string()
-                    ))
-                    .unwrap(),
-                    "use",
-                    "keystore2_key",
-                );
-
-                check_access(&sctx, &tctx, class, perm).unwrap();
-            }
-
-            goals_clone[0].store(1, Ordering::Relaxed);
-        }
-    }));
-
-    for i in 1..cpus {
-        let turnpike_clone = turnpike.clone();
-        let goals_clone = goals.clone();
-
+    for i in 0..cpus {
         log::info!("Spawning thread {}", i);
+        let turnpike_clone = turnpike.clone();
+        let complete_count_clone = complete_count.clone();
         threads.push(thread::spawn(move || {
             let mut cpu_set = CpuSet::new();
             cpu_set.set(i).unwrap();
             sched_setaffinity(getpid(), &cpu_set).unwrap();
+            let mut cat_count: CatCount = Default::default();
 
-            let (tctx, sctx, perm, class) = AVS[i % min(cpus, AVS.len())];
-
-            let sctx = Context::new(sctx).unwrap();
-            let tctx = Context::new(tctx).unwrap();
-
-            log::info!("Thread {} reached turnpike", i);
+            log::info!("Thread 0 reached turnpike");
             loop {
                 turnpike_clone.fetch_add(1, Ordering::Relaxed);
                 loop {
                     match turnpike_clone.load(Ordering::Relaxed) {
                         0 => break,
-                        255 => {
-                            goals_clone[i].store(1, Ordering::Relaxed);
-                            return;
-                        }
+                        255 => return,
                         _ => {}
                     }
                 }
 
-                for _ in 0..100 {
+                for _ in 0..250 {
+                    let (tctx, sctx, perm, class) = (
+                        Context::new("u:object_r:keystore:s0").unwrap(),
+                        Context::new(&format!(
+                            "u:r:untrusted_app:s0:{}",
+                            cat_count.next().make_string()
+                        ))
+                        .unwrap(),
+                        "use",
+                        "keystore2_key",
+                    );
+
                     check_access(&sctx, &tctx, class, perm).unwrap();
                 }
 
-                goals_clone[i].store(1, Ordering::Relaxed);
+                complete_count_clone.fetch_add(1, Ordering::Relaxed);
+                while complete_count_clone.load(Ordering::Relaxed) as usize != cpus {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
         }));
     }
 
     let mut i = 0;
+    let run_time = Instant::now();
 
     loop {
-        thread::sleep(Duration::from_millis(200));
+        const TEST_ITERATIONS: u32 = 500;
+        const MAX_SLEEPS: u64 = 500;
+        const SLEEP_MILLISECONDS: u64 = 5;
+        let mut sleep_count: u64 = 0;
+        while turnpike.load(Ordering::Relaxed) as usize != cpus {
+            thread::sleep(Duration::from_millis(SLEEP_MILLISECONDS));
+            sleep_count += 1;
+            assert!(
+                sleep_count < MAX_SLEEPS,
+                "Waited too long to go ready on iteration {}, only {} are ready",
+                i,
+                turnpike.load(Ordering::Relaxed)
+            );
+        }
+
+        if i % 100 == 0 {
+            let elapsed = run_time.elapsed().as_secs();
+            println!("{:02}:{:02}: Iteration {}", elapsed / 60, elapsed % 60, i);
+        }
 
         // Give the threads some time to reach and spin on the turn pike.
         assert_eq!(turnpike.load(Ordering::Relaxed) as usize, cpus, "i = {}", i);
-        if i == 100 {
+        if i >= TEST_ITERATIONS {
             turnpike.store(255, Ordering::Relaxed);
             break;
         }
+
         // Now go.
+        complete_count.store(0, Ordering::Relaxed);
         turnpike.store(0, Ordering::Relaxed);
         i += 1;
+
+        // Wait for them to all complete.
+        sleep_count = 0;
+        while complete_count.load(Ordering::Relaxed) as usize != cpus {
+            thread::sleep(Duration::from_millis(SLEEP_MILLISECONDS));
+            sleep_count += 1;
+            if sleep_count >= MAX_SLEEPS {
+                // Enable the following block to park the thread to allow attaching a debugger.
+                if false {
+                    println!(
+                        "Waited {} seconds and we seem stuck. Going to sleep forever.",
+                        (MAX_SLEEPS * SLEEP_MILLISECONDS) as f32 / 1000.0
+                    );
+                    loop {
+                        thread::park();
+                    }
+                } else {
+                    assert!(
+                        sleep_count < MAX_SLEEPS,
+                        "Waited too long to complete on iteration {}, only {} are complete",
+                        i,
+                        complete_count.load(Ordering::Relaxed)
+                    );
+                }
+            }
+        }
     }
 
     for t in threads {
