@@ -70,7 +70,7 @@ rust_test {
         "src/concurrency_test.rs",
     ],
     crate_name: "keystore2_selinux_concurrency_test",
-    test_suites: ["deneral-tests"],
+    test_suites: ["general-tests"],
     auto_gen_config: true,
 
     rustlibs: [
