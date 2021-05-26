@@ -21,6 +21,7 @@
 #include <openssl/crypto.h>
 #include <openssl/pkcs7.h>
 #include <openssl/rsa.h>
+#include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
 #include <fcntl.h>
@@ -56,12 +57,17 @@ static bool add_ext(X509* cert, int nid, const char* value) {
 }
 
 Result<bssl::UniquePtr<RSA>> getRsa(const std::vector<uint8_t>& publicKey) {
+    bssl::UniquePtr<BIGNUM> n(BN_new());
+    bssl::UniquePtr<BIGNUM> e(BN_new());
     bssl::UniquePtr<RSA> rsaPubkey(RSA_new());
-    rsaPubkey->n = BN_new();
-    rsaPubkey->e = BN_new();
-
-    BN_bin2bn(publicKey.data(), publicKey.size(), rsaPubkey->n);
-    BN_set_word(rsaPubkey->e, kRsaKeyExponent);
+    if (!n || !e || !rsaPubkey || !BN_bin2bn(publicKey.data(), publicKey.size(), n.get()) ||
+        !BN_set_word(e.get(), kRsaKeyExponent) ||
+        !RSA_set0_key(rsaPubkey.get(), n.get(), e.get(), /*d=*/nullptr)) {
+        return Error() << "Failed to create RSA key";
+    }
+    // RSA_set0_key takes ownership of |n| and |e| on success.
+    (void)n.release();
+    (void)e.release();
 
     return rsaPubkey;
 }
@@ -69,6 +75,9 @@ Result<bssl::UniquePtr<RSA>> getRsa(const std::vector<uint8_t>& publicKey) {
 Result<void> verifySignature(const std::string& message, const std::string& signature,
                              const std::vector<uint8_t>& publicKey) {
     auto rsaKey = getRsa(publicKey);
+    if (!rsaKey.ok()) {
+        return rsaKey.error();
+    }
     uint8_t hashBuf[SHA256_DIGEST_LENGTH];
     SHA256(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(message.c_str())),
            message.length(), hashBuf);
@@ -99,11 +108,14 @@ Result<void> createSelfSignedCertificate(
     // "publicKey" corresponds to the raw public key bytes - need to create
     // a new RSA key with the correct exponent.
     auto rsaPubkey = getRsa(publicKey);
+    if (!rsaPubkey.ok()) {
+        return rsaPubkey.error();
+    }
 
-    EVP_PKEY* public_key = EVP_PKEY_new();
-    EVP_PKEY_assign_RSA(public_key, rsaPubkey->release());
+    bssl::UniquePtr<EVP_PKEY> public_key(EVP_PKEY_new());
+    EVP_PKEY_assign_RSA(public_key.get(), rsaPubkey->release());
 
-    if (!X509_set_pubkey(x509.get(), public_key)) {
+    if (!X509_set_pubkey(x509.get(), public_key.get())) {
         return Error() << "Unable to set x509 public key";
     }
 
@@ -126,27 +138,30 @@ Result<void> createSelfSignedCertificate(
     add_ext(x509.get(), NID_subject_key_identifier, kSubjectKeyIdentifier);
     add_ext(x509.get(), NID_authority_key_identifier, "keyid:always");
 
-    X509_ALGOR_set0(x509->cert_info->signature, OBJ_nid2obj(NID_sha256WithRSAEncryption),
-                    V_ASN1_NULL, NULL);
-    X509_ALGOR_set0(x509->sig_alg, OBJ_nid2obj(NID_sha256WithRSAEncryption), V_ASN1_NULL, NULL);
+    bssl::UniquePtr<X509_ALGOR> algor(X509_ALGOR_new());
+    if (!algor ||
+        !X509_ALGOR_set0(algor.get(), OBJ_nid2obj(NID_sha256WithRSAEncryption), V_ASN1_NULL,
+                         NULL) ||
+        !X509_set1_signature_algo(x509.get(), algor.get())) {
+        return Error() << "Unable to set x509 signature algorithm";
+    }
 
     // Get the data to be signed
-    char* to_be_signed_buf(nullptr);
-    size_t to_be_signed_length = i2d_re_X509_tbs(x509.get(), (unsigned char**)&to_be_signed_buf);
+    unsigned char* to_be_signed_buf(nullptr);
+    size_t to_be_signed_length = i2d_re_X509_tbs(x509.get(), &to_be_signed_buf);
 
-    auto signed_data = signFunction(std::string(to_be_signed_buf, to_be_signed_length));
+    auto signed_data = signFunction(
+        std::string(reinterpret_cast<const char*>(to_be_signed_buf), to_be_signed_length));
     if (!signed_data.ok()) {
         return signed_data.error();
     }
 
-    // This is the only part that doesn't use boringssl default functions - we manually copy in the
-    // signature that was provided to us.
-    x509->signature->data = (unsigned char*)OPENSSL_malloc(signed_data->size());
-    memcpy(x509->signature->data, signed_data->c_str(), signed_data->size());
-    x509->signature->length = signed_data->size();
+    if (!X509_set1_signature_value(x509.get(),
+                                   reinterpret_cast<const uint8_t*>(signed_data->data()),
+                                   signed_data->size())) {
+        return Error() << "Unable to set x509 signature";
+    }
 
-    x509->signature->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-    x509->signature->flags |= ASN1_STRING_FLAG_BITS_LEFT;
     auto f = fopen(path.c_str(), "wbe");
     if (f == nullptr) {
         return Error() << "Failed to open " << path;
@@ -154,7 +169,6 @@ Result<void> createSelfSignedCertificate(
     i2d_X509_fp(f, x509.get());
     fclose(f);
 
-    EVP_PKEY_free(public_key);
     return {};
 }
 
@@ -163,15 +177,14 @@ Result<std::vector<uint8_t>> extractPublicKey(EVP_PKEY* pkey) {
         return Error() << "Failed to extract public key from x509 cert";
     }
 
-    if (EVP_PKEY_type(pkey->type) != EVP_PKEY_RSA) {
+    if (EVP_PKEY_id(pkey) != EVP_PKEY_RSA) {
         return Error() << "The public key is not an RSA key";
     }
 
-    RSA* rsa = EVP_PKEY_get1_RSA(pkey);
-    auto num_bytes = BN_num_bytes(rsa->n);
+    RSA* rsa = EVP_PKEY_get0_RSA(pkey);
+    auto num_bytes = BN_num_bytes(RSA_get0_n(rsa));
     std::vector<uint8_t> pubKey(num_bytes);
-    int res = BN_bn2bin(rsa->n, pubKey.data());
-    RSA_free(rsa);
+    int res = BN_bn2bin(RSA_get0_n(rsa), pubKey.data());
 
     if (!res) {
         return Error() << "Failed to convert public key to bytes";
