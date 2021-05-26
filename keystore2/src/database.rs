@@ -79,7 +79,7 @@ use log::error;
 #[cfg(not(test))]
 use rand::prelude::random;
 use rusqlite::{
-    params,
+    params, params_from_iter,
     types::FromSql,
     types::FromSqlResult,
     types::ToSqlOutput,
@@ -1016,7 +1016,7 @@ impl KeystoreDB {
         params: &[&str],
     ) -> Result<Keystore2StorageStats> {
         let (total, unused) = self.with_transaction(TransactionBehavior::Deferred, |tx| {
-            tx.query_row(query, params, |row| Ok((row.get(0)?, row.get(1)?)))
+            tx.query_row(query, params_from_iter(params), |row| Ok((row.get(0)?, row.get(1)?)))
                 .with_context(|| {
                     format!("get_storage_stat: Error size of storage type {}", storage_type as i32)
                 })
