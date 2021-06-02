@@ -87,7 +87,7 @@ cc_library_shared {
 }
 
 // Library for keystore clients using the WiFi HIDL interface
-cc_library_shared {
+cc_library {
     name: "libkeystore-wifi-hidl",
     defaults: ["keystore_defaults"],
 
