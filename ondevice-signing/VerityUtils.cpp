@@ -255,7 +255,7 @@ Result<void> addCertToFsVerityKeyring(const std::string& path) {
         char* argv_child[argc + 1];
         memcpy(argv_child, argv, argc * sizeof(char*));
         argv_child[argc] = nullptr;
-        execvp(argv_child[0], const_cast<char**>(argv_child));
+        execvp(argv_child[0], argv_child);
         PLOG(ERROR) << "exec in ForkExecvp";
         _exit(EXIT_FAILURE);
     } else {
