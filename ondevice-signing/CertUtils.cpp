@@ -196,9 +196,9 @@ Result<std::vector<uint8_t>> extractPublicKey(EVP_PKEY* pkey) {
 Result<std::vector<uint8_t>>
 extractPublicKeyFromSubjectPublicKeyInfo(const std::vector<uint8_t>& keyData) {
     auto keyDataBytes = keyData.data();
-    EVP_PKEY* public_key = d2i_PUBKEY(nullptr, &keyDataBytes, keyData.size());
+    bssl::UniquePtr<EVP_PKEY> public_key(d2i_PUBKEY(nullptr, &keyDataBytes, keyData.size()));
 
-    return extractPublicKey(public_key);
+    return extractPublicKey(public_key.get());
 }
 
 Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::vector<uint8_t>& keyData) {
@@ -213,18 +213,19 @@ Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::vector<uint8_t>
 }
 
 Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::string& path) {
-    X509* cert;
+    X509* rawCert;
     auto f = fopen(path.c_str(), "re");
     if (f == nullptr) {
         return Error() << "Failed to open " << path;
     }
-    if (!d2i_X509_fp(f, &cert)) {
+    if (!d2i_X509_fp(f, &rawCert)) {
         fclose(f);
         return Error() << "Unable to decode x509 cert at " << path;
     }
+    bssl::UniquePtr<X509> cert(rawCert);
 
     fclose(f);
-    return extractPublicKey(X509_get_pubkey(cert));
+    return extractPublicKey(X509_get_pubkey(cert.get()));
 }
 
 Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signed_digest) {
