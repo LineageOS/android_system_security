@@ -37,15 +37,17 @@ bool LoadKeyToKeyring(key_serial_t keyring_id, const char* desc, const char* dat
     return true;
 }
 
-void LoadKeyFromStdin(key_serial_t keyring_id, const char* keyname) {
+bool LoadKeyFromStdin(key_serial_t keyring_id, const char* keyname) {
     std::string content;
     if (!android::base::ReadFdToString(STDIN_FILENO, &content)) {
         LOG(ERROR) << "Failed to read key from stdin";
-        return;
+        return false;
     }
     if (!LoadKeyToKeyring(keyring_id, keyname, content.c_str(), content.size())) {
         LOG(ERROR) << "Failed to load key from stdin";
+        return false;
     }
+    return true;
 }
 
 void LoadKeyFromFile(key_serial_t keyring_id, const char* keyname, const std::string& path) {
@@ -101,7 +103,9 @@ int main(int argc, const char** argv) {
             LOG(ERROR) << "--load-extra-key requires <key_name> argument.";
             return -1;
         }
-        LoadKeyFromStdin(keyring_id, argv[2]);
+        if (!LoadKeyFromStdin(keyring_id, argv[2])) {
+            return -1;
+        }
     } else if (command == "--lock") {
         // Requires files backed by fs-verity to be verified with a key in .fs-verity
         // keyring.
