@@ -44,7 +44,6 @@ using android::base::SetProperty;
 
 using OdsignInfo = ::odsign::proto::OdsignInfo;
 
-const std::string kSigningKeyBlob = "/data/misc/odsign/key.blob";
 const std::string kSigningKeyCert = "/data/misc/odsign/key.cert";
 const std::string kOdsignInfo = "/data/misc/odsign/odsign.info";
 const std::string kOdsignInfoSignature = "/data/misc/odsign/odsign.info.signature";
@@ -56,6 +55,10 @@ static const char* kOdrefreshPath = "/apex/com.android.art/bin/odrefresh";
 static const char* kFsVerityProcPath = "/proc/sys/fs/verity";
 
 static const bool kForceCompilation = false;
+static const bool kUseCompOs = false;  // STOPSHIP if true
+
+static const char* kVirtApexPath = "/apex/com.android.virt";
+const std::string kCompOsCert = "/data/misc/odsign/compos_key.cert";
 
 static const char* kOdsignVerificationDoneProp = "odsign.verification.done";
 static const char* kOdsignKeyDoneProp = "odsign.key.done";
@@ -64,13 +67,17 @@ static const char* kOdsignVerificationStatusProp = "odsign.verification.success"
 static const char* kOdsignVerificationStatusValid = "1";
 static const char* kOdsignVerificationStatusError = "0";
 
-Result<void> verifyExistingCert(const SigningKey& key) {
+bool compOsPresent() {
+    return access(kVirtApexPath, F_OK) == 0;
+}
+
+Result<void> verifyExistingRootCert(const SigningKey& key) {
     if (access(kSigningKeyCert.c_str(), F_OK) < 0) {
         return ErrnoError() << "Key certificate not found: " << kSigningKeyCert;
     }
     auto trustedPublicKey = key.getPublicKey();
     if (!trustedPublicKey.ok()) {
-        return Error() << "Failed to retrieve signing public key.";
+        return Error() << "Failed to retrieve signing public key: " << trustedPublicKey.error();
     }
 
     auto publicKeyFromExistingCert = extractPublicKeyFromX509(kSigningKeyCert);
@@ -82,11 +89,12 @@ Result<void> verifyExistingCert(const SigningKey& key) {
                        << " does not match signing public key.";
     }
 
-    // At this point, we know the cert matches
+    // At this point, we know the cert is for our key; it's unimportant whether it's
+    // actually self-signed.
     return {};
 }
 
-Result<void> createX509Cert(const SigningKey& key, const std::string& outPath) {
+Result<void> createX509RootCert(const SigningKey& key, const std::string& outPath) {
     auto publicKey = key.getPublicKey();
 
     if (!publicKey.ok()) {
@@ -96,6 +104,32 @@ Result<void> createX509Cert(const SigningKey& key, const std::string& outPath) {
     auto keySignFunction = [&](const std::string& to_be_signed) { return key.sign(to_be_signed); };
     createSelfSignedCertificate(*publicKey, keySignFunction, outPath);
     return {};
+}
+
+Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
+                                                          const std::string& certPath,
+                                                          const std::string& expectedCn) {
+    if (access(certPath.c_str(), F_OK) < 0) {
+        return ErrnoError() << "Certificate not found: " << kCompOsCert;
+    }
+    auto trustedPublicKey = key.getPublicKey();
+    if (!trustedPublicKey.ok()) {
+        return Error() << "Failed to retrieve signing public key: " << trustedPublicKey.error();
+    }
+
+    auto existingCertInfo = verifyAndExtractCertInfoFromX509(certPath, trustedPublicKey.value());
+    if (!existingCertInfo.ok()) {
+        return Error() << "Failed to verify certificate at " << certPath << ": "
+                       << existingCertInfo.error();
+    }
+
+    auto& actualCn = existingCertInfo.value().subjectCn;
+    if (actualCn != expectedCn) {
+        return Error() << "CN of existing certificate at " << certPath << " is " << actualCn
+                       << ", should be " << expectedCn;
+    }
+
+    return existingCertInfo.value().subjectKey;
 }
 
 art::odrefresh::ExitCode compileArtifacts(bool force) {
@@ -263,7 +297,7 @@ static Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity
     // by the next boot.
     SetProperty(kOdsignKeyDoneProp, "1");
     if (!signInfo.ok()) {
-        return Error() << signInfo.error().message();
+        return signInfo.error();
     }
     std::map<std::string, std::string> trusted_digests(signInfo->file_hashes().begin(),
                                                        signInfo->file_hashes().end());
@@ -275,7 +309,7 @@ static Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity
         integrityStatus = verifyIntegrityNoFsVerity(trusted_digests);
     }
     if (!integrityStatus.ok()) {
-        return Error() << integrityStatus.error().message();
+        return integrityStatus.error();
     }
 
     return {};
@@ -310,13 +344,15 @@ int main(int /* argc */, char** /* argv */) {
         LOG(INFO) << "Device doesn't support fsverity. Falling back to full verification.";
     }
 
+    bool supportsCompOs = kUseCompOs && supportsFsVerity && compOsPresent();
+
     if (supportsFsVerity) {
-        auto existing_cert = verifyExistingCert(*key);
+        auto existing_cert = verifyExistingRootCert(*key);
         if (!existing_cert.ok()) {
             LOG(WARNING) << existing_cert.error().message();
 
             // Try to create a new cert
-            auto new_cert = createX509Cert(*key, kSigningKeyCert);
+            auto new_cert = createX509RootCert(*key, kSigningKeyCert);
             if (!new_cert.ok()) {
                 LOG(ERROR) << "Failed to create X509 certificate: " << new_cert.error().message();
                 // TODO apparently the key become invalid - delete the blob / cert
@@ -325,11 +361,32 @@ int main(int /* argc */, char** /* argv */) {
         } else {
             LOG(INFO) << "Found and verified existing public key certificate: " << kSigningKeyCert;
         }
-        auto cert_add_result = addCertToFsVerityKeyring(kSigningKeyCert);
+        auto cert_add_result = addCertToFsVerityKeyring(kSigningKeyCert, "fsv_ods");
         if (!cert_add_result.ok()) {
             LOG(ERROR) << "Failed to add certificate to fs-verity keyring: "
                        << cert_add_result.error().message();
             return -1;
+        }
+    }
+
+    if (supportsCompOs) {
+        auto compos_key = extractPublicKeyFromLeafCert(*key, kCompOsCert, "CompOS");
+        if (compos_key.ok()) {
+            auto cert_add_result = addCertToFsVerityKeyring(kCompOsCert, "fsv_compos");
+            if (cert_add_result.ok()) {
+                LOG(INFO) << "Added CompOs key to fs-verity keyring";
+            } else {
+                LOG(ERROR) << "Failed to add CompOs certificate to fs-verity keyring: "
+                           << cert_add_result.error().message();
+                // TODO - what do we do now?
+                // return -1;
+            }
+        } else {
+            LOG(ERROR) << "Failed to retrieve key from CompOs certificate: "
+                       << compos_key.error().message();
+            // Best efforts only - nothing we can do if deletion fails.
+            unlink(kCompOsCert.c_str());
+            // TODO - what do we do now?
         }
     }
 
