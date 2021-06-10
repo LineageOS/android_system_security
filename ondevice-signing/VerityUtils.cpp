@@ -243,8 +243,8 @@ Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::str
     return digests;
 }
 
-Result<void> addCertToFsVerityKeyring(const std::string& path) {
-    const char* const argv[] = {kFsVerityInitPath, "--load-extra-key", "fsv_ods"};
+Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyName) {
+    const char* const argv[] = {kFsVerityInitPath, "--load-extra-key", keyName};
 
     int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
     pid_t pid = fork();
