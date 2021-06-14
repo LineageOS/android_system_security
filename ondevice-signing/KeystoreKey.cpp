@@ -297,19 +297,13 @@ Result<std::string> KeystoreKey::sign(const std::string& message) const {
 
     auto status = mSecurityLevel->createOperation(mDescriptor, opParameters, false, &opResponse);
     if (!status.isOk()) {
-        return Error() << "Failed to create keystore signing operation: "
-                       << status.serviceSpecificErrorCode();
+        return Error() << "Failed to create keystore signing operation: " << status;
     }
     auto operation = opResponse.iOperation;
 
-    std::optional<std::vector<uint8_t>> out;
-    status = operation->update({message.begin(), message.end()}, &out);
-    if (!status.isOk()) {
-        return Error() << "Failed to call keystore update operation.";
-    }
-
+    std::optional<std::vector<uint8_t>> input{std::in_place, message.begin(), message.end()};
     std::optional<std::vector<uint8_t>> signature;
-    status = operation->finish({}, {}, &signature);
+    status = operation->finish(input, {}, &signature);
     if (!status.isOk()) {
         return Error() << "Failed to call keystore finish operation.";
     }

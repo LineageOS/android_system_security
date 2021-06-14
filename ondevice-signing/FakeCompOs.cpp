@@ -15,12 +15,18 @@
  */
 
 #include "FakeCompOs.h"
+
+#include "CertUtils.h"
 #include "KeyConstants.h"
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/result.h>
+#include <android-base/scopeguard.h>
+
 #include <binder/IServiceManager.h>
+
+#include <openssl/rand.h>
 
 using android::String16;
 
@@ -33,10 +39,16 @@ using android::hardware::security::keymint::PaddingMode;
 using android::hardware::security::keymint::SecurityLevel;
 using android::hardware::security::keymint::Tag;
 
+using android::system::keystore2::CreateOperationResponse;
 using android::system::keystore2::Domain;
 
 using android::base::Error;
 using android::base::Result;
+
+using android::binder::Status;
+
+// TODO: Allocate a namespace for CompOS
+const int64_t kCompOsNamespace = 101;
 
 Result<std::unique_ptr<FakeCompOs>> FakeCompOs::newInstance() {
     std::unique_ptr<FakeCompOs> compOs(new FakeCompOs);
@@ -73,7 +85,7 @@ Result<void> FakeCompOs::initialize() {
     return {};
 }
 
-Result<FakeCompOs::KeyData> FakeCompOs::generateKey() {
+Result<FakeCompOs::KeyData> FakeCompOs::generateKey() const {
     std::vector<KeyParameter> params;
 
     KeyParameter algo;
@@ -114,8 +126,7 @@ Result<FakeCompOs::KeyData> FakeCompOs::generateKey() {
 
     KeyDescriptor descriptor;
     descriptor.domain = Domain::BLOB;
-    // TODO: Allocate a namespace for CompOS
-    descriptor.nspace = 101;
+    descriptor.nspace = kCompOsNamespace;
 
     KeyMetadata metadata;
     auto status = mSecurityLevel->generateKey(descriptor, {}, params, 0, {}, &metadata);
@@ -135,4 +146,87 @@ Result<FakeCompOs::KeyData> FakeCompOs::generateKey() {
 
     KeyData key_data{std::move(metadata.certificate.value()), std::move(metadata.key.blob.value())};
     return key_data;
+}
+
+Result<FakeCompOs::ByteVector> FakeCompOs::signData(const ByteVector& keyBlob,
+                                                    const ByteVector& data) const {
+    KeyDescriptor descriptor;
+    descriptor.domain = Domain::BLOB;
+    descriptor.nspace = kCompOsNamespace;
+    descriptor.blob = keyBlob;
+
+    std::vector<KeyParameter> parameters;
+
+    {
+        KeyParameter algo;
+        algo.tag = Tag::ALGORITHM;
+        algo.value = KeyParameterValue::make<KeyParameterValue::algorithm>(Algorithm::RSA);
+        parameters.push_back(algo);
+
+        KeyParameter digest;
+        digest.tag = Tag::DIGEST;
+        digest.value = KeyParameterValue::make<KeyParameterValue::digest>(Digest::SHA_2_256);
+        parameters.push_back(digest);
+
+        KeyParameter padding;
+        padding.tag = Tag::PADDING;
+        padding.value = KeyParameterValue::make<KeyParameterValue::paddingMode>(
+            PaddingMode::RSA_PKCS1_1_5_SIGN);
+        parameters.push_back(padding);
+
+        KeyParameter purpose;
+        purpose.tag = Tag::PURPOSE;
+        purpose.value = KeyParameterValue::make<KeyParameterValue::keyPurpose>(KeyPurpose::SIGN);
+        parameters.push_back(purpose);
+    }
+
+    Status status;
+
+    CreateOperationResponse response;
+    status = mSecurityLevel->createOperation(descriptor, parameters, /*forced=*/false, &response);
+    if (!status.isOk()) {
+        return Error() << "Failed to create operation: " << status;
+    }
+
+    auto operation = response.iOperation;
+    auto abort_guard = android::base::make_scope_guard([&] { operation->abort(); });
+
+    if (response.operationChallenge.has_value()) {
+        return Error() << "Key requires user authorization";
+    }
+
+    std::optional<ByteVector> signature;
+    status = operation->finish(data, {}, &signature);
+    if (!status.isOk()) {
+        return Error() << "Failed to sign data: " << status;
+    }
+
+    abort_guard.Disable();
+
+    if (!signature.has_value()) {
+        return Error() << "No signature received from keystore.";
+    }
+
+    return signature.value();
+}
+
+Result<void> FakeCompOs::loadAndVerifyKey(const ByteVector& keyBlob,
+                                          const ByteVector& publicKey) const {
+    // To verify the key is valid, we use it to sign some data, and then verify the signature using
+    // the supplied public key.
+
+    ByteVector data(32);
+    if (RAND_bytes(data.data(), data.size()) != 1) {
+        return Error() << "No random bytes";
+    }
+
+    auto signature = signData(keyBlob, data);
+    if (!signature.ok()) {
+        return signature.error();
+    }
+
+    std::string dataStr(data.begin(), data.end());
+    std::string signatureStr(signature.value().begin(), signature.value().end());
+
+    return verifySignature(dataStr, signatureStr, publicKey);
 }

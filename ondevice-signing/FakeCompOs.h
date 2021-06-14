@@ -33,18 +33,26 @@ class FakeCompOs {
     using KeyMetadata = ::android::system::keystore2::KeyMetadata;
 
   public:
+    using ByteVector = std::vector<uint8_t>;
     struct KeyData {
-        std::vector<uint8_t> cert;
-        std::vector<uint8_t> blob;
+        ByteVector cert;
+        ByteVector blob;
     };
 
     static android::base::Result<std::unique_ptr<FakeCompOs>> newInstance();
 
-    android::base::Result<KeyData> generateKey();
+    android::base::Result<KeyData> generateKey() const;
+
+    android::base::Result<void> loadAndVerifyKey(const ByteVector& keyBlob,
+                                                 const ByteVector& publicKey) const;
 
   private:
     FakeCompOs();
+
     android::base::Result<void> initialize();
+
+    android::base::Result<ByteVector> signData(const ByteVector& keyBlob,
+                                               const ByteVector& data) const;
 
     KeyDescriptor mDescriptor;
     android::sp<IKeystoreService> mService;

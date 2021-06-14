@@ -76,6 +76,12 @@ static void writeBytesToFile(const std::vector<uint8_t>& bytes, const std::strin
     android::base::WriteStringToFile(str, path);
 }
 
+static std::vector<uint8_t> readBytesFromFile(const std::string& path) {
+    std::string str;
+    android::base::ReadFileToString(path, &str);
+    return std::vector<uint8_t>(str.begin(), str.end());
+}
+
 bool compOsPresent() {
     return access(kVirtApexPath, F_OK) == 0;
 }
@@ -140,30 +146,59 @@ Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
     return existingCertInfo.value().subjectKey;
 }
 
-Result<void> generateCompOsKey(const SigningKey& key) {
-    auto compOs = FakeCompOs::newInstance();
-    if (!compOs.ok()) {
-        return Error() << "Failed to start CompOs: " << compOs.error();
-    }
-    auto keyData = compOs.value()->generateKey();
-    if (!keyData.ok()) {
-        return Error() << "Failed to generate key: " << keyData.error();
-    }
-    auto publicKey = extractPublicKeyFromX509(keyData.value().cert);
-    if (!publicKey.ok()) {
-        return Error() << "Failed to extract CompOs public key" << publicKey.error();
+Result<void> verifyOrGenerateCompOsKey(const SigningKey& signingKey) {
+    auto compOsStatus = FakeCompOs::newInstance();
+    if (!compOsStatus.ok()) {
+        return Error() << "Failed to start CompOs: " << compOsStatus.error();
     }
 
-    auto keySignFunction = [&](const std::string& to_be_signed) { return key.sign(to_be_signed); };
-    auto certStatus = createLeafCertificate(kCompOsCommonName, publicKey.value(), keySignFunction,
+    FakeCompOs* compOs = compOsStatus.value().get();
+
+    std::vector<uint8_t> keyBlob;
+    std::vector<uint8_t> publicKey;
+    bool haveKey = false;
+
+    if (access(kCompOsPublicKey.c_str(), F_OK) == 0 && access(kCompOsKeyBlob.c_str(), F_OK) == 0) {
+        // We have a purported key, but not a valid signature for it.
+        // If compOs can verify it, we can sign it now.
+        keyBlob = readBytesFromFile(kCompOsKeyBlob);
+        publicKey = readBytesFromFile(kCompOsPublicKey);
+
+        auto response = compOs->loadAndVerifyKey(keyBlob, publicKey);
+        if (response.ok()) {
+            LOG(INFO) << "Verified existing CompOs key";
+            haveKey = true;
+        } else {
+            LOG(WARNING) << "Failed to verify existing CompOs key: " << response.error();
+        }
+    }
+
+    if (!haveKey) {
+        // If we don't have a key, or it doesn't verify, then we need a new one.
+        auto keyData = compOs->generateKey();
+        if (!keyData.ok()) {
+            return Error() << "Failed to generate key: " << keyData.error();
+        }
+        auto publicKeyStatus = extractPublicKeyFromX509(keyData.value().cert);
+        if (!publicKeyStatus.ok()) {
+            return Error() << "Failed to extract CompOs public key" << publicKeyStatus.error();
+        }
+
+        keyBlob = std::move(keyData.value().blob);
+        publicKey = std::move(publicKeyStatus.value());
+
+        writeBytesToFile(keyBlob, kCompOsKeyBlob);
+        writeBytesToFile(publicKey, kCompOsPublicKey);
+    }
+
+    auto signFunction = [&](const std::string& to_be_signed) {
+        return signingKey.sign(to_be_signed);
+    };
+    auto certStatus = createLeafCertificate(kCompOsCommonName, publicKey, signFunction,
                                             kSigningKeyCert, kCompOsCert);
     if (!certStatus.ok()) {
         return Error() << "Failed to create CompOs cert: " << certStatus.error();
     }
-
-    // TODO: Make use of these
-    writeBytesToFile(keyData.value().blob, kCompOsKeyBlob);
-    writeBytesToFile(publicKey.value(), kCompOsPublicKey);
 
     return {};
 }
@@ -410,7 +445,7 @@ int main(int /* argc */, char** /* argv */) {
         if (!compos_key.ok()) {
             LOG(WARNING) << compos_key.error();
 
-            auto status = generateCompOsKey(*key);
+            auto status = verifyOrGenerateCompOsKey(*key);
             if (!status.ok()) {
                 LOG(ERROR) << status.error();
             } else {
