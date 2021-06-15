@@ -247,6 +247,9 @@ Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyNa
     const char* const argv[] = {kFsVerityInitPath, "--load-extra-key", keyName};
 
     int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd == -1) {
+        return ErrnoError() << "Failed to open " << path;
+    }
     pid_t pid = fork();
     if (pid == 0) {
         dup2(fd, STDIN_FILENO);
@@ -271,10 +274,8 @@ Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyNa
     if (!WIFEXITED(status)) {
         return Error() << kFsVerityInitPath << ": abnormal process exit";
     }
-    if (WEXITSTATUS(status)) {
-        if (status != 0) {
-            return Error() << kFsVerityInitPath << " exited with " << status;
-        }
+    if (WEXITSTATUS(status) != 0) {
+        return Error() << kFsVerityInitPath << " exited with " << WEXITSTATUS(status);
     }
 
     return {};
