@@ -1311,7 +1311,7 @@ KeymasterDevices initializeKeymasters() {
     CHECK(serviceManager.get()) << "Failed to get ServiceManager";
     auto result = enumerateKeymasterDevices<Keymaster4>(serviceManager.get());
     auto softKeymaster = result[SecurityLevel::SOFTWARE];
-    if (!result[SecurityLevel::TRUSTED_ENVIRONMENT]) {
+    if ((!result[SecurityLevel::TRUSTED_ENVIRONMENT]) && (!result[SecurityLevel::STRONGBOX])) {
         result = enumerateKeymasterDevices<Keymaster3>(serviceManager.get());
     }
     if (softKeymaster) result[SecurityLevel::SOFTWARE] = softKeymaster;
