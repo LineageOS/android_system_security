@@ -16,6 +16,10 @@
 
 #pragma once
 
+#include <functional>
+#include <string>
+#include <vector>
+
 #include <android-base/result.h>
 
 struct CertInfo {
@@ -27,6 +31,12 @@ android::base::Result<void> createSelfSignedCertificate(
     const std::vector<uint8_t>& publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::string& path);
+
+android::base::Result<void> createLeafCertificate(
+    const char* commonName, const std::vector<uint8_t>& publicKey,
+    const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
+    const std::string& issuerCertPath, const std::string& outPath);
+
 android::base::Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signedData);
 
 android::base::Result<std::vector<uint8_t>>
