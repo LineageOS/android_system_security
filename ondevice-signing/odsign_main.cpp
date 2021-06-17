@@ -32,6 +32,7 @@
 #include <odrefresh/odrefresh.h>
 
 #include "CertUtils.h"
+#include "FakeCompOs.h"
 #include "KeystoreKey.h"
 #include "VerityUtils.h"
 
@@ -58,7 +59,10 @@ static const bool kForceCompilation = false;
 static const bool kUseCompOs = false;  // STOPSHIP if true
 
 static const char* kVirtApexPath = "/apex/com.android.virt";
+static const char* kCompOsCommonName = "CompOS";
 const std::string kCompOsCert = "/data/misc/odsign/compos_key.cert";
+const std::string kCompOsPublicKey = "/data/misc/odsign/compos_key.pubkey";
+const std::string kCompOsKeyBlob = "/data/misc/odsign/compos_key.blob";
 
 static const char* kOdsignVerificationDoneProp = "odsign.verification.done";
 static const char* kOdsignKeyDoneProp = "odsign.key.done";
@@ -66,6 +70,17 @@ static const char* kOdsignKeyDoneProp = "odsign.key.done";
 static const char* kOdsignVerificationStatusProp = "odsign.verification.success";
 static const char* kOdsignVerificationStatusValid = "1";
 static const char* kOdsignVerificationStatusError = "0";
+
+static void writeBytesToFile(const std::vector<uint8_t>& bytes, const std::string& path) {
+    std::string str(bytes.begin(), bytes.end());
+    android::base::WriteStringToFile(str, path);
+}
+
+static std::vector<uint8_t> readBytesFromFile(const std::string& path) {
+    std::string str;
+    android::base::ReadFileToString(path, &str);
+    return std::vector<uint8_t>(str.begin(), str.end());
+}
 
 bool compOsPresent() {
     return access(kVirtApexPath, F_OK) == 0;
@@ -102,8 +117,7 @@ Result<void> createX509RootCert(const SigningKey& key, const std::string& outPat
     }
 
     auto keySignFunction = [&](const std::string& to_be_signed) { return key.sign(to_be_signed); };
-    createSelfSignedCertificate(*publicKey, keySignFunction, outPath);
-    return {};
+    return createSelfSignedCertificate(*publicKey, keySignFunction, outPath);
 }
 
 Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
@@ -130,6 +144,63 @@ Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
     }
 
     return existingCertInfo.value().subjectKey;
+}
+
+Result<void> verifyOrGenerateCompOsKey(const SigningKey& signingKey) {
+    auto compOsStatus = FakeCompOs::newInstance();
+    if (!compOsStatus.ok()) {
+        return Error() << "Failed to start CompOs: " << compOsStatus.error();
+    }
+
+    FakeCompOs* compOs = compOsStatus.value().get();
+
+    std::vector<uint8_t> keyBlob;
+    std::vector<uint8_t> publicKey;
+    bool haveKey = false;
+
+    if (access(kCompOsPublicKey.c_str(), F_OK) == 0 && access(kCompOsKeyBlob.c_str(), F_OK) == 0) {
+        // We have a purported key, but not a valid signature for it.
+        // If compOs can verify it, we can sign it now.
+        keyBlob = readBytesFromFile(kCompOsKeyBlob);
+        publicKey = readBytesFromFile(kCompOsPublicKey);
+
+        auto response = compOs->loadAndVerifyKey(keyBlob, publicKey);
+        if (response.ok()) {
+            LOG(INFO) << "Verified existing CompOs key";
+            haveKey = true;
+        } else {
+            LOG(WARNING) << "Failed to verify existing CompOs key: " << response.error();
+        }
+    }
+
+    if (!haveKey) {
+        // If we don't have a key, or it doesn't verify, then we need a new one.
+        auto keyData = compOs->generateKey();
+        if (!keyData.ok()) {
+            return Error() << "Failed to generate key: " << keyData.error();
+        }
+        auto publicKeyStatus = extractPublicKeyFromX509(keyData.value().cert);
+        if (!publicKeyStatus.ok()) {
+            return Error() << "Failed to extract CompOs public key" << publicKeyStatus.error();
+        }
+
+        keyBlob = std::move(keyData.value().blob);
+        publicKey = std::move(publicKeyStatus.value());
+
+        writeBytesToFile(keyBlob, kCompOsKeyBlob);
+        writeBytesToFile(publicKey, kCompOsPublicKey);
+    }
+
+    auto signFunction = [&](const std::string& to_be_signed) {
+        return signingKey.sign(to_be_signed);
+    };
+    auto certStatus = createLeafCertificate(kCompOsCommonName, publicKey, signFunction,
+                                            kSigningKeyCert, kCompOsCert);
+    if (!certStatus.ok()) {
+        return Error() << "Failed to create CompOs cert: " << certStatus.error();
+    }
+
+    return {};
 }
 
 art::odrefresh::ExitCode compileArtifacts(bool force) {
@@ -334,7 +405,7 @@ int main(int /* argc */, char** /* argv */) {
 
     auto keystoreResult = KeystoreKey::getInstance();
     if (!keystoreResult.ok()) {
-        LOG(ERROR) << "Could not create keystore key: " << keystoreResult.error().message();
+        LOG(ERROR) << "Could not create keystore key: " << keystoreResult.error();
         return -1;
     }
     SigningKey* key = keystoreResult.value();
@@ -349,12 +420,12 @@ int main(int /* argc */, char** /* argv */) {
     if (supportsFsVerity) {
         auto existing_cert = verifyExistingRootCert(*key);
         if (!existing_cert.ok()) {
-            LOG(WARNING) << existing_cert.error().message();
+            LOG(WARNING) << existing_cert.error();
 
             // Try to create a new cert
             auto new_cert = createX509RootCert(*key, kSigningKeyCert);
             if (!new_cert.ok()) {
-                LOG(ERROR) << "Failed to create X509 certificate: " << new_cert.error().message();
+                LOG(ERROR) << "Failed to create X509 certificate: " << new_cert.error();
                 // TODO apparently the key become invalid - delete the blob / cert
                 return -1;
             }
@@ -364,29 +435,34 @@ int main(int /* argc */, char** /* argv */) {
         auto cert_add_result = addCertToFsVerityKeyring(kSigningKeyCert, "fsv_ods");
         if (!cert_add_result.ok()) {
             LOG(ERROR) << "Failed to add certificate to fs-verity keyring: "
-                       << cert_add_result.error().message();
+                       << cert_add_result.error();
             return -1;
         }
     }
 
     if (supportsCompOs) {
-        auto compos_key = extractPublicKeyFromLeafCert(*key, kCompOsCert, "CompOS");
-        if (compos_key.ok()) {
-            auto cert_add_result = addCertToFsVerityKeyring(kCompOsCert, "fsv_compos");
-            if (cert_add_result.ok()) {
-                LOG(INFO) << "Added CompOs key to fs-verity keyring";
+        auto compos_key = extractPublicKeyFromLeafCert(*key, kCompOsCert, kCompOsCommonName);
+        if (!compos_key.ok()) {
+            LOG(WARNING) << compos_key.error();
+
+            auto status = verifyOrGenerateCompOsKey(*key);
+            if (!status.ok()) {
+                LOG(ERROR) << status.error();
             } else {
-                LOG(ERROR) << "Failed to add CompOs certificate to fs-verity keyring: "
-                           << cert_add_result.error().message();
-                // TODO - what do we do now?
-                // return -1;
+                LOG(INFO) << "Generated new CompOs public key certificate";
             }
         } else {
-            LOG(ERROR) << "Failed to retrieve key from CompOs certificate: "
-                       << compos_key.error().message();
+            LOG(INFO) << "Found and verified existing CompOs public key certificate: "
+                      << kCompOsCert;
+        };
+        auto cert_add_result = addCertToFsVerityKeyring(kCompOsCert, "fsv_compos");
+        if (!cert_add_result.ok()) {
+            LOG(ERROR) << "Failed to add CompOs certificate to fs-verity keyring: "
+                       << cert_add_result.error();
             // Best efforts only - nothing we can do if deletion fails.
             unlink(kCompOsCert.c_str());
             // TODO - what do we do now?
+            // return -1;
         }
     }
 
@@ -402,7 +478,7 @@ int main(int /* argc */, char** /* argv */) {
         if (artifactsPresent) {
             auto verificationResult = verifyArtifacts(*key, supportsFsVerity);
             if (!verificationResult.ok()) {
-                LOG(ERROR) << verificationResult.error().message();
+                LOG(ERROR) << verificationResult.error();
                 return -1;
             }
         }
@@ -420,12 +496,12 @@ int main(int /* argc */, char** /* argv */) {
             digests = computeDigests(kArtArtifactsDir);
         }
         if (!digests.ok()) {
-            LOG(ERROR) << digests.error().message();
+            LOG(ERROR) << digests.error();
             return -1;
         }
         auto persistStatus = persistDigests(*digests, *key);
         if (!persistStatus.ok()) {
-            LOG(ERROR) << persistStatus.error().message();
+            LOG(ERROR) << persistStatus.error();
             return -1;
         }
     } else if (odrefresh_status == art::odrefresh::ExitCode::kCleanupFailed) {
@@ -444,5 +520,6 @@ int main(int /* argc */, char** /* argv */) {
     // And we did a successful verification
     SetProperty(kOdsignVerificationDoneProp, "1");
     SetProperty(kOdsignVerificationStatusProp, kOdsignVerificationStatusValid);
+
     return 0;
 }
