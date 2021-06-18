@@ -29,14 +29,13 @@ use android_security_apc::aidl::android::security::apc::{
 use android_system_keystore2::aidl::android::system::keystore2::{
     Authorization::Authorization, KeyDescriptor::KeyDescriptor,
 };
-use anyhow::{anyhow, Context};
-use binder::{FromIBinder, SpIBinder, ThreadState};
+use anyhow::Context;
+use binder::{Strong, ThreadState};
 use keystore2_apc_compat::{
     ApcCompatUiOptions, APC_COMPAT_ERROR_ABORTED, APC_COMPAT_ERROR_CANCELLED,
     APC_COMPAT_ERROR_IGNORED, APC_COMPAT_ERROR_OK, APC_COMPAT_ERROR_OPERATION_PENDING,
     APC_COMPAT_ERROR_SYSTEM_ERROR,
 };
-use std::sync::Mutex;
 
 /// This function uses its namesake in the permission module and in
 /// combination with with_calling_sid from the binder crate to check
@@ -103,7 +102,7 @@ pub fn is_device_id_attestation_tag(tag: Tag) -> bool {
 /// identifiers. It throws an error if the permissions cannot be verified, or if the caller doesn't
 /// have the right permissions, and returns silently otherwise.
 pub fn check_device_attestation_permissions() -> anyhow::Result<()> {
-    let permission_controller: binder::Strong<dyn IPermissionController::IPermissionController> =
+    let permission_controller: Strong<dyn IPermissionController::IPermissionController> =
         binder::get_interface("permission")?;
 
     let binder_result = {
@@ -125,39 +124,6 @@ pub fn check_device_attestation_permissions() -> anyhow::Result<()> {
             "In check_device_attestation_permissions: ",
             "caller does not have the permission to attest device IDs"
         )),
-    }
-}
-
-/// Thread safe wrapper around SpIBinder. It is safe to have SpIBinder smart pointers to the
-/// same object in multiple threads, but cloning a SpIBinder is not thread safe.
-/// Keystore frequently hands out binder tokens to the security level interface. If this
-/// is to happen from a multi threaded thread pool, the SpIBinder needs to be protected by a
-/// Mutex.
-#[derive(Debug)]
-pub struct Asp(Mutex<SpIBinder>);
-
-impl Asp {
-    /// Creates a new instance owning a SpIBinder wrapped in a Mutex.
-    pub fn new(i: SpIBinder) -> Self {
-        Self(Mutex::new(i))
-    }
-
-    /// Clones the owned SpIBinder and attempts to convert it into the requested interface.
-    pub fn get_interface<T: FromIBinder + ?Sized>(&self) -> anyhow::Result<binder::Strong<T>> {
-        // We can use unwrap here because we never panic when locked, so the mutex
-        // can never be poisoned.
-        let lock = self.0.lock().unwrap();
-        (*lock)
-            .clone()
-            .into_interface()
-            .map_err(|e| anyhow!(format!("get_interface failed with error code {:?}", e)))
-    }
-}
-
-impl Clone for Asp {
-    fn clone(&self) -> Self {
-        let lock = self.0.lock().unwrap();
-        Self(Mutex::new((*lock).clone()))
     }
 }
 
