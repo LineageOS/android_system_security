@@ -16,41 +16,45 @@
 
 #pragma once
 
-#include <optional>
+#include <memory>
+#include <string>
+#include <vector>
 
-#include <android-base/macros.h>
 #include <android-base/result.h>
 
 #include <utils/StrongPointer.h>
 
 #include <android/system/keystore2/IKeystoreService.h>
 
-#include "KeystoreHmacKey.h"
-#include "SigningKey.h"
-
-class KeystoreKey : public SigningKey {
+class FakeCompOs {
     using IKeystoreService = ::android::system::keystore2::IKeystoreService;
     using IKeystoreSecurityLevel = ::android::system::keystore2::IKeystoreSecurityLevel;
     using KeyDescriptor = ::android::system::keystore2::KeyDescriptor;
     using KeyMetadata = ::android::system::keystore2::KeyMetadata;
 
   public:
-    virtual ~KeystoreKey(){};
-    static android::base::Result<SigningKey*> getInstance();
+    using ByteVector = std::vector<uint8_t>;
+    struct KeyData {
+        ByteVector cert;
+        ByteVector blob;
+    };
 
-    virtual android::base::Result<std::string> sign(const std::string& message) const;
-    virtual android::base::Result<std::vector<uint8_t>> getPublicKey() const;
+    static android::base::Result<std::unique_ptr<FakeCompOs>> newInstance();
+
+    android::base::Result<KeyData> generateKey() const;
+
+    android::base::Result<void> loadAndVerifyKey(const ByteVector& keyBlob,
+                                                 const ByteVector& publicKey) const;
 
   private:
-    KeystoreKey();
-    bool initialize();
-    android::base::Result<std::vector<uint8_t>> verifyExistingKey();
-    android::base::Result<std::vector<uint8_t>> createKey();
-    android::base::Result<std::vector<uint8_t>> getOrCreateKey();
+    FakeCompOs();
+
+    android::base::Result<void> initialize();
+
+    android::base::Result<ByteVector> signData(const ByteVector& keyBlob,
+                                               const ByteVector& data) const;
 
     KeyDescriptor mDescriptor;
-    KeystoreHmacKey mHmacKey;
     android::sp<IKeystoreService> mService;
     android::sp<IKeystoreSecurityLevel> mSecurityLevel;
-    std::vector<uint8_t> mPublicKey;
 };
