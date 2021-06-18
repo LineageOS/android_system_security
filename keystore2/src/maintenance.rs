@@ -23,7 +23,6 @@ use crate::globals::{DB, LEGACY_MIGRATOR, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::UserState;
 use crate::utils::{check_key_permission, check_keystore_permission, watchdog as wd};
-use android_hardware_security_keymint::aidl::android::hardware::security::keymint::IKeyMintDevice::IKeyMintDevice;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_security_maintenance::aidl::android::security::maintenance::{
     IKeystoreMaintenance::{BnKeystoreMaintenance, IKeystoreMaintenance},
@@ -134,10 +133,8 @@ impl Maintenance {
     }
 
     fn early_boot_ended_help(sec_level: SecurityLevel) -> Result<()> {
-        let (dev, _, _) = get_keymint_device(&sec_level)
+        let (km_dev, _, _) = get_keymint_device(&sec_level)
             .context("In early_boot_ended: getting keymint device")?;
-        let km_dev: Strong<dyn IKeyMintDevice> =
-            dev.get_interface().context("In early_boot_ended: getting keymint device interface")?;
 
         let _wp = wd::watch_millis_with(
             "In early_boot_ended_help: calling earlyBootEnded()",

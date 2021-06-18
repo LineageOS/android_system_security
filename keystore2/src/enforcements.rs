@@ -28,14 +28,13 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     KeyParameter::KeyParameter as KmKeyParameter, KeyPurpose::KeyPurpose, Tag::Tag,
 };
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
-    ISecureClock::ISecureClock, TimeStampToken::TimeStampToken,
+    TimeStampToken::TimeStampToken,
 };
 use android_security_authorization::aidl::android::security::authorization::ResponseCode::ResponseCode as AuthzResponseCode;
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, IKeystoreSecurityLevel::KEY_FLAG_AUTH_BOUND_WITHOUT_CRYPTOGRAPHIC_LSKF_BINDING,
     OperationChallenge::OperationChallenge,
 };
-use android_system_keystore2::binder::Strong;
 use anyhow::{Context, Result};
 use std::{
     collections::{HashMap, HashSet},
@@ -219,13 +218,10 @@ impl TokenReceiver {
 }
 
 fn get_timestamp_token(challenge: i64) -> Result<TimeStampToken, Error> {
-    let dev: Strong<dyn ISecureClock> = get_timestamp_service()
-        .expect(concat!(
-            "Secure Clock service must be present ",
-            "if TimeStampTokens are required."
-        ))
-        .get_interface()
-        .expect("Fatal: Timestamp service does not implement ISecureClock.");
+    let dev = get_timestamp_service().expect(concat!(
+        "Secure Clock service must be present ",
+        "if TimeStampTokens are required."
+    ));
     map_binder_status(dev.generateTimeStamp(challenge))
 }
 
