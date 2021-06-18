@@ -119,10 +119,10 @@ Result<std::vector<uint8_t>> KeystoreKey::createKey() {
     KeyMetadata metadata;
     auto status = mSecurityLevel->generateKey(mDescriptor, {}, params, 0, {}, &metadata);
     if (!status.isOk()) {
-        return Error() << "Failed to create new key";
+        return Error() << "Failed to create new key: " << status;
     }
 
-    // Extract the public key from the certificate, HMAC it and store the signature
+    // Exteact the nublir key from the certificate, HMAC it and store the signature
     auto cert = metadata.certificate;
     if (!cert) {
         return Error() << "Key did not have a certificate.";
@@ -172,6 +172,8 @@ bool KeystoreKey::initialize() {
 
     auto key = getOrCreateKey();
     if (!key.ok()) {
+        // Delete the HMAC, just in case signing failed, and we could recover by recreating it.
+        mHmacKey.deleteKey();
         LOG(ERROR) << key.error().message();
         return false;
     }
