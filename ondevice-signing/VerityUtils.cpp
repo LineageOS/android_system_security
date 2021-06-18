@@ -50,13 +50,6 @@ static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
 #define le16_to_cpu(v) (__builtin_bswap16((__force uint16_t)(v)))
 #endif
 
-struct fsverity_signed_digest {
-    char magic[8]; /* must be "FSVerity" */
-    __le16 digest_algorithm;
-    __le16 digest_size;
-    __u8 digest[];
-};
-
 static std::string toHex(std::span<uint8_t> data) {
     std::stringstream ss;
     for (auto it = data.begin(); it != data.end(); ++it) {
@@ -121,7 +114,7 @@ static trailing_unique_ptr<T> makeUniqueWithTrailingData(size_t trailing_data_si
 
 static Result<std::vector<uint8_t>> signDigest(const SigningKey& key,
                                                const std::vector<uint8_t>& digest) {
-    auto d = makeUniqueWithTrailingData<fsverity_signed_digest>(digest.size());
+    auto d = makeUniqueWithTrailingData<fsverity_formatted_digest>(digest.size());
 
     memcpy(d->magic, "FSVerity", 8);
     d->digest_algorithm = cpu_to_le16(FS_VERITY_HASH_ALG_SHA256);
