@@ -59,6 +59,8 @@ namespace KMV1 = ::aidl::android::hardware::security::keymint;
 using namespace std::chrono_literals;
 using std::chrono::duration_cast;
 
+static const KMV1::Tag KM_TAG_FBE_ICE = static_cast<KMV1::Tag>((7 << 28) | 16201);
+
 // Utility functions
 
 // Returns true if this parameter may be passed to attestKey.
@@ -484,6 +486,18 @@ ScopedAStatus KeyMintDevice::generateKey(const std::vector<KeyParameter>& inKeyP
 
     auto legacyKeyGenParams = convertKeyParametersToLegacy(extractGenerationParams(inKeyParams));
     KMV1::ErrorCode errorCode;
+
+    for (const auto& keyParam : inKeyParams) {
+        if((int32_t)keyParam.tag==(int32_t)KM_TAG_FBE_ICE) {
+            android::hardware::keymaster::V4_0::KeyParameter param1;
+            param1.tag = static_cast<::android::hardware::keymaster::V4_0::Tag>
+			(android::hardware::keymaster::V4_0::KM_TAG_FBE_ICE);
+            param1.f.boolValue = true;
+            legacyKeyGenParams.push_back(param1);
+            break;
+        }
+    }
+
     auto result = mDevice->generateKey(
         legacyKeyGenParams, [&](V4_0_ErrorCode error, const hidl_vec<uint8_t>& keyBlob,
                                 const V4_0_KeyCharacteristics& keyCharacteristics) {
