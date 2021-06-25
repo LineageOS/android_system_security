@@ -112,7 +112,7 @@ Result<void> KeystoreHmacKey::createKey() {
     KeyMetadata metadata;
     auto status = mSecurityLevel->generateKey(mDescriptor, {}, params, 0, {}, &metadata);
     if (!status.isOk()) {
-        return Error() << "Failed to create new HMAC key";
+        return Error() << "Failed to create new HMAC key: " << status;
     }
 
     return {};
@@ -209,8 +209,7 @@ Result<std::string> KeystoreHmacKey::sign(const std::string& message) const {
 
     auto status = mSecurityLevel->createOperation(mDescriptor, params, false, &opResponse);
     if (!status.isOk()) {
-        return Error() << "Failed to create keystore signing operation: "
-                       << status.serviceSpecificErrorCode();
+        return Error() << "Failed to create keystore signing operation: " << status;
     }
     auto operation = opResponse.iOperation;
 
@@ -240,8 +239,7 @@ Result<void> KeystoreHmacKey::verify(const std::string& message,
 
     auto status = mSecurityLevel->createOperation(mDescriptor, params, false, &opResponse);
     if (!status.isOk()) {
-        return Error() << "Failed to create keystore verification operation: "
-                       << status.serviceSpecificErrorCode();
+        return Error() << "Failed to create keystore verification operation: " << status;
     }
     auto operation = opResponse.iOperation;
 
@@ -256,6 +254,15 @@ Result<void> KeystoreHmacKey::verify(const std::string& message,
     status = operation->finish({}, in_signature, &out_signature);
     if (!status.isOk()) {
         return Error() << "Failed to call keystore finish operation.";
+    }
+
+    return {};
+}
+
+Result<void> KeystoreHmacKey::deleteKey() const {
+    auto status = mSecurityLevel->deleteKey(mDescriptor);
+    if (!status.isOk()) {
+        return Error() << "Failed to delete HMAC key: " << status;
     }
 
     return {};

@@ -37,6 +37,7 @@ class KeystoreHmacKey {
     android::base::Result<std::string> sign(const std::string& message) const;
     android::base::Result<void> verify(const std::string& message,
                                        const std::string& signature) const;
+    android::base::Result<void> deleteKey() const;
 
   private:
     android::base::Result<void> createKey();
