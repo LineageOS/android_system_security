@@ -122,7 +122,7 @@ Result<std::vector<uint8_t>> KeystoreKey::createKey() {
         return Error() << "Failed to create new key: " << status;
     }
 
-    // Exteact the nublir key from the certificate, HMAC it and store the signature
+    // Extract the public key from the certificate, HMAC it and store the signature
     auto cert = metadata.certificate;
     if (!cert) {
         return Error() << "Key did not have a certificate.";
@@ -178,7 +178,7 @@ bool KeystoreKey::initialize() {
         return false;
     }
     mPublicKey = *key;
-    LOG(ERROR) << "Initialized Keystore key.";
+    LOG(INFO) << "Initialized Keystore key.";
     return true;
 }
 
