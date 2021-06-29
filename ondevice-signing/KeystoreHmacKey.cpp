@@ -260,7 +260,7 @@ Result<void> KeystoreHmacKey::verify(const std::string& message,
 }
 
 Result<void> KeystoreHmacKey::deleteKey() const {
-    auto status = mSecurityLevel->deleteKey(mDescriptor);
+    auto status = mService->deleteKey(mDescriptor);
     if (!status.isOk()) {
         return Error() << "Failed to delete HMAC key: " << status;
     }
