@@ -21,7 +21,6 @@ use crate::legacy_blob::LegacyBlobLoader;
 use crate::legacy_migrator::LegacyMigrator;
 use crate::super_key::SuperKeyManager;
 use crate::utils::watchdog as wd;
-use crate::utils::Asp;
 use crate::{async_task::AsyncTask, database::MonotonicRawTime};
 use crate::{
     database::KeystoreDB,
@@ -32,6 +31,9 @@ use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
     KeyMintHardwareInfo::KeyMintHardwareInfo, SecurityLevel::SecurityLevel,
+};
+use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
+    ISecureClock::ISecureClock,
 };
 use android_hardware_security_keymint::binder::{StatusCode, Strong};
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
@@ -85,34 +87,33 @@ thread_local! {
             RefCell::new(create_thread_local_db());
 }
 
-#[derive(Default)]
-struct DevicesMap {
-    devices_by_uuid: HashMap<Uuid, (Asp, KeyMintHardwareInfo)>,
+struct DevicesMap<T: FromIBinder + ?Sized> {
+    devices_by_uuid: HashMap<Uuid, (Strong<T>, KeyMintHardwareInfo)>,
     uuid_by_sec_level: HashMap<SecurityLevel, Uuid>,
 }
 
-impl DevicesMap {
+impl<T: FromIBinder + ?Sized> DevicesMap<T> {
     fn dev_by_sec_level(
         &self,
         sec_level: &SecurityLevel,
-    ) -> Option<(Asp, KeyMintHardwareInfo, Uuid)> {
+    ) -> Option<(Strong<T>, KeyMintHardwareInfo, Uuid)> {
         self.uuid_by_sec_level.get(sec_level).and_then(|uuid| self.dev_by_uuid(uuid))
     }
 
-    fn dev_by_uuid(&self, uuid: &Uuid) -> Option<(Asp, KeyMintHardwareInfo, Uuid)> {
+    fn dev_by_uuid(&self, uuid: &Uuid) -> Option<(Strong<T>, KeyMintHardwareInfo, Uuid)> {
         self.devices_by_uuid
             .get(uuid)
             .map(|(dev, hw_info)| ((*dev).clone(), (*hw_info).clone(), *uuid))
     }
 
-    fn devices<T: FromIBinder + ?Sized>(&self) -> Vec<Strong<T>> {
-        self.devices_by_uuid.values().filter_map(|(asp, _)| asp.get_interface::<T>().ok()).collect()
+    fn devices(&self) -> Vec<Strong<T>> {
+        self.devices_by_uuid.values().map(|(dev, _)| dev.clone()).collect()
     }
 
     /// The requested security level and the security level of the actual implementation may
     /// differ. So we map the requested security level to the uuid of the implementation
     /// so that there cannot be any confusion as to which KeyMint instance is requested.
-    fn insert(&mut self, sec_level: SecurityLevel, dev: Asp, hw_info: KeyMintHardwareInfo) {
+    fn insert(&mut self, sec_level: SecurityLevel, dev: Strong<T>, hw_info: KeyMintHardwareInfo) {
         // For now we use the reported security level of the KM instance as UUID.
         // TODO update this section once UUID was added to the KM hardware info.
         let uuid: Uuid = sec_level.into();
@@ -121,17 +122,31 @@ impl DevicesMap {
     }
 }
 
-#[derive(Default)]
-struct RemotelyProvisionedDevicesMap {
-    devices_by_sec_level: HashMap<SecurityLevel, Asp>,
+impl<T: FromIBinder + ?Sized> Default for DevicesMap<T> {
+    fn default() -> Self {
+        Self {
+            devices_by_uuid: HashMap::<Uuid, (Strong<T>, KeyMintHardwareInfo)>::new(),
+            uuid_by_sec_level: Default::default(),
+        }
+    }
 }
 
-impl RemotelyProvisionedDevicesMap {
-    fn dev_by_sec_level(&self, sec_level: &SecurityLevel) -> Option<Asp> {
+struct RemotelyProvisionedDevicesMap<T: FromIBinder + ?Sized> {
+    devices_by_sec_level: HashMap<SecurityLevel, Strong<T>>,
+}
+
+impl<T: FromIBinder + ?Sized> Default for RemotelyProvisionedDevicesMap<T> {
+    fn default() -> Self {
+        Self { devices_by_sec_level: HashMap::<SecurityLevel, Strong<T>>::new() }
+    }
+}
+
+impl<T: FromIBinder + ?Sized> RemotelyProvisionedDevicesMap<T> {
+    fn dev_by_sec_level(&self, sec_level: &SecurityLevel) -> Option<Strong<T>> {
         self.devices_by_sec_level.get(sec_level).map(|dev| (*dev).clone())
     }
 
-    fn insert(&mut self, sec_level: SecurityLevel, dev: Asp) {
+    fn insert(&mut self, sec_level: SecurityLevel, dev: Strong<T>) {
         self.devices_by_sec_level.insert(sec_level, dev);
     }
 }
@@ -143,11 +158,13 @@ lazy_static! {
     /// Runtime database of unwrapped super keys.
     pub static ref SUPER_KEY: Arc<SuperKeyManager> = Default::default();
     /// Map of KeyMint devices.
-    static ref KEY_MINT_DEVICES: Mutex<DevicesMap> = Default::default();
+    static ref KEY_MINT_DEVICES: Mutex<DevicesMap<dyn IKeyMintDevice>> = Default::default();
     /// Timestamp service.
-    static ref TIME_STAMP_DEVICE: Mutex<Option<Asp>> = Default::default();
+    static ref TIME_STAMP_DEVICE: Mutex<Option<Strong<dyn ISecureClock>>> = Default::default();
     /// RemotelyProvisionedComponent HAL devices.
-    static ref REMOTELY_PROVISIONED_COMPONENT_DEVICES: Mutex<RemotelyProvisionedDevicesMap> = Default::default();
+    static ref REMOTELY_PROVISIONED_COMPONENT_DEVICES:
+            Mutex<RemotelyProvisionedDevicesMap<dyn IRemotelyProvisionedComponent>> =
+                    Default::default();
     /// A single on-demand worker thread that handles deferred tasks with two different
     /// priorities.
     pub static ref ASYNC_TASK: Arc<AsyncTask> = Default::default();
@@ -166,8 +183,7 @@ lazy_static! {
     static ref GC: Arc<Gc> = Arc::new(Gc::new_init_with(ASYNC_TASK.clone(), || {
         (
             Box::new(|uuid, blob| {
-                let km_dev: Strong<dyn IKeyMintDevice> =
-                    get_keymint_dev_by_uuid(uuid).map(|(dev, _)| dev)?.get_interface()?;
+                let km_dev = get_keymint_dev_by_uuid(uuid).map(|(dev, _)| dev)?;
                 let _wp = wd::watch_millis("In invalidate key closure: calling deleteKey", 500);
                 map_km_error(km_dev.deleteKey(&*blob))
                     .context("In invalidate key closure: Trying to invalidate key blob.")
@@ -184,7 +200,9 @@ static KEYMINT_SERVICE_NAME: &str = "android.hardware.security.keymint.IKeyMintD
 /// Make a new connection to a KeyMint device of the given security level.
 /// If no native KeyMint device can be found this function also brings
 /// up the compatibility service and attempts to connect to the legacy wrapper.
-fn connect_keymint(security_level: &SecurityLevel) -> Result<(Asp, KeyMintHardwareInfo)> {
+fn connect_keymint(
+    security_level: &SecurityLevel,
+) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
     let keymint_instances =
         get_aidl_instances("android.hardware.security.keymint", 1, "IKeyMintDevice");
 
@@ -251,7 +269,7 @@ fn connect_keymint(security_level: &SecurityLevel) -> Result<(Asp, KeyMintHardwa
         hw_info.versionNumber = hal_version;
     }
 
-    Ok((Asp::new(keymint.as_binder()), hw_info))
+    Ok((keymint, hw_info))
 }
 
 /// Get a keymint device for the given security level either from our cache or
@@ -259,7 +277,7 @@ fn connect_keymint(security_level: &SecurityLevel) -> Result<(Asp, KeyMintHardwa
 /// TODO the latter can be removed when the uuid is part of the hardware info.
 pub fn get_keymint_device(
     security_level: &SecurityLevel,
-) -> Result<(Asp, KeyMintHardwareInfo, Uuid)> {
+) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo, Uuid)> {
     let mut devices_map = KEY_MINT_DEVICES.lock().unwrap();
     if let Some((dev, hw_info, uuid)) = devices_map.dev_by_sec_level(&security_level) {
         Ok((dev, hw_info, uuid))
@@ -275,7 +293,9 @@ pub fn get_keymint_device(
 /// attempt to establish a new connection. It is assumed that the cache is already populated
 /// when this is called. This is a fair assumption, because service.rs iterates through all
 /// security levels when it gets instantiated.
-pub fn get_keymint_dev_by_uuid(uuid: &Uuid) -> Result<(Asp, KeyMintHardwareInfo)> {
+pub fn get_keymint_dev_by_uuid(
+    uuid: &Uuid,
+) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
     let devices_map = KEY_MINT_DEVICES.lock().unwrap();
     if let Some((dev, hw_info, _)) = devices_map.dev_by_uuid(uuid) {
         Ok((dev, hw_info))
@@ -294,7 +314,7 @@ static TIME_STAMP_SERVICE_NAME: &str = "android.hardware.security.secureclock.IS
 /// Make a new connection to a secure clock service.
 /// If no native SecureClock device can be found brings up the compatibility service and attempts
 /// to connect to the legacy wrapper.
-fn connect_secureclock() -> Result<Asp> {
+fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
     let secureclock_instances =
         get_aidl_instances("android.hardware.security.secureclock", 1, "ISecureClock");
 
@@ -325,12 +345,12 @@ fn connect_secureclock() -> Result<Asp> {
             .context("In connect_secureclock: Trying to get Legacy wrapper.")
     }?;
 
-    Ok(Asp::new(secureclock.as_binder()))
+    Ok(secureclock)
 }
 
 /// Get the timestamp service that verifies auth token timeliness towards security levels with
 /// different clocks.
-pub fn get_timestamp_service() -> Result<Asp> {
+pub fn get_timestamp_service() -> Result<Strong<dyn ISecureClock>> {
     let mut ts_device = TIME_STAMP_DEVICE.lock().unwrap();
     if let Some(dev) = &*ts_device {
         Ok(dev.clone())
@@ -344,7 +364,9 @@ pub fn get_timestamp_service() -> Result<Asp> {
 static REMOTE_PROVISIONING_HAL_SERVICE_NAME: &str =
     "android.hardware.security.keymint.IRemotelyProvisionedComponent";
 
-fn connect_remotely_provisioned_component(security_level: &SecurityLevel) -> Result<Asp> {
+fn connect_remotely_provisioned_component(
+    security_level: &SecurityLevel,
+) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
     let remotely_prov_instances =
         get_aidl_instances("android.hardware.security.keymint", 1, "IRemotelyProvisionedComponent");
 
@@ -375,12 +397,14 @@ fn connect_remotely_provisioned_component(security_level: &SecurityLevel) -> Res
                 " RemotelyProvisionedComponent service."
             ))
             .map_err(|e| e)?;
-    Ok(Asp::new(rem_prov_hal.as_binder()))
+    Ok(rem_prov_hal)
 }
 
 /// Get a remote provisiong component device for the given security level either from the cache or
 /// by making a new connection. Returns the device.
-pub fn get_remotely_provisioned_component(security_level: &SecurityLevel) -> Result<Asp> {
+pub fn get_remotely_provisioned_component(
+    security_level: &SecurityLevel,
+) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
     let mut devices_map = REMOTELY_PROVISIONED_COMPONENT_DEVICES.lock().unwrap();
     if let Some(dev) = devices_map.dev_by_sec_level(&security_level) {
         Ok(dev)
