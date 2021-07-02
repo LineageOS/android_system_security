@@ -62,11 +62,11 @@ impl KeyMintDevice {
 
     /// Get a [`KeyMintDevice`] for the given [`SecurityLevel`]
     pub fn get(security_level: SecurityLevel) -> Result<KeyMintDevice> {
-        let (asp, hw_info, km_uuid) = get_keymint_device(&security_level)
+        let (km_dev, hw_info, km_uuid) = get_keymint_device(&security_level)
             .context("In KeyMintDevice::get: get_keymint_device failed")?;
 
         Ok(KeyMintDevice {
-            km_dev: asp.get_interface()?,
+            km_dev,
             km_uuid,
             version: hw_info.versionNumber,
             security_level: hw_info.securityLevel,
