@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::database::{CertificateChain, KeystoreDB, Uuid};
 use crate::error::{self, map_or_log_err, map_rem_prov_error, Error};
 use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB};
-use crate::utils::{watchdog as wd, Asp};
+use crate::utils::watchdog as wd;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
 /// to assign and retrieve attestation keys and certificate chains.
@@ -204,7 +204,7 @@ impl RemProvState {
 /// Implementation of the IRemoteProvisioning service.
 #[derive(Default)]
 pub struct RemoteProvisioningService {
-    device_by_sec_level: HashMap<SecurityLevel, Asp>,
+    device_by_sec_level: HashMap<SecurityLevel, Strong<dyn IRemotelyProvisionedComponent>>,
 }
 
 impl RemoteProvisioningService {
@@ -213,7 +213,7 @@ impl RemoteProvisioningService {
         sec_level: &SecurityLevel,
     ) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
         if let Some(dev) = self.device_by_sec_level.get(sec_level) {
-            dev.get_interface().context("In get_dev_by_sec_level.")
+            Ok(dev.clone())
         } else {
             Err(error::Error::sys()).context(concat!(
                 "In get_dev_by_sec_level: Remote instance for requested security level",
@@ -232,26 +232,6 @@ impl RemoteProvisioningService {
             result.device_by_sec_level.insert(SecurityLevel::STRONGBOX, dev);
         }
         Ok(BnRemoteProvisioning::new_binder(result, BinderFeatures::default()))
-    }
-
-    /// Populates the AttestationPoolStatus parcelable with information about how many
-    /// certs will be expiring by the date provided in `expired_by` along with how many
-    /// keys have not yet been assigned.
-    pub fn get_pool_status(
-        &self,
-        expired_by: i64,
-        sec_level: SecurityLevel,
-    ) -> Result<AttestationPoolStatus> {
-        let (_, _, uuid) = get_keymint_device(&sec_level)?;
-        DB.with::<_, Result<AttestationPoolStatus>>(|db| {
-            let mut db = db.borrow_mut();
-            // delete_expired_attestation_keys is always safe to call, and will remove anything
-            // older than the date at the time of calling. No work should be done on the
-            // attestation keys unless the pool status is checked first, so this call should be
-            // enough to routinely clean out expired keys.
-            db.delete_expired_attestation_keys()?;
-            db.get_attestation_pool_status(expired_by, &uuid)
-        })
     }
 
     /// Generates a CBOR blob which will be assembled by the calling code into a larger
@@ -389,6 +369,22 @@ impl RemoteProvisioningService {
     }
 }
 
+/// Populates the AttestationPoolStatus parcelable with information about how many
+/// certs will be expiring by the date provided in `expired_by` along with how many
+/// keys have not yet been assigned.
+pub fn get_pool_status(expired_by: i64, sec_level: SecurityLevel) -> Result<AttestationPoolStatus> {
+    let (_, _, uuid) = get_keymint_device(&sec_level)?;
+    DB.with::<_, Result<AttestationPoolStatus>>(|db| {
+        let mut db = db.borrow_mut();
+        // delete_expired_attestation_keys is always safe to call, and will remove anything
+        // older than the date at the time of calling. No work should be done on the
+        // attestation keys unless the pool status is checked first, so this call should be
+        // enough to routinely clean out expired keys.
+        db.delete_expired_attestation_keys()?;
+        db.get_attestation_pool_status(expired_by, &uuid)
+    })
+}
+
 impl binder::Interface for RemoteProvisioningService {}
 
 // Implementation of IRemoteProvisioning. See AIDL spec at
@@ -400,7 +396,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         sec_level: SecurityLevel,
     ) -> binder::public_api::Result<AttestationPoolStatus> {
         let _wp = wd::watch_millis("IRemoteProvisioning::getPoolStatus", 500);
-        map_or_log_err(self.get_pool_status(expired_by, sec_level), Ok)
+        map_or_log_err(get_pool_status(expired_by, sec_level), Ok)
     }
 
     fn generateCsr(
