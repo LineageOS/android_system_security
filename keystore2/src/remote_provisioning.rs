@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::database::{CertificateChain, KeystoreDB, Uuid};
 use crate::error::{self, map_or_log_err, map_rem_prov_error, Error};
 use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB};
-use crate::utils::{watchdog as wd, Asp};
+use crate::utils::watchdog as wd;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
 /// to assign and retrieve attestation keys and certificate chains.
@@ -204,7 +204,7 @@ impl RemProvState {
 /// Implementation of the IRemoteProvisioning service.
 #[derive(Default)]
 pub struct RemoteProvisioningService {
-    device_by_sec_level: HashMap<SecurityLevel, Asp>,
+    device_by_sec_level: HashMap<SecurityLevel, Strong<dyn IRemotelyProvisionedComponent>>,
 }
 
 impl RemoteProvisioningService {
@@ -213,7 +213,7 @@ impl RemoteProvisioningService {
         sec_level: &SecurityLevel,
     ) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
         if let Some(dev) = self.device_by_sec_level.get(sec_level) {
-            dev.get_interface().context("In get_dev_by_sec_level.")
+            Ok(dev.clone())
         } else {
             Err(error::Error::sys()).context(concat!(
                 "In get_dev_by_sec_level: Remote instance for requested security level",
