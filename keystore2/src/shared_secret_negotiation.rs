@@ -21,7 +21,7 @@ use android_hardware_security_sharedsecret::aidl::android::hardware::security::s
     ISharedSecret::ISharedSecret, SharedSecretParameters::SharedSecretParameters,
 };
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use keystore2_vintf::{get_aidl_instances, get_hidl_instances};
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
@@ -118,48 +118,32 @@ fn list_participants() -> Result<Vec<SharedSecretParticipant>> {
         .iter()
         .map(|(ma, mi)| {
             get_hidl_instances(KEYMASTER_PACKAGE_NAME, *ma, *mi, KEYMASTER_INTERFACE_NAME)
-                .as_vec()
-                .with_context(|| format!("Trying to convert KM{}.{} names to vector.", *ma, *mi))
-                .map(|instances| {
-                    instances
-                        .into_iter()
-                        .filter_map(|name| {
-                            filter_map_legacy_km_instances(name.to_string(), (*ma, *mi)).and_then(
-                                |sp| {
-                                    if let SharedSecretParticipant::Hidl {
-                                        is_strongbox: true,
-                                        ..
-                                    } = &sp
-                                    {
-                                        if !legacy_strongbox_found {
-                                            legacy_strongbox_found = true;
-                                            return Some(sp);
-                                        }
-                                    } else if !legacy_default_found {
-                                        legacy_default_found = true;
-                                        return Some(sp);
-                                    }
-                                    None
-                                },
-                            )
-                        })
-                        .collect::<Vec<SharedSecretParticipant>>()
+                .into_iter()
+                .filter_map(|name| {
+                    filter_map_legacy_km_instances(name, (*ma, *mi)).and_then(|sp| {
+                        if let SharedSecretParticipant::Hidl { is_strongbox: true, .. } = &sp {
+                            if !legacy_strongbox_found {
+                                legacy_strongbox_found = true;
+                                return Some(sp);
+                            }
+                        } else if !legacy_default_found {
+                            legacy_default_found = true;
+                            return Some(sp);
+                        }
+                        None
+                    })
                 })
+                .collect::<Vec<SharedSecretParticipant>>()
         })
-        .collect::<Result<Vec<_>>>()
-        .map(|v| v.into_iter().flatten())
-        .and_then(|i| {
-            Ok(i.chain(
-                get_aidl_instances(SHARED_SECRET_PACKAGE_NAME, 1, SHARED_SECRET_INTERFACE_NAME)
-                    .as_vec()
-                    .context("In list_participants: Trying to convert KM1.0 names to vector.")?
-                    .into_iter()
-                    .map(|name| SharedSecretParticipant::Aidl(name.to_string()))
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            ))
+        .into_iter()
+        .flatten()
+        .chain({
+            get_aidl_instances(SHARED_SECRET_PACKAGE_NAME, 1, SHARED_SECRET_INTERFACE_NAME)
+                .into_iter()
+                .map(SharedSecretParticipant::Aidl)
+                .collect::<Vec<_>>()
+                .into_iter()
         })
-        .context("In list_participants.")?
         .collect())
 }
 
