@@ -22,10 +22,24 @@
 
 #include <android-base/result.h>
 
+// Information extracted from a certificate.
 struct CertInfo {
     std::string subjectCn;
     std::vector<uint8_t> subjectKey;
 };
+
+// Subjects of certificates we issue.
+struct CertSubject {
+    const char* commonName;
+    unsigned serialNumber;
+};
+
+// These are all the certificates we ever sign (the first one being our
+// self-signed cert).  We shouldn't really re-use serial numbers for different
+// certificates for the same subject but we do; only one should be in use at a
+// time though.
+inline const CertSubject kRootSubject{"ODS", 1};
+inline const CertSubject kCompOsSubject{"CompOs", 2};
 
 android::base::Result<void> createSelfSignedCertificate(
     const std::vector<uint8_t>& publicKey,
@@ -33,11 +47,12 @@ android::base::Result<void> createSelfSignedCertificate(
     const std::string& path);
 
 android::base::Result<void> createLeafCertificate(
-    const char* commonName, const std::vector<uint8_t>& publicKey,
+    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::string& issuerCertPath, const std::string& outPath);
 
-android::base::Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signedData);
+android::base::Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signedData,
+                                                        const CertSubject& signer);
 
 android::base::Result<std::vector<uint8_t>>
 extractPublicKeyFromX509(const std::vector<uint8_t>& x509);
