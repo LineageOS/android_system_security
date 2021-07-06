@@ -299,6 +299,37 @@ Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::string& path) {
     return extractPublicKey(X509_get_pubkey(cert.value().get()));
 }
 
+Result<std::vector<uint8_t>> extractRsaPublicKey(EVP_PKEY* pkey) {
+    RSA* rsa = EVP_PKEY_get0_RSA(pkey);
+    if (rsa == nullptr) {
+        return Error() << "The public key is not an RSA key";
+    }
+
+    uint8_t* out = nullptr;
+    int size = i2d_RSAPublicKey(rsa, &out);
+    if (size < 0 || !out) {
+        return Error() << "Failed to convert to RSAPublicKey";
+    }
+
+    bssl::UniquePtr<uint8_t> buffer(out);
+    std::vector<uint8_t> result(out, out + size);
+    return result;
+}
+
+Result<std::vector<uint8_t>> extractRsaPublicKeyFromX509(const std::vector<uint8_t>& derCert) {
+    auto derCertBytes = derCert.data();
+    bssl::UniquePtr<X509> decoded_cert(d2i_X509(nullptr, &derCertBytes, derCert.size()));
+    if (decoded_cert.get() == nullptr) {
+        return Error() << "Failed to decode X509 certificate.";
+    }
+    bssl::UniquePtr<EVP_PKEY> decoded_pkey(X509_get_pubkey(decoded_cert.get()));
+    if (decoded_pkey == nullptr) {
+        return Error() << "Failed to extract public key from x509 cert";
+    }
+
+    return extractRsaPublicKey(decoded_pkey.get());
+}
+
 Result<CertInfo> verifyAndExtractCertInfoFromX509(const std::string& path,
                                                   const std::vector<uint8_t>& publicKey) {
     auto public_key = toRsaPkey(publicKey);
