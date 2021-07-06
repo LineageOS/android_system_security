@@ -14,26 +14,16 @@
  * limitations under the License.
  */
 
-package {
-    default_applicable_licenses: ["Android-Apache-2.0"],
-}
+syntax = "proto3";
 
-cc_library_static {
-    name: "lib_odsign_proto",
-    host_supported: true,
-    proto: {
-        export_proto_headers: true,
-        type: "full",
-    },
-    srcs: ["odsign_info.proto"],
-}
+package compos.proto;
 
-cc_library_static {
-    name: "lib_compos_proto",
-    host_supported: true,
-    proto: {
-        export_proto_headers: true,
-        type: "full",
-    },
-    srcs: ["compos_signature.proto"],
+// Data provided by CompOS to allow validation of a file it generated.
+message Signature {
+    // The fs-verity digest (root hash of the Merkle tree) of the file
+    // contents.
+    bytes digest = 1;
+
+    // Signature of the digest, signed using CompOS's private key.
+    bytes signature = 2;
 }

@@ -31,8 +31,10 @@
 
 #include "KeyConstants.h"
 
-const char kRootCommonName[] = "ODS";
+// Common properties for all of our certificates.
 constexpr int kCertLifetimeSeconds = 10 * 365 * 24 * 60 * 60;
+const char* const kIssuerCountry = "US";
+const char* const kIssuerOrg = "Android";
 
 using android::base::ErrnoError;
 using android::base::Error;
@@ -105,7 +107,7 @@ Result<void> verifySignature(const std::string& message, const std::string& sign
                               (const uint8_t*)signature.c_str(), signature.length(), rsaKey->get());
 
     if (!success) {
-        return Error() << "Failed to verify signature.";
+        return Error() << "Failed to verify signature";
     }
     return {};
 }
@@ -126,7 +128,7 @@ static Result<bssl::UniquePtr<EVP_PKEY>> toRsaPkey(const std::vector<uint8_t>& p
 }
 
 static Result<void> createCertificate(
-    const char* commonName, const std::vector<uint8_t>& publicKey,
+    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::optional<std::string>& issuerCertPath, const std::string& path) {
 
@@ -141,7 +143,7 @@ static Result<void> createCertificate(
     X509_set_version(x509.get(), 2);
     X509_gmtime_adj(X509_get_notBefore(x509.get()), 0);
     X509_gmtime_adj(X509_get_notAfter(x509.get()), kCertLifetimeSeconds);
-    ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), selfSigned ? 1 : 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), subject.serialNumber);
 
     bssl::UniquePtr<X509_ALGOR> algor(X509_ALGOR_new());
     if (!algor ||
@@ -164,9 +166,9 @@ static Result<void> createCertificate(
     if (!subjectName) {
         return Error() << "Unable to get x509 subject name";
     }
-    addNameEntry(subjectName, "C", "US");
-    addNameEntry(subjectName, "O", "Android");
-    addNameEntry(subjectName, "CN", commonName);
+    addNameEntry(subjectName, "C", kIssuerCountry);
+    addNameEntry(subjectName, "O", kIssuerOrg);
+    addNameEntry(subjectName, "CN", subject.commonName);
 
     if (selfSigned) {
         if (!X509_set_issuer_name(x509.get(), subjectName)) {
@@ -177,9 +179,9 @@ static Result<void> createCertificate(
         if (!issuerName) {
             return Error() << "Unable to get x509 issuer name";
         }
-        addNameEntry(issuerName, "C", "US");
-        addNameEntry(issuerName, "O", "Android");
-        addNameEntry(issuerName, "CN", kRootCommonName);
+        addNameEntry(issuerName, "C", kIssuerCountry);
+        addNameEntry(issuerName, "O", kIssuerOrg);
+        addNameEntry(issuerName, "CN", kRootSubject.commonName);
     }
 
     // Beware: context contains a pointer to issuerCert, so we need to keep it alive.
@@ -239,14 +241,14 @@ Result<void> createSelfSignedCertificate(
     const std::vector<uint8_t>& publicKey,
     const std::function<Result<std::string>(const std::string&)>& signFunction,
     const std::string& path) {
-    return createCertificate(kRootCommonName, publicKey, signFunction, {}, path);
+    return createCertificate(kRootSubject, publicKey, signFunction, {}, path);
 }
 
 android::base::Result<void> createLeafCertificate(
-    const char* commonName, const std::vector<uint8_t>& publicKey,
+    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::string& issuerCertPath, const std::string& path) {
-    return createCertificate(commonName, publicKey, signFunction, issuerCertPath, path);
+    return createCertificate(subject, publicKey, signFunction, issuerCertPath, path);
 }
 
 Result<std::vector<uint8_t>> extractPublicKey(EVP_PKEY* pkey) {
@@ -340,7 +342,8 @@ Result<CertInfo> verifyAndExtractCertInfoFromX509(const std::string& path,
     return cert_info;
 }
 
-Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signed_digest) {
+Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signed_digest,
+                                         const CertSubject& signer) {
     CBB out, outer_seq, wrapped_seq, seq, digest_algos_set, digest_algo, null;
     CBB content_info, issuer_and_serial, signer_infos, signer_info, sign_algo, signature;
     uint8_t *pkcs7_data, *name_der;
@@ -353,13 +356,14 @@ Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signed_dige
         return Error() << "Unable to get x509 subject name";
     }
     X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>("US"), -1, -1, 0);
+                               reinterpret_cast<const unsigned char*>(kIssuerCountry), -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>("Android"), -1, -1, 0);
+                               reinterpret_cast<const unsigned char*>(kIssuerOrg), -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>("ODS"), -1, -1, 0);
+                               reinterpret_cast<const unsigned char*>(signer.commonName), -1, -1,
+                               0);
 
-    BN_set_word(serial, 1);
+    BN_set_word(serial, signer.serialNumber);
     name_der_len = i2d_X509_NAME(name, &name_der);
     CBB_init(&out, 1024);
 
