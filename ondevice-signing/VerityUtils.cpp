@@ -210,27 +210,18 @@ Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::
     return digests;
 }
 
-Result<std::string> readVerityDigest(int fd) {
+Result<std::string> isFileInVerity(int fd) {
     auto d = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
     d->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
     auto ret = ioctl(fd, FS_IOC_MEASURE_VERITY, d.get());
     if (ret < 0) {
-        return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY";
+        if (errno == ENODATA) {
+            return Error() << "File is not in fs-verity";
+        } else {
+            return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY";
+        }
     }
     return toHex({&d->digest[0], &d->digest[d->digest_size]});
-}
-
-Result<std::string> isFileInVerity(int fd) {
-    unsigned int flags;
-    int ret = ioctl(fd, FS_IOC_GETFLAGS, &flags);
-    if (ret < 0) {
-        return ErrnoError() << "Failed to FS_IOC_GETFLAGS";
-    }
-    if (!(flags & FS_VERITY_FL)) {
-        return Error() << "File is not in fs-verity";
-    }
-
-    return readVerityDigest(fd);
 }
 
 Result<std::string> isFileInVerity(const std::string& path) {
