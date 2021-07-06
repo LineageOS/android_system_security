@@ -221,7 +221,7 @@ Result<std::vector<uint8_t>> verifyOrGenerateCompOsKey(const SigningKey& signing
         if (!keyData.ok()) {
             return Error() << "Failed to generate key: " << keyData.error();
         }
-        auto publicKeyStatus = extractPublicKeyFromX509(keyData.value().cert);
+        auto publicKeyStatus = extractRsaPublicKeyFromX509(keyData.value().cert);
         if (!publicKeyStatus.ok()) {
             return Error() << "Failed to extract CompOs public key" << publicKeyStatus.error();
         }
