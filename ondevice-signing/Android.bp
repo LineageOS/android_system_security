@@ -11,8 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// List of clang-tidy checks that are reported as errors.
-// Please keep this list ordered lexicographically.
 
 package {
     // See: http://go/android-license-faq
@@ -23,6 +21,8 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
+// List of clang-tidy checks that are reported as errors.
+// Please keep this list ordered lexicographically.
 tidy_errors = [
   "cert-err34-c",
   "google-default-arguments",
@@ -95,6 +95,7 @@ cc_binary {
   static_libs: [
     "libc++fs",
     "lib_odsign_proto",
+    "lib_compos_proto",
   ],
 
   shared_libs: [
