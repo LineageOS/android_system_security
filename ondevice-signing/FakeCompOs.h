@@ -53,6 +53,9 @@ class FakeCompOs {
 
     android::base::Result<ByteVector> signData(const ByteVector& keyBlob,
                                                const ByteVector& data) const;
+    android::base::Result<void> verifySignature(const ByteVector& message,
+                                                const ByteVector& signature,
+                                                const ByteVector& rsaPublicKey) const;
 
     KeyDescriptor mDescriptor;
     android::sp<IKeystoreService> mService;
