@@ -16,7 +16,6 @@
 
 #include "FakeCompOs.h"
 
-#include "CertUtils.h"
 #include "KeyConstants.h"
 
 #include <android-base/file.h>
@@ -26,7 +25,10 @@
 
 #include <binder/IServiceManager.h>
 
+#include <openssl/nid.h>
 #include <openssl/rand.h>
+#include <openssl/rsa.h>
+#include <openssl/sha.h>
 
 using android::String16;
 
@@ -210,6 +212,28 @@ Result<FakeCompOs::ByteVector> FakeCompOs::signData(const ByteVector& keyBlob,
     return signature.value();
 }
 
+Result<void> FakeCompOs::verifySignature(const ByteVector& message, const ByteVector& signature,
+                                         const ByteVector& rsaPublicKey) const {
+    auto derBytes = rsaPublicKey.data();
+    bssl::UniquePtr<RSA> rsaKey(d2i_RSAPublicKey(nullptr, &derBytes, rsaPublicKey.size()));
+    if (rsaKey.get() == nullptr) {
+        return Error() << "Failed to parse RsaPublicKey";
+    }
+    if (derBytes != rsaPublicKey.data() + rsaPublicKey.size()) {
+        return Error() << "Key has unexpected trailing data";
+    }
+
+    uint8_t hashBuf[SHA256_DIGEST_LENGTH];
+    SHA256(message.data(), message.size(), hashBuf);
+
+    bool success = RSA_verify(NID_sha256, hashBuf, sizeof(hashBuf), signature.data(),
+                              signature.size(), rsaKey.get());
+    if (!success) {
+        return Error() << "Failed to verify signature";
+    }
+    return {};
+}
+
 Result<void> FakeCompOs::loadAndVerifyKey(const ByteVector& keyBlob,
                                           const ByteVector& publicKey) const {
     // To verify the key is valid, we use it to sign some data, and then verify the signature using
@@ -225,8 +249,5 @@ Result<void> FakeCompOs::loadAndVerifyKey(const ByteVector& keyBlob,
         return signature.error();
     }
 
-    std::string dataStr(data.begin(), data.end());
-    std::string signatureStr(signature.value().begin(), signature.value().end());
-
-    return verifySignature(dataStr, signatureStr, publicKey);
+    return verifySignature(data, signature.value(), publicKey);
 }

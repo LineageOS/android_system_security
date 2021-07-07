@@ -32,6 +32,7 @@
 
 #include "CertUtils.h"
 #include "SigningKey.h"
+#include "compos_signature.pb.h"
 
 #define FS_VERITY_MAX_DIGEST_SIZE 64
 
@@ -40,7 +41,10 @@ using android::base::Error;
 using android::base::Result;
 using android::base::unique_fd;
 
+using compos::proto::Signature;
+
 static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
+static const char* kSignatureExtension = ".signature";
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define cpu_to_le16(v) ((__force __le16)(uint16_t)(v))
@@ -50,7 +54,11 @@ static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
 #define le16_to_cpu(v) (__builtin_bswap16((__force uint16_t)(v)))
 #endif
 
-static std::string toHex(std::span<uint8_t> data) {
+static bool isSignatureFile(const std::filesystem::path& path) {
+    return path.extension().native() == kSignatureExtension;
+}
+
+static std::string toHex(std::span<const uint8_t> data) {
     std::stringstream ss;
     for (auto it = data.begin(); it != data.end(); ++it) {
         ss << std::setfill('0') << std::setw(2) << std::hex << static_cast<unsigned>(*it);
@@ -64,16 +72,11 @@ static int read_callback(void* file, void* buf, size_t count) {
     return 0;
 }
 
-Result<std::vector<uint8_t>> createDigest(const std::string& path) {
+Result<std::vector<uint8_t>> createDigest(int fd) {
     struct stat filestat;
-    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
-    if (fd < 0) {
-        return ErrnoError() << "Failed to open " << path;
-    }
-
-    int ret = stat(path.c_str(), &filestat);
+    int ret = fstat(fd, &filestat);
     if (ret < 0) {
-        return ErrnoError() << "Failed to stat " << path;
+        return ErrnoError() << "Failed to fstat";
     }
     struct libfsverity_merkle_tree_params params = {
         .version = 1,
@@ -85,11 +88,19 @@ Result<std::vector<uint8_t>> createDigest(const std::string& path) {
     struct libfsverity_digest* digest;
     ret = libfsverity_compute_digest(&fd, &read_callback, &params, &digest);
     if (ret < 0) {
-        return ErrnoError() << "Failed to compute fs-verity digest for " << path;
+        return ErrnoError() << "Failed to compute fs-verity digest";
     }
     std::vector<uint8_t> digestVector(&digest->digest[0], &digest->digest[32]);
     free(digest);
     return digestVector;
+}
+
+Result<std::vector<uint8_t>> createDigest(const std::string& path) {
+    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
+    if (!fd.ok()) {
+        return ErrnoError() << "Unable to open";
+    }
+    return createDigest(fd.get());
 }
 
 namespace {
@@ -129,10 +140,32 @@ static Result<std::vector<uint8_t>> signDigest(const SigningKey& key,
     return std::vector<uint8_t>(signed_digest->begin(), signed_digest->end());
 }
 
+Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
+    struct fsverity_enable_arg arg = {.version = 1};
+
+    arg.sig_ptr = reinterpret_cast<uint64_t>(pkcs7.data());
+    arg.sig_size = pkcs7.size();
+    arg.hash_algorithm = FS_VERITY_HASH_ALG_SHA256;
+    arg.block_size = 4096;
+
+    int ret = ioctl(fd, FS_IOC_ENABLE_VERITY, &arg);
+
+    if (ret != 0) {
+        return ErrnoError() << "Failed to call FS_IOC_ENABLE_VERITY";
+    }
+
+    return {};
+}
+
 Result<std::string> enableFsVerity(const std::string& path, const SigningKey& key) {
-    auto digest = createDigest(path);
+    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
+    if (!fd.ok()) {
+        return ErrnoError() << "Failed to open " << path;
+    }
+
+    auto digest = createDigest(fd.get());
     if (!digest.ok()) {
-        return digest.error();
+        return Error() << digest.error() << ": " << path;
     }
 
     auto signed_digest = signDigest(key, digest.value());
@@ -140,20 +173,14 @@ Result<std::string> enableFsVerity(const std::string& path, const SigningKey& ke
         return signed_digest.error();
     }
 
-    auto pkcs7_data = createPkcs7(signed_digest.value());
+    auto pkcs7_data = createPkcs7(signed_digest.value(), kRootSubject);
+    if (!pkcs7_data.ok()) {
+        return pkcs7_data.error();
+    }
 
-    struct fsverity_enable_arg arg = {.version = 1};
-
-    arg.sig_ptr = (uint64_t)pkcs7_data->data();
-    arg.sig_size = pkcs7_data->size();
-    arg.hash_algorithm = FS_VERITY_HASH_ALG_SHA256;
-    arg.block_size = 4096;
-
-    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
-    int ret = ioctl(fd, FS_IOC_ENABLE_VERITY, &arg);
-
-    if (ret != 0) {
-        return ErrnoError() << "Failed to call FS_IOC_ENABLE_VERITY on " << path;
+    auto enabled = enableFsVerity(fd.get(), pkcs7_data.value());
+    if (!enabled.ok()) {
+        return Error() << enabled.error() << ": " << path;
     }
 
     // Return the root hash as a hex string
@@ -163,12 +190,10 @@ Result<std::string> enableFsVerity(const std::string& path, const SigningKey& ke
 Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::string& path,
                                                                      const SigningKey& key) {
     std::map<std::string, std::string> digests;
+
     std::error_code ec;
-
     auto it = std::filesystem::recursive_directory_iterator(path, ec);
-    auto end = std::filesystem::recursive_directory_iterator();
-
-    while (!ec && it != end) {
+    for (auto end = std::filesystem::recursive_directory_iterator(); it != end; it.increment(ec)) {
         if (it->is_regular_file()) {
             LOG(INFO) << "Adding " << it->path() << " to fs-verity...";
             auto result = enableFsVerity(it->path(), key);
@@ -177,38 +202,40 @@ Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::
             }
             digests[it->path()] = *result;
         }
-        ++it;
     }
     if (ec) {
-        return Error() << "Failed to iterate " << path << ": " << ec;
+        return Error() << "Failed to iterate " << path << ": " << ec.message();
     }
 
     return digests;
 }
 
-Result<std::string> isFileInVerity(const std::string& path) {
-    unsigned int flags;
+Result<std::string> isFileInVerity(int fd) {
+    auto d = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
+    d->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
+    auto ret = ioctl(fd, FS_IOC_MEASURE_VERITY, d.get());
+    if (ret < 0) {
+        if (errno == ENODATA) {
+            return Error() << "File is not in fs-verity";
+        } else {
+            return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY";
+        }
+    }
+    return toHex({&d->digest[0], &d->digest[d->digest_size]});
+}
 
+Result<std::string> isFileInVerity(const std::string& path) {
     unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
-    if (fd < 0) {
+    if (!fd.ok()) {
         return ErrnoError() << "Failed to open " << path;
     }
 
-    int ret = ioctl(fd, FS_IOC_GETFLAGS, &flags);
-    if (ret < 0) {
-        return ErrnoError() << "Failed to FS_IOC_GETFLAGS for " << path;
-    }
-    if (!(flags & FS_VERITY_FL)) {
-        return Error() << "File is not in fs-verity: " << path;
+    auto digest = isFileInVerity(fd);
+    if (!digest.ok()) {
+        return Error() << digest.error() << ": " << path;
     }
 
-    auto d = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
-    d->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
-    ret = ioctl(fd, FS_IOC_MEASURE_VERITY, d.get());
-    if (ret < 0) {
-        return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY for " << path;
-    }
-    return toHex({&d->digest[0], &d->digest[d->digest_size]});
+    return digest;
 }
 
 Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::string& path) {
@@ -240,6 +267,113 @@ Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::str
     }
 
     return digests;
+}
+
+Result<Signature> readSignature(const std::filesystem::path& signature_path) {
+    unique_fd fd(TEMP_FAILURE_RETRY(open(signature_path.c_str(), O_RDONLY | O_CLOEXEC)));
+    if (fd == -1) {
+        return ErrnoError();
+    }
+    Signature signature;
+    if (!signature.ParseFromFileDescriptor(fd.get())) {
+        return Error() << "Failed to parse";
+    }
+    return signature;
+}
+
+Result<std::map<std::string, std::string>>
+verifyAllFilesUsingCompOs(const std::string& directory_path,
+                          const std::vector<uint8_t>& compos_key) {
+    std::map<std::string, std::string> new_digests;
+    std::vector<std::filesystem::path> signature_files;
+
+    std::error_code ec;
+    auto it = std::filesystem::recursive_directory_iterator(directory_path, ec);
+    for (auto end = std::filesystem::recursive_directory_iterator(); it != end; it.increment(ec)) {
+        auto& path = it->path();
+        if (it->is_regular_file()) {
+            if (isSignatureFile(path)) {
+                continue;
+            }
+
+            unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
+            if (!fd.ok()) {
+                return ErrnoError() << "Can't open " << path;
+            }
+
+            auto signature_path = path;
+            signature_path += kSignatureExtension;
+            auto signature = readSignature(signature_path);
+            if (!signature.ok()) {
+                return Error() << "Invalid signature " << signature_path << ": "
+                               << signature.error();
+            }
+            signature_files.push_back(signature_path);
+
+            // Note that these values are not yet trusted.
+            auto& raw_digest = signature->digest();
+            auto& raw_signature = signature->signature();
+
+            // Make sure the signature matches the CompOs public key, and not some other
+            // fs-verity trusted key.
+            auto verified = verifySignature(raw_digest, raw_signature, compos_key);
+            if (!verified.ok()) {
+                return Error() << verified.error() << ": " << path;
+            }
+
+            std::span<const uint8_t> digest_bytes(
+                reinterpret_cast<const uint8_t*>(raw_digest.data()), raw_digest.size());
+            std::string compos_digest = toHex(digest_bytes);
+
+            auto verity_digest = isFileInVerity(fd);
+            if (verity_digest.ok()) {
+                // The file is already in fs-verity. We need to make sure it was signed
+                // by CompOs, so we just check that it has the digest we expect.
+                if (verity_digest.value() != compos_digest) {
+                    return Error() << "fs-verity digest does not match signature file: " << path;
+                }
+            } else {
+                // Not in fs-verity yet. But we have a valid signature of some
+                // digest. If it's not the correct digest for the file then
+                // enabling fs-verity will fail, so we don't need to check it
+                // explicitly ourselves. Otherwise we should be good.
+                std::vector<uint8_t> signature_bytes(raw_signature.begin(), raw_signature.end());
+                auto pkcs7 = createPkcs7(signature_bytes, kCompOsSubject);
+                if (!pkcs7.ok()) {
+                    return Error() << pkcs7.error() << ": " << path;
+                }
+
+                LOG(INFO) << "Adding " << path << " to fs-verity...";
+                auto enabled = enableFsVerity(fd, pkcs7.value());
+                if (!enabled.ok()) {
+                    return Error() << enabled.error() << ": " << path;
+                }
+            }
+
+            new_digests[path] = compos_digest;
+        } else if (it->is_directory()) {
+            // These are fine to ignore
+        } else if (it->is_symlink()) {
+            return Error() << "Rejecting artifacts, symlink at " << path;
+        } else {
+            return Error() << "Rejecting artifacts, unexpected file type for " << path;
+        }
+    }
+    if (ec) {
+        return Error() << "Failed to iterate " << directory_path << ": " << ec.message();
+    }
+
+    // Delete the signature files now that they have served their purpose.  (ART
+    // has no use for them, and their presence could cause verification to fail
+    // on subsequent boots.)
+    for (auto& signature_path : signature_files) {
+        std::filesystem::remove(signature_path, ec);
+        if (ec) {
+            return Error() << "Failed to delete " << signature_path << ": " << ec.message();
+        }
+    }
+
+    return new_digests;
 }
 
 Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyName) {
