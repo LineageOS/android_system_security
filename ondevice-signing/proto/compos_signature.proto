@@ -20,10 +20,11 @@ package compos.proto;
 
 // Data provided by CompOS to allow validation of a file it generated.
 message Signature {
-    // The fs-verity digest (root hash of the Merkle tree) of the file
-    // contents.
+    // The fs-verity digest (which is derived from the root hash of
+    // the Merkle tree) of the file contents.
     bytes digest = 1;
 
-    // Signature of the digest, signed using CompOS's private key.
+    // Signature of a fsverity_formatted_digest structure containing
+    // the digest, signed using CompOS's private key.
     bytes signature = 2;
 }
