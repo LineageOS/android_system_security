@@ -27,6 +27,7 @@
 
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
+#include <asm/byteorder.h>
 #include <libfsverity.h>
 #include <linux/fsverity.h>
 
@@ -45,14 +46,6 @@ using compos::proto::Signature;
 
 static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
 static const char* kSignatureExtension = ".signature";
-
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define cpu_to_le16(v) ((__force __le16)(uint16_t)(v))
-#define le16_to_cpu(v) ((__force uint16_t)(__le16)(v))
-#else
-#define cpu_to_le16(v) ((__force __le16)__builtin_bswap16(v))
-#define le16_to_cpu(v) (__builtin_bswap16((__force uint16_t)(v)))
-#endif
 
 static bool isSignatureFile(const std::filesystem::path& path) {
     return path.extension().native() == kSignatureExtension;
@@ -128,8 +121,8 @@ static Result<std::vector<uint8_t>> signDigest(const SigningKey& key,
     auto d = makeUniqueWithTrailingData<fsverity_formatted_digest>(digest.size());
 
     memcpy(d->magic, "FSVerity", 8);
-    d->digest_algorithm = cpu_to_le16(FS_VERITY_HASH_ALG_SHA256);
-    d->digest_size = cpu_to_le16(digest.size());
+    d->digest_algorithm = __cpu_to_le16(FS_VERITY_HASH_ALG_SHA256);
+    d->digest_size = __cpu_to_le16(digest.size());
     memcpy(d->digest, digest.data(), digest.size());
 
     auto signed_digest = key.sign(std::string((char*)d.get(), sizeof(*d) + digest.size()));
@@ -314,9 +307,20 @@ verifyAllFilesUsingCompOs(const std::string& directory_path,
             auto& raw_digest = signature->digest();
             auto& raw_signature = signature->signature();
 
+            // Re-construct the fsverity_formatted_digest that was signed, so we
+            // can verify the signature.
+            std::vector<uint8_t> buffer(sizeof(fsverity_formatted_digest) + raw_digest.size());
+            auto signed_data = new (buffer.data()) fsverity_formatted_digest;
+            memcpy(signed_data->magic, "FSVerity", sizeof signed_data->magic);
+            signed_data->digest_algorithm = __cpu_to_le16(FS_VERITY_HASH_ALG_SHA256);
+            signed_data->digest_size = __cpu_to_le16(raw_digest.size());
+            memcpy(signed_data->digest, raw_digest.data(), raw_digest.size());
+
             // Make sure the signature matches the CompOs public key, and not some other
             // fs-verity trusted key.
-            auto verified = verifySignature(raw_digest, raw_signature, compos_key);
+            std::string to_verify(reinterpret_cast<char*>(buffer.data()), buffer.size());
+
+            auto verified = verifyRsaPublicKeySignature(to_verify, raw_signature, compos_key);
             if (!verified.ok()) {
                 return Error() << verified.error() << ": " << path;
             }
