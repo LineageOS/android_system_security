@@ -25,7 +25,7 @@
 // Information extracted from a certificate.
 struct CertInfo {
     std::string subjectCn;
-    std::vector<uint8_t> subjectKey;
+    std::vector<uint8_t> subjectRsaPublicKey;
 };
 
 // Subjects of certificates we issue.
@@ -69,3 +69,7 @@ verifyAndExtractCertInfoFromX509(const std::string& path, const std::vector<uint
 android::base::Result<void> verifySignature(const std::string& message,
                                             const std::string& signature,
                                             const std::vector<uint8_t>& publicKey);
+
+android::base::Result<void> verifyRsaPublicKeySignature(const std::string& message,
+                                                        const std::string& signature,
+                                                        const std::vector<uint8_t>& rsaPublicKey);
