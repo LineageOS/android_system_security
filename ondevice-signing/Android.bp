@@ -107,7 +107,7 @@ cc_binary {
     "libcrypto_utils",
     "libfsverity",
     "liblogwrap",
-    "libprotobuf-cpp-full",
+    "libprotobuf-cpp-lite",
     "libutils",
   ],
 }

@@ -162,9 +162,9 @@ Result<void> createX509RootCert(const SigningKey& key, const std::string& outPat
     return createSelfSignedCertificate(*publicKey, keySignFunction, outPath);
 }
 
-Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
-                                                          const std::string& certPath,
-                                                          const std::string& expectedCn) {
+Result<std::vector<uint8_t>> extractRsaPublicKeyFromLeafCert(const SigningKey& key,
+                                                             const std::string& certPath,
+                                                             const std::string& expectedCn) {
     if (access(certPath.c_str(), F_OK) < 0) {
         return ErrnoError() << "Certificate not found: " << certPath;
     }
@@ -185,7 +185,7 @@ Result<std::vector<uint8_t>> extractPublicKeyFromLeafCert(const SigningKey& key,
                        << ", should be " << expectedCn;
     }
 
-    return existingCertInfo.value().subjectKey;
+    return existingCertInfo.value().subjectRsaPublicKey;
 }
 
 Result<std::vector<uint8_t>> verifyOrGenerateCompOsKey(const SigningKey& signingKey) {
@@ -403,7 +403,7 @@ static Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity
 Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& signingKey) {
     std::vector<uint8_t> compos_key;
     auto existing_key =
-        extractPublicKeyFromLeafCert(signingKey, kCompOsCert, kCompOsSubject.commonName);
+        extractRsaPublicKeyFromLeafCert(signingKey, kCompOsCert, kCompOsSubject.commonName);
     if (existing_key.ok()) {
         LOG(INFO) << "Found and verified existing CompOs public key certificate: " << kCompOsCert;
         compos_key = std::move(existing_key.value());

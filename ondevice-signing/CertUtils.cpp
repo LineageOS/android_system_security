@@ -77,7 +77,7 @@ static void addNameEntry(X509_NAME* name, const char* field, const char* value) 
                                reinterpret_cast<const unsigned char*>(value), -1, -1, 0);
 }
 
-Result<bssl::UniquePtr<RSA>> getRsa(const std::vector<uint8_t>& publicKey) {
+static Result<bssl::UniquePtr<RSA>> getRsaFromModulus(const std::vector<uint8_t>& publicKey) {
     bssl::UniquePtr<BIGNUM> n(BN_new());
     bssl::UniquePtr<BIGNUM> e(BN_new());
     bssl::UniquePtr<RSA> rsaPubkey(RSA_new());
@@ -93,9 +93,53 @@ Result<bssl::UniquePtr<RSA>> getRsa(const std::vector<uint8_t>& publicKey) {
     return rsaPubkey;
 }
 
+static Result<bssl::UniquePtr<RSA>>
+getRsaFromRsaPublicKey(const std::vector<uint8_t>& rsaPublicKey) {
+    auto derBytes = rsaPublicKey.data();
+    bssl::UniquePtr<RSA> rsaKey(d2i_RSAPublicKey(nullptr, &derBytes, rsaPublicKey.size()));
+    if (rsaKey.get() == nullptr) {
+        return Error() << "Failed to parse RsaPublicKey";
+    }
+    if (derBytes != rsaPublicKey.data() + rsaPublicKey.size()) {
+        return Error() << "Key has unexpected trailing data";
+    }
+
+    return rsaKey;
+}
+
+static Result<bssl::UniquePtr<EVP_PKEY>> modulusToRsaPkey(const std::vector<uint8_t>& publicKey) {
+    // "publicKey" corresponds to the raw public key bytes - need to create
+    // a new RSA key with the correct exponent.
+    auto rsaPubkey = getRsaFromModulus(publicKey);
+    if (!rsaPubkey.ok()) {
+        return rsaPubkey.error();
+    }
+
+    bssl::UniquePtr<EVP_PKEY> public_key(EVP_PKEY_new());
+    if (!EVP_PKEY_assign_RSA(public_key.get(), rsaPubkey->release())) {
+        return Error() << "Failed to assign key";
+    }
+    return public_key;
+}
+
+static Result<bssl::UniquePtr<EVP_PKEY>>
+rsaPublicKeyToRsaPkey(const std::vector<uint8_t>& rsaPublicKey) {
+    // rsaPublicKey contains both modulus and exponent, DER-encoded.
+    auto rsaKey = getRsaFromRsaPublicKey(rsaPublicKey);
+    if (!rsaKey.ok()) {
+        return rsaKey.error();
+    }
+
+    bssl::UniquePtr<EVP_PKEY> public_key(EVP_PKEY_new());
+    if (!EVP_PKEY_assign_RSA(public_key.get(), rsaKey->release())) {
+        return Error() << "Failed to assign key";
+    }
+    return public_key;
+}
+
 Result<void> verifySignature(const std::string& message, const std::string& signature,
                              const std::vector<uint8_t>& publicKey) {
-    auto rsaKey = getRsa(publicKey);
+    auto rsaKey = getRsaFromModulus(publicKey);
     if (!rsaKey.ok()) {
         return rsaKey.error();
     }
@@ -112,23 +156,27 @@ Result<void> verifySignature(const std::string& message, const std::string& sign
     return {};
 }
 
-static Result<bssl::UniquePtr<EVP_PKEY>> toRsaPkey(const std::vector<uint8_t>& publicKey) {
-    // "publicKey" corresponds to the raw public key bytes - need to create
-    // a new RSA key with the correct exponent.
-    auto rsaPubkey = getRsa(publicKey);
-    if (!rsaPubkey.ok()) {
-        return rsaPubkey.error();
+Result<void> verifyRsaPublicKeySignature(const std::string& message, const std::string& signature,
+                                         const std::vector<uint8_t>& rsaPublicKey) {
+    auto rsaKey = getRsaFromRsaPublicKey(rsaPublicKey);
+    if (!rsaKey.ok()) {
+        return rsaKey.error();
     }
 
-    bssl::UniquePtr<EVP_PKEY> public_key(EVP_PKEY_new());
-    if (!EVP_PKEY_assign_RSA(public_key.get(), rsaPubkey->release())) {
-        return Error() << "Failed to assign key";
+    uint8_t hashBuf[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const uint8_t*>(message.data()), message.size(), hashBuf);
+
+    bool success = RSA_verify(NID_sha256, hashBuf, sizeof(hashBuf),
+                              reinterpret_cast<const uint8_t*>(signature.data()), signature.size(),
+                              rsaKey->get());
+    if (!success) {
+        return Error() << "Failed to verify signature";
     }
-    return public_key;
+    return {};
 }
 
 static Result<void> createCertificate(
-    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
+    const CertSubject& subject, EVP_PKEY* publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::optional<std::string>& issuerCertPath, const std::string& path) {
 
@@ -153,12 +201,7 @@ static Result<void> createCertificate(
         return Error() << "Unable to set x509 signature algorithm";
     }
 
-    auto public_key = toRsaPkey(publicKey);
-    if (!public_key.ok()) {
-        return public_key.error();
-    }
-
-    if (!X509_set_pubkey(x509.get(), public_key.value().get())) {
+    if (!X509_set_pubkey(x509.get(), publicKey)) {
         return Error() << "Unable to set x509 public key";
     }
 
@@ -241,14 +284,24 @@ Result<void> createSelfSignedCertificate(
     const std::vector<uint8_t>& publicKey,
     const std::function<Result<std::string>(const std::string&)>& signFunction,
     const std::string& path) {
-    return createCertificate(kRootSubject, publicKey, signFunction, {}, path);
+    auto rsa_pkey = modulusToRsaPkey(publicKey);
+    if (!rsa_pkey.ok()) {
+        return rsa_pkey.error();
+    }
+
+    return createCertificate(kRootSubject, rsa_pkey.value().get(), signFunction, {}, path);
 }
 
 android::base::Result<void> createLeafCertificate(
-    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
+    const CertSubject& subject, const std::vector<uint8_t>& rsaPublicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::string& issuerCertPath, const std::string& path) {
-    return createCertificate(subject, publicKey, signFunction, issuerCertPath, path);
+    auto rsa_pkey = rsaPublicKeyToRsaPkey(rsaPublicKey);
+    if (!rsa_pkey.ok()) {
+        return rsa_pkey.error();
+    }
+
+    return createCertificate(subject, rsa_pkey.value().get(), signFunction, issuerCertPath, path);
 }
 
 Result<std::vector<uint8_t>> extractPublicKey(EVP_PKEY* pkey) {
@@ -332,7 +385,7 @@ Result<std::vector<uint8_t>> extractRsaPublicKeyFromX509(const std::vector<uint8
 
 Result<CertInfo> verifyAndExtractCertInfoFromX509(const std::string& path,
                                                   const std::vector<uint8_t>& publicKey) {
-    auto public_key = toRsaPkey(publicKey);
+    auto public_key = modulusToRsaPkey(publicKey);
     if (!public_key.ok()) {
         return public_key.error();
     }
@@ -349,7 +402,7 @@ Result<CertInfo> verifyAndExtractCertInfoFromX509(const std::string& path,
     }
 
     bssl::UniquePtr<EVP_PKEY> pkey(X509_get_pubkey(x509));
-    auto subject_key = extractPublicKey(pkey.get());
+    auto subject_key = extractRsaPublicKey(pkey.get());
     if (!subject_key.ok()) {
         return subject_key.error();
     }
@@ -382,20 +435,20 @@ Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signed_dige
     BIGNUM* serial = BN_new();
     int sig_nid = NID_rsaEncryption;
 
-    X509_NAME* name = X509_NAME_new();
-    if (!name) {
-        return Error() << "Unable to get x509 subject name";
+    X509_NAME* issuer_name = X509_NAME_new();
+    if (!issuer_name) {
+        return Error() << "Unable to create x509 subject name";
     }
-    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+    X509_NAME_add_entry_by_txt(issuer_name, "C", MBSTRING_ASC,
                                reinterpret_cast<const unsigned char*>(kIssuerCountry), -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+    X509_NAME_add_entry_by_txt(issuer_name, "O", MBSTRING_ASC,
                                reinterpret_cast<const unsigned char*>(kIssuerOrg), -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>(signer.commonName), -1, -1,
-                               0);
+    X509_NAME_add_entry_by_txt(issuer_name, "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(kRootSubject.commonName), -1,
+                               -1, 0);
 
     BN_set_word(serial, signer.serialNumber);
-    name_der_len = i2d_X509_NAME(name, &name_der);
+    name_der_len = i2d_X509_NAME(issuer_name, &name_der);
     CBB_init(&out, 1024);
 
     if (!CBB_add_asn1(&out, &outer_seq, CBS_ASN1_SEQUENCE) ||
