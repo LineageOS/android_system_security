@@ -231,5 +231,5 @@ Result<void> FakeCompOs::loadAndVerifyKey(const ByteVector& keyBlob,
     std::string signatureString(reinterpret_cast<char*>(signature.value().data()),
                                 signature.value().size());
     std::string dataString(reinterpret_cast<char*>(data.data()), data.size());
-    return verifySignature(dataString, signatureString, publicKey);
+    return verifyRsaPublicKeySignature(dataString, signatureString, publicKey);
 }
