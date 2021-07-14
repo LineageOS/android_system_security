@@ -62,7 +62,11 @@ static const char* kVirtApexPath = "/apex/com.android.virt";
 const std::string kCompOsCert = "/data/misc/odsign/compos_key.cert";
 const std::string kCompOsPublicKey = "/data/misc/odsign/compos_key.pubkey";
 const std::string kCompOsKeyBlob = "/data/misc/odsign/compos_key.blob";
-const std::string kCompOsPendingDir = "/data/misc/apexdata/com.android.art/compos-pending";
+const std::string kCompOsPendingPublicKey =
+    "/data/misc/apexdata/com.android.compos/compos_pending_key.pubkey";
+const std::string kCompOsPendingKeyBlob =
+    "/data/misc/apexdata/com.android.compos/compos_pending_key.blob";
+const std::string kCompOsPendingArtifactsDir = "/data/misc/apexdata/com.android.art/compos-pending";
 
 static const char* kOdsignVerificationDoneProp = "odsign.verification.done";
 static const char* kOdsignKeyDoneProp = "odsign.key.done";
@@ -189,34 +193,80 @@ Result<std::vector<uint8_t>> extractRsaPublicKeyFromLeafCert(const SigningKey& k
 }
 
 Result<std::vector<uint8_t>> verifyOrGenerateCompOsKey(const SigningKey& signingKey) {
-    auto compOsStatus = FakeCompOs::newInstance();
-    if (!compOsStatus.ok()) {
-        return Error() << "Failed to start CompOs: " << compOsStatus.error();
-    }
-
-    FakeCompOs* compOs = compOsStatus.value().get();
-
+    std::unique_ptr<FakeCompOs> compOs;
     std::vector<uint8_t> keyBlob;
     std::vector<uint8_t> publicKey;
-    bool haveKey = false;
+    bool new_key = true;
 
-    if (access(kCompOsPublicKey.c_str(), F_OK) == 0 && access(kCompOsKeyBlob.c_str(), F_OK) == 0) {
-        // We have a purported key, but not a valid signature for it.
-        // If compOs can verify it, we can sign it now.
-        keyBlob = readBytesFromFile(kCompOsKeyBlob);
-        publicKey = readBytesFromFile(kCompOsPublicKey);
+    // If a pending key has been generated we don't know if it is the correct
+    // one for the current CompOS VM, so we need to start it and ask it.
+    if (access(kCompOsPendingPublicKey.c_str(), F_OK) == 0 &&
+        access(kCompOsPendingKeyBlob.c_str(), F_OK) == 0) {
+        auto compOsStatus = FakeCompOs::newInstance();
+        if (!compOsStatus.ok()) {
+            return Error() << "Failed to start CompOs: " << compOsStatus.error();
+        }
+        compOs = std::move(compOsStatus.value());
 
-        auto response = compOs->loadAndVerifyKey(keyBlob, publicKey);
+        auto pendingKeyBlob = readBytesFromFile(kCompOsPendingKeyBlob);
+        auto pendingPublicKey = readBytesFromFile(kCompOsPendingPublicKey);
+
+        auto response = compOs->loadAndVerifyKey(pendingKeyBlob, pendingPublicKey);
         if (response.ok()) {
-            LOG(INFO) << "Verified existing CompOs key";
-            haveKey = true;
+            LOG(INFO) << "Verified pending CompOs key";
+            keyBlob = std::move(pendingKeyBlob);
+            publicKey = std::move(pendingPublicKey);
         } else {
-            LOG(WARNING) << "Failed to verify existing CompOs key: " << response.error();
+            LOG(WARNING) << "Failed to verify pending CompOs key: " << response.error();
+            // And fall through to looking at the current key.
+        }
+        // Whether they're good or bad, we've finished with these files.
+        unlink(kCompOsPendingKeyBlob.c_str());
+        unlink(kCompOsPendingPublicKey.c_str());
+    }
+
+    if (publicKey.empty()) {
+        // Alternatively if we signed a cert for the key on a previous boot, then we
+        // can use that straight away.
+        auto existing_key =
+            extractRsaPublicKeyFromLeafCert(signingKey, kCompOsCert, kCompOsSubject.commonName);
+        if (existing_key.ok()) {
+            LOG(INFO) << "Found and verified existing CompOs public key certificate: "
+                      << kCompOsCert;
+            return existing_key.value();
         }
     }
 
-    if (!haveKey) {
-        // If we don't have a key, or it doesn't verify, then we need a new one.
+    if (compOs == nullptr) {
+        auto compOsStatus = FakeCompOs::newInstance();
+        if (!compOsStatus.ok()) {
+            return Error() << "Failed to start CompOs: " << compOsStatus.error();
+        }
+        compOs = std::move(compOsStatus.value());
+    }
+
+    // Otherwise, if there is an existing key that we haven't signed yet, then we can sign it
+    // now if CompOS confirms it's OK.
+    if (publicKey.empty()) {
+        if (access(kCompOsPublicKey.c_str(), F_OK) == 0 &&
+            access(kCompOsKeyBlob.c_str(), F_OK) == 0) {
+            auto currentKeyBlob = readBytesFromFile(kCompOsKeyBlob);
+            auto currentPublicKey = readBytesFromFile(kCompOsPublicKey);
+
+            auto response = compOs->loadAndVerifyKey(currentKeyBlob, currentPublicKey);
+            if (response.ok()) {
+                LOG(INFO) << "Verified existing CompOs key";
+                keyBlob = std::move(currentKeyBlob);
+                publicKey = std::move(currentPublicKey);
+                new_key = false;
+            } else {
+                LOG(WARNING) << "Failed to verify existing CompOs key: " << response.error();
+            }
+        }
+    }
+
+    // If all else has failed we need to ask CompOS to generate a new key.
+    if (publicKey.empty()) {
         auto keyData = compOs->generateKey();
         if (!keyData.ok()) {
             return Error() << "Failed to generate key: " << keyData.error();
@@ -226,9 +276,19 @@ Result<std::vector<uint8_t>> verifyOrGenerateCompOsKey(const SigningKey& signing
             return Error() << "Failed to extract CompOs public key" << publicKeyStatus.error();
         }
 
+        LOG(INFO) << "Generated new CompOs key";
+
         keyBlob = std::move(keyData.value().blob);
         publicKey = std::move(publicKeyStatus.value());
+    }
 
+    // We've finished with CompOs now, let it exit.
+    compOs.reset();
+
+    // One way or another we now have a valid key pair. Persist the data for
+    // CompOS, and a cert so we can simplify the checks on subsequent boots.
+
+    if (new_key) {
         writeBytesToFile(keyBlob, kCompOsKeyBlob);
         writeBytesToFile(publicKey, kCompOsPublicKey);
     }
@@ -401,22 +461,9 @@ static Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity
 }
 
 Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& signingKey) {
-    std::vector<uint8_t> compos_key;
-    auto existing_key =
-        extractRsaPublicKeyFromLeafCert(signingKey, kCompOsCert, kCompOsSubject.commonName);
-    if (existing_key.ok()) {
-        LOG(INFO) << "Found and verified existing CompOs public key certificate: " << kCompOsCert;
-        compos_key = std::move(existing_key.value());
-    } else {
-        LOG(WARNING) << existing_key.error();
-
-        auto new_key = verifyOrGenerateCompOsKey(signingKey);
-        if (!new_key.ok()) {
-            return new_key.error();
-        } else {
-            LOG(INFO) << "Generated new CompOs public key certificate";
-            compos_key = std::move(new_key.value());
-        }
+    auto publicKey = verifyOrGenerateCompOsKey(signingKey);
+    if (!publicKey.ok()) {
+        return publicKey.error();
     }
 
     auto cert_add_result = addCertToFsVerityKeyring(kCompOsCert, "fsv_compos");
@@ -427,13 +474,13 @@ Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& si
                        << cert_add_result.error();
     }
 
-    return compos_key;
+    return publicKey;
 }
 
 art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>& compos_key,
                                                      const SigningKey& signingKey,
                                                      bool* digests_verified) {
-    if (!directoryHasContent(kCompOsPendingDir)) {
+    if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
@@ -444,7 +491,7 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
     if (odrefresh_status != art::odrefresh::ExitCode::kCompilationRequired) {
         if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
             LOG(INFO) << "Current artifacts are OK, deleting pending artifacts";
-            removeDirectory(kCompOsPendingDir);
+            removeDirectory(kCompOsPendingArtifactsDir);
         }
         return odrefresh_status;
     }
@@ -453,11 +500,11 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
     LOG(INFO) << "Current artifacts are out of date, switching to pending artifacts";
     removeDirectory(kArtArtifactsDir);
     std::error_code ec;
-    std::filesystem::rename(kCompOsPendingDir, kArtArtifactsDir, ec);
+    std::filesystem::rename(kCompOsPendingArtifactsDir, kArtArtifactsDir, ec);
     if (ec) {
-        LOG(ERROR) << "Can't rename " << kCompOsPendingDir << " to " << kArtArtifactsDir << ": "
-                   << ec.message();
-        removeDirectory(kCompOsPendingDir);
+        LOG(ERROR) << "Can't rename " << kCompOsPendingArtifactsDir << " to " << kArtArtifactsDir
+                   << ": " << ec.message();
+        removeDirectory(kCompOsPendingArtifactsDir);
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
     // TODO: Make sure that we check here that the contents of the artifacts
@@ -501,7 +548,7 @@ int main(int /* argc */, char** /* argv */) {
     auto errorScopeGuard = []() {
         // In case we hit any error, remove the artifacts and tell Zygote not to use anything
         removeDirectory(kArtArtifactsDir);
-        removeDirectory(kCompOsPendingDir);
+        removeDirectory(kCompOsPendingArtifactsDir);
         // Tell init we don't need to use our key anymore
         SetProperty(kOdsignKeyDoneProp, "1");
         // Tell init we're done with verification, and that it was an error
