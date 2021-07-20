@@ -45,11 +45,11 @@ use android_security_metrics::aidl::android::security::metrics::{
     Storage::Storage as MetricsStorage,
 };
 use anyhow::{Context, Result};
-use keystore2_system_property::{write, PropertyWatcher, PropertyWatcherError};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use system_properties::{write, PropertyWatcher, PropertyWatcherError};
 
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.

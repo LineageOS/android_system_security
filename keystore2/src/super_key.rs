@@ -46,13 +46,13 @@ use keystore2_crypto::{
     aes_gcm_decrypt, aes_gcm_encrypt, generate_aes256_key, generate_salt, Password, ZVec,
     AES_256_KEY_LENGTH,
 };
-use keystore2_system_property::PropertyWatcher;
 use std::{
     collections::HashMap,
     sync::Arc,
     sync::{Mutex, Weak},
 };
 use std::{convert::TryFrom, ops::Deref};
+use system_properties::PropertyWatcher;
 
 const MAX_MAX_BOOT_LEVEL: usize = 1_000_000_000;
 /// Allow up to 15 seconds between the user unlocking using a biometric, and the auth
