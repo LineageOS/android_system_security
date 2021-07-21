@@ -126,10 +126,8 @@ impl SuperKeyIdentifier {
     fn from_metadata(metadata: &BlobMetaData) -> Option<Self> {
         if let Some(EncryptedBy::KeyId(key_id)) = metadata.encrypted_by() {
             Some(SuperKeyIdentifier::DatabaseId(*key_id))
-        } else if let Some(boot_level) = metadata.max_boot_level() {
-            Some(SuperKeyIdentifier::BootLevel(*boot_level))
         } else {
-            None
+            metadata.max_boot_level().map(|boot_level| SuperKeyIdentifier::BootLevel(*boot_level))
         }
     }
 
