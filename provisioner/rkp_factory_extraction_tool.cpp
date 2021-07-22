@@ -22,6 +22,7 @@
 #include <cppbor.h>
 #include <gflags/gflags.h>
 #include <keymaster/cppcose/cppcose.h>
+#include <openssl/base64.h>
 #include <remote_prov/remote_prov_utils.h>
 #include <sys/random.h>
 
@@ -48,6 +49,26 @@ constexpr std::string_view kBuildPlusCsr = "build+csr";  // Text-encoded (JSON) 
                                                          // fingerprint plus CSR.
 
 constexpr size_t kChallengeSize = 16;
+
+std::string toBase64(const std::vector<uint8_t>& buffer) {
+    size_t base64Length;
+    int rc = EVP_EncodedLength(&base64Length, buffer.size());
+    if (!rc) {
+        std::cerr << "Error getting base64 length. Size overflow?" << std::endl;
+        exit(-1);
+    }
+
+    std::string base64(base64Length, ' ');
+    rc = EVP_EncodeBlock(reinterpret_cast<uint8_t*>(base64.data()), buffer.data(), buffer.size());
+    ++rc;  // Account for NUL, which BoringSSL does not for some reason.
+    if (rc != base64Length) {
+        std::cerr << "Error writing base64. Expected " << base64Length
+                  << " bytes to be written, but " << rc << " bytes were actually written."
+                  << std::endl;
+        exit(-1);
+    }
+    return base64;
+}
 
 std::vector<uint8_t> generateChallenge() {
     std::vector<uint8_t> challenge(kChallengeSize);
@@ -96,7 +117,10 @@ std::vector<uint8_t> getEekChain() {
             std::cerr << "Failed to generate test EEK somehow: " << eekOrErr.message() << std::endl;
             exit(-1);
         }
-        auto [eek, ignored_pubkey, ignored_privkey] = eekOrErr.moveValue();
+        auto [eek, pubkey, privkey] = eekOrErr.moveValue();
+        std::cout << "EEK raw keypair:" << std::endl;
+        std::cout << "  pub:  " << toBase64(pubkey) << std::endl;
+        std::cout << "  priv: " << toBase64(privkey) << std::endl;
         return eek;
     }
 
