@@ -46,7 +46,6 @@ rust_defaults {
         "libkeystore2_crypto_rust",
         "libkeystore2_km_compat",
         "libkeystore2_selinux",
-        "libkeystore2_system_property-rust",
         "libkeystore2_vintf_rust",
         "liblazy_static",
         "liblibc",
@@ -55,6 +54,7 @@ rust_defaults {
         "liblog_rust",
         "librand",
         "librusqlite",
+        "libsystem_properties-rust",
         "libthiserror",
     ],
     shared_libs: [
