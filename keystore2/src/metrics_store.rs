@@ -49,7 +49,7 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use system_properties::{read, write, PropertyWatcherError};
+use system_properties::PropertyWatcherError;
 
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.
@@ -626,7 +626,8 @@ pub fn update_keystore_crash_sysprop() {
         }
     };
 
-    if let Err(e) = write(KEYSTORE_CRASH_COUNT_PROPERTY, &new_count.to_string()) {
+    if let Err(e) = system_properties::write(KEYSTORE_CRASH_COUNT_PROPERTY, &new_count.to_string())
+    {
         log::error!(
             concat!(
                 "In update_keystore_crash_sysprop:: ",
@@ -639,7 +640,7 @@ pub fn update_keystore_crash_sysprop() {
 
 /// Read the system property: keystore.crash_count.
 pub fn read_keystore_crash_count() -> Result<i32> {
-    read("keystore.crash_count")
+    system_properties::read("keystore.crash_count")
         .context("In read_keystore_crash_count: Failed read property.")?
         .parse::<i32>()
         .map_err(std::convert::Into::into)
