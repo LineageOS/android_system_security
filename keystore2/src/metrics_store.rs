@@ -49,7 +49,7 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use system_properties::{write, PropertyWatcher, PropertyWatcherError};
+use system_properties::{read, write, PropertyWatcherError};
 
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.
@@ -639,12 +639,10 @@ pub fn update_keystore_crash_sysprop() {
 
 /// Read the system property: keystore.crash_count.
 pub fn read_keystore_crash_count() -> Result<i32> {
-    let mut prop_reader = PropertyWatcher::new("keystore.crash_count").context(concat!(
-        "In read_keystore_crash_count: Failed to create reader a PropertyWatcher."
-    ))?;
-    prop_reader
-        .read(|_n, v| v.parse::<i32>().map_err(std::convert::Into::into))
-        .context("In read_keystore_crash_count: Failed to read the existing system property.")
+    read("keystore.crash_count")
+        .context("In read_keystore_crash_count: Failed read property.")?
+        .parse::<i32>()
+        .map_err(std::convert::Into::into)
 }
 
 /// Enum defining the bit position for each padding mode. Since padding mode can be repeatable, it
