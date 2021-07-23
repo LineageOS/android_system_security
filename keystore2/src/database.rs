@@ -4966,10 +4966,7 @@ mod tests {
                 Ok(KeyEntryRow {
                     id: row.get(0)?,
                     key_type: row.get(1)?,
-                    domain: match row.get(2)? {
-                        Some(i) => Some(Domain(i)),
-                        None => None,
-                    },
+                    domain: row.get::<_, Option<_>>(2)?.map(Domain),
                     namespace: row.get(3)?,
                     alias: row.get(4)?,
                     state: row.get(5)?,
