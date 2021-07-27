@@ -388,12 +388,12 @@ impl DateTime {
     }
 
     /// Returns unix epoch time in milliseconds.
-    pub fn to_millis_epoch(&self) -> i64 {
+    pub fn to_millis_epoch(self) -> i64 {
         self.0
     }
 
     /// Returns unix epoch time in seconds.
-    pub fn to_secs_epoch(&self) -> i64 {
+    pub fn to_secs_epoch(self) -> i64 {
         self.0 / 1000
     }
 }
@@ -2227,7 +2227,7 @@ impl KeystoreDB {
     /// fields, and rebinds the given alias to the new key.
     /// The boolean returned is a hint for the garbage collector. If true, a key was replaced,
     /// is now unreferenced and needs to be collected.
-    #[allow(clippy::clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn store_new_key(
         &mut self,
         key: &KeyDescriptor,
@@ -3466,7 +3466,7 @@ mod tests {
             load_attestation_key_pool(&mut db, expiration_date, namespace, base_byte)?;
         let chain =
             db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace, &KEYSTORE_UUID)?;
-        assert_eq!(true, chain.is_some());
+        assert!(chain.is_some());
         let cert_chain = chain.unwrap();
         assert_eq!(cert_chain.private_key.to_vec(), loaded_values.priv_key);
         assert_eq!(cert_chain.batch_cert, loaded_values.batch_cert);
