@@ -158,7 +158,7 @@ macro_rules! implement_permission_aidl {
         impl $name {
             /// Returns a string representation of the permission as required by
             /// `selinux::check_access`.
-            pub fn to_selinux(&self) -> &'static str {
+            pub fn to_selinux(self) -> &'static str {
                 match self {
                     Self($aidl_name::$def_name) => stringify!($def_selinux_name),
                     $(Self($aidl_name::$element_name) => stringify!($selinux_name),)*
@@ -266,7 +266,7 @@ macro_rules! implement_permission {
         impl $name {
             /// Returns a string representation of the permission as required by
             /// `selinux::check_access`.
-            pub fn to_selinux(&self) -> &'static str {
+            pub fn to_selinux(self) -> &'static str {
                 match self {
                     Self::$def_name => stringify!($def_selinux_name),
                     $(Self::$element_name => stringify!($selinux_name),)*
@@ -852,23 +852,19 @@ mod tests {
             blob: None,
         };
 
+        assert!(check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::delete(), &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::get_info(), &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::rebind(), &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::update(), &key, &None).is_ok());
+
         if is_su {
-            assert!(check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::delete(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::get_info(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::rebind(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::update(), &key, &None).is_ok());
             assert!(check_key_permission(0, &sctx, KeyPerm::grant(), &key, &None).is_ok());
             assert!(check_key_permission(0, &sctx, KeyPerm::manage_blob(), &key, &None).is_ok());
             assert!(check_key_permission(0, &sctx, KeyPerm::use_dev_id(), &key, &None).is_ok());
             assert!(check_key_permission(0, &sctx, KeyPerm::gen_unique_id(), &key, &None).is_ok());
             assert!(check_key_permission(0, &sctx, KeyPerm::req_forced_op(), &key, &None).is_ok());
         } else {
-            assert!(check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::delete(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::get_info(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::rebind(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::update(), &key, &None).is_ok());
             assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::grant(), &key, &None));
             assert_perm_failed!(check_key_permission(
                 0,
