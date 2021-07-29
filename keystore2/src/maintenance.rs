@@ -206,9 +206,9 @@ impl Maintenance {
             let key_id_guard = match source.domain {
                 Domain::APP | Domain::SELINUX | Domain::KEY_ID => {
                     let (key_id_guard, _) = LEGACY_MIGRATOR
-                        .with_try_migrate(&source, caller_uid, || {
+                        .with_try_migrate(source, caller_uid, || {
                             db.borrow_mut().load_key_entry(
-                                &source,
+                                source,
                                 KeyType::Client,
                                 KeyEntryLoadBits::NONE,
                                 caller_uid,

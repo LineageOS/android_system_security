@@ -180,7 +180,7 @@ impl RemProvState {
             // and therefore will not be attested.
             Ok(None)
         } else {
-            match self.get_rem_prov_attest_key(&key, caller_uid, db) {
+            match self.get_rem_prov_attest_key(key, caller_uid, db) {
                 Err(e) => {
                     log::error!(
                         concat!(
