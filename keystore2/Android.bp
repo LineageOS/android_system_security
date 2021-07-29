@@ -54,7 +54,7 @@ rust_defaults {
         "liblog_rust",
         "librand",
         "librusqlite",
-        "libsystem_properties-rust",
+        "librustutils",
         "libthiserror",
     ],
     shared_libs: [
