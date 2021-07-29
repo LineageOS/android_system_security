@@ -75,6 +75,8 @@ static const char* kOdsignVerificationStatusProp = "odsign.verification.success"
 static const char* kOdsignVerificationStatusValid = "1";
 static const char* kOdsignVerificationStatusError = "0";
 
+static const char* kStopServiceProp = "ctl.stop";
+
 static void writeBytesToFile(const std::vector<uint8_t>& bytes, const std::string& path) {
     std::string str(bytes.begin(), bytes.end());
     android::base::WriteStringToFile(str, path);
@@ -552,8 +554,10 @@ int main(int /* argc */, char** /* argv */) {
         // Tell init we don't need to use our key anymore
         SetProperty(kOdsignKeyDoneProp, "1");
         // Tell init we're done with verification, and that it was an error
-        SetProperty(kOdsignVerificationDoneProp, "1");
         SetProperty(kOdsignVerificationStatusProp, kOdsignVerificationStatusError);
+        SetProperty(kOdsignVerificationDoneProp, "1");
+        // Tell init it shouldn't try to restart us - see odsign.rc
+        SetProperty(kStopServiceProp, "odsign");
     };
     auto scope_guard = android::base::make_scope_guard(errorScopeGuard);
 
@@ -668,8 +672,10 @@ int main(int /* argc */, char** /* argv */) {
     // At this point, we're done with the key for sure
     SetProperty(kOdsignKeyDoneProp, "1");
     // And we did a successful verification
-    SetProperty(kOdsignVerificationDoneProp, "1");
     SetProperty(kOdsignVerificationStatusProp, kOdsignVerificationStatusValid);
+    SetProperty(kOdsignVerificationDoneProp, "1");
 
+    // Tell init it shouldn't try to restart us - see odsign.rc
+    SetProperty(kStopServiceProp, "odsign");
     return 0;
 }
