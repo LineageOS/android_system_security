@@ -260,7 +260,7 @@ mod tests {
         if let Some(mut extras) = extra_params {
             kps.append(&mut extras);
         }
-        let result = legacy.begin(purpose, &blob, &kps, None);
+        let result = legacy.begin(purpose, blob, &kps, None);
         assert!(result.is_ok(), "{:?}", result);
         result.unwrap()
     }

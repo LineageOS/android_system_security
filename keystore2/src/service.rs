@@ -132,9 +132,9 @@ impl KeystoreService {
         let caller_uid = ThreadState::get_calling_uid();
         let (key_id_guard, mut key_entry) = DB
             .with(|db| {
-                LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+                LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
                     db.borrow_mut().load_key_entry(
-                        &key,
+                        key,
                         KeyType::Client,
                         KeyEntryLoadBits::PUBLIC,
                         caller_uid,
@@ -183,9 +183,9 @@ impl KeystoreService {
     ) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with::<_, Result<()>>(|db| {
-            let entry = match LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+            let entry = match LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
                 db.borrow_mut().load_key_entry(
-                    &key,
+                    key,
                     KeyType::Client,
                     KeyEntryLoadBits::NONE,
                     caller_uid,
@@ -307,8 +307,8 @@ impl KeystoreService {
     fn delete_key(&self, key: &KeyDescriptor) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with(|db| {
-            LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
-                db.borrow_mut().unbind_key(&key, KeyType::Client, caller_uid, |k, av| {
+            LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
+                db.borrow_mut().unbind_key(key, KeyType::Client, caller_uid, |k, av| {
                     check_key_permission(KeyPerm::delete(), k, &av).context("During delete_key.")
                 })
             })
@@ -325,9 +325,9 @@ impl KeystoreService {
     ) -> Result<KeyDescriptor> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with(|db| {
-            LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+            LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
                 db.borrow_mut().grant(
-                    &key,
+                    key,
                     caller_uid,
                     grantee_uid as u32,
                     access_vector,
@@ -340,7 +340,7 @@ impl KeystoreService {
 
     fn ungrant(&self, key: &KeyDescriptor, grantee_uid: i32) -> Result<()> {
         DB.with(|db| {
-            db.borrow_mut().ungrant(&key, ThreadState::get_calling_uid(), grantee_uid as u32, |k| {
+            db.borrow_mut().ungrant(key, ThreadState::get_calling_uid(), grantee_uid as u32, |k| {
                 check_key_permission(KeyPerm::grant(), k, &None)
             })
         })
