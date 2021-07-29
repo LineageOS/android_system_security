@@ -149,14 +149,15 @@ fn list_participants() -> Result<Vec<SharedSecretParticipant>> {
         .collect::<Result<Vec<_>>>()
         .map(|v| v.into_iter().flatten())
         .and_then(|i| {
-            let participants_aidl: Vec<SharedSecretParticipant> =
+            Ok(i.chain(
                 get_aidl_instances(SHARED_SECRET_PACKAGE_NAME, 1, SHARED_SECRET_INTERFACE_NAME)
                     .as_vec()
                     .context("In list_participants: Trying to convert KM1.0 names to vector.")?
                     .into_iter()
                     .map(|name| SharedSecretParticipant::Aidl(name.to_string()))
-                    .collect();
-            Ok(i.chain(participants_aidl.into_iter()))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            ))
         })
         .context("In list_participants.")?
         .collect())
