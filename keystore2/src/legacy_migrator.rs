@@ -567,7 +567,7 @@ impl LegacyMigratorState {
 
         if let Some(super_key) = self
             .legacy_loader
-            .load_super_key(user_id, &pw)
+            .load_super_key(user_id, pw)
             .context("In check_and_migrate_super_key: Trying to load legacy super key.")?
         {
             let (blob, blob_metadata) =
@@ -724,8 +724,8 @@ impl Deref for LegacyBlob {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Vec(v) => &v,
-            Self::ZVec(v) => &v,
+            Self::Vec(v) => v,
+            Self::ZVec(v) => v,
         }
     }
 }

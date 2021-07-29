@@ -43,7 +43,7 @@ use keystore2_apc_compat::{
 pub fn check_keystore_permission(perm: KeystorePerm) -> anyhow::Result<()> {
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_keystore_permission(
-            &calling_sid.ok_or_else(Error::sys).context(
+            calling_sid.ok_or_else(Error::sys).context(
                 "In check_keystore_permission: Cannot check permission without calling_sid.",
             )?,
             perm,
@@ -57,7 +57,7 @@ pub fn check_keystore_permission(perm: KeystorePerm) -> anyhow::Result<()> {
 pub fn check_grant_permission(access_vec: KeyPermSet, key: &KeyDescriptor) -> anyhow::Result<()> {
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_grant_permission(
-            &calling_sid.ok_or_else(Error::sys).context(
+            calling_sid.ok_or_else(Error::sys).context(
                 "In check_grant_permission: Cannot check permission without calling_sid.",
             )?,
             access_vec,
@@ -77,7 +77,7 @@ pub fn check_key_permission(
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_key_permission(
             ThreadState::get_calling_uid(),
-            &calling_sid
+            calling_sid
                 .ok_or_else(Error::sys)
                 .context("In check_key_permission: Cannot check permission without calling_sid.")?,
             perm,

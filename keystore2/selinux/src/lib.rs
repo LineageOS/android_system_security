@@ -130,7 +130,7 @@ impl Deref for Context {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Raw(p) => unsafe { CStr::from_ptr(*p) },
-            Self::CString(cstr) => &cstr,
+            Self::CString(cstr) => cstr,
         }
     }
 }
