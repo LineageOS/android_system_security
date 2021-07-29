@@ -63,7 +63,7 @@ fn main() {
         let db_path = Path::new(&dir);
         *keystore2::globals::DB_PATH.write().expect("Could not lock DB_PATH.") =
             db_path.to_path_buf();
-        IdRotationState::new(&db_path)
+        IdRotationState::new(db_path)
     } else {
         panic!("Must specify a database directory.");
     };
