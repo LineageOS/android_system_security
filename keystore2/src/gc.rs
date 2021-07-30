@@ -123,7 +123,7 @@ impl GcInternal {
                     .super_key
                     .unwrap_key_if_required(&blob_metadata, &blob)
                     .context("In process_one_key: Trying to unwrap to-be-deleted blob.")?;
-                (self.invalidate_key)(&uuid, &*blob)
+                (self.invalidate_key)(uuid, &*blob)
                     .context("In process_one_key: Trying to invalidate key.")?;
             }
         }

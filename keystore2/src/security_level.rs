@@ -241,9 +241,9 @@ impl KeystoreSecurityLevel {
             _ => {
                 let (key_id_guard, mut key_entry) = DB
                     .with::<_, Result<(KeyIdGuard, KeyEntry)>>(|db| {
-                        LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+                        LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
                             db.borrow_mut().load_key_entry(
-                                &key,
+                                key,
                                 KeyType::Client,
                                 KeyEntryLoadBits::KM,
                                 caller_uid,
@@ -310,7 +310,7 @@ impl KeystoreSecurityLevel {
                 key_id_guard,
                 &km_blob,
                 &blob_metadata,
-                &operation_parameters,
+                operation_parameters,
                 |blob| loop {
                     match map_km_error({
                         let _wp = self.watch_millis(
@@ -320,7 +320,7 @@ impl KeystoreSecurityLevel {
                         self.keymint.begin(
                             purpose,
                             blob,
-                            &operation_parameters,
+                            operation_parameters,
                             immediate_hat.as_ref(),
                         )
                     }) {
@@ -691,7 +691,7 @@ impl KeystoreSecurityLevel {
             .with(|db| {
                 LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
                     db.borrow_mut().load_key_entry(
-                        &wrapping_key,
+                        wrapping_key,
                         KeyType::Client,
                         KeyEntryLoadBits::KM,
                         caller_uid,
@@ -749,7 +749,7 @@ impl KeystoreSecurityLevel {
                         wrapped_data,
                         wrapping_blob,
                         masking_key,
-                        &params,
+                        params,
                         pw_sid,
                         fp_sid,
                     ))?;
@@ -769,7 +769,7 @@ impl KeystoreSecurityLevel {
         upgraded_blob: &[u8],
     ) -> Result<()> {
         let (upgraded_blob_to_be_stored, new_blob_metadata) =
-            SuperKeyManager::reencrypt_if_required(key_blob, &upgraded_blob)
+            SuperKeyManager::reencrypt_if_required(key_blob, upgraded_blob)
                 .context("In store_upgraded_keyblob: Failed to handle super encryption.")?;
 
         let mut new_blob_metadata = new_blob_metadata.unwrap_or_default();
@@ -942,7 +942,7 @@ impl KeystoreSecurityLevel {
         {
             let _wp =
                 self.watch_millis("In KeystoreSecuritylevel::delete_key: calling deleteKey", 500);
-            map_km_error(km_dev.deleteKey(&key_blob)).context("In keymint device deleteKey")
+            map_km_error(km_dev.deleteKey(key_blob)).context("In keymint device deleteKey")
         }
     }
 }

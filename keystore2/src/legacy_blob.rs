@@ -416,14 +416,14 @@ impl LegacyBlobLoader {
             BlobValue::Encrypted { iv, tag, data } => Ok(Blob {
                 flags: blob.flags,
                 value: BlobValue::Decrypted(
-                    decrypt(&data, &iv, &tag, None, None)
+                    decrypt(data, iv, tag, None, None)
                         .context("In new_from_stream_decrypt_with.")?,
                 ),
             }),
             BlobValue::PwEncrypted { iv, tag, data, salt, key_size } => Ok(Blob {
                 flags: blob.flags,
                 value: BlobValue::Decrypted(
-                    decrypt(&data, &iv, &tag, Some(salt), Some(*key_size))
+                    decrypt(data, iv, tag, Some(salt), Some(*key_size))
                         .context("In new_from_stream_decrypt_with.")?,
                 ),
             }),
@@ -836,7 +836,7 @@ impl LegacyBlobLoader {
         // in are all in the printable range that don't get mangled.
         for prefix in Self::KNOWN_KEYSTORE_PREFIXES {
             if let Some(alias) = encoded_alias.strip_prefix(prefix) {
-                return Self::decode_alias(&alias).ok();
+                return Self::decode_alias(alias).ok();
             }
         }
         None
