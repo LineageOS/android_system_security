@@ -60,9 +60,6 @@ android::base::Result<std::vector<uint8_t>>
 extractPublicKeyFromSubjectPublicKeyInfo(const std::vector<uint8_t>& subjectKeyInfo);
 android::base::Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::string& path);
 
-android::base::Result<std::vector<uint8_t>>
-extractRsaPublicKeyFromX509(const std::vector<uint8_t>& x509);
-
 android::base::Result<CertInfo>
 verifyAndExtractCertInfoFromX509(const std::string& path, const std::vector<uint8_t>& publicKey);
 
