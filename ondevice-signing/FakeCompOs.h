@@ -34,14 +34,9 @@ class FakeCompOs {
 
   public:
     using ByteVector = std::vector<uint8_t>;
-    struct KeyData {
-        ByteVector cert;
-        ByteVector blob;
-    };
 
-    static android::base::Result<std::unique_ptr<FakeCompOs>> newInstance();
-
-    android::base::Result<KeyData> generateKey() const;
+    static android::base::Result<std::unique_ptr<FakeCompOs>>
+    startInstance(const std::string& instanceImagePath);
 
     android::base::Result<void> loadAndVerifyKey(const ByteVector& keyBlob,
                                                  const ByteVector& publicKey) const;
