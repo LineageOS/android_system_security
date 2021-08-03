@@ -40,7 +40,6 @@ rust_defaults {
         "android.system.keystore2-V1-rust",
         "libanyhow",
         "libbinder_rs",
-        "libcutils_bindgen",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
