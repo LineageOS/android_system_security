@@ -48,7 +48,7 @@ cc_binary {
     vendor: true,
     srcs: ["rkp_factory_extraction_tool.cpp"],
     shared_libs: [
-        "android.hardware.security.keymint-V1-ndk_platform",
+        "android.hardware.security.keymint-V1-ndk",
         "libbinder",
         "libbinder_ndk",
         "libcrypto",
