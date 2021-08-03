@@ -161,7 +161,7 @@ impl DB {
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             tx.execute(
                 "DELETE FROM profiles WHERE cast ( ( owner/? ) as int) = ?;",
-                params![cutils_bindgen::AID_USER_OFFSET, user_id],
+                params![rustutils::users::AID_USER_OFFSET, user_id],
             )
             .context("In remove_uid: Failed to delete.")
         })?;
@@ -600,9 +600,9 @@ mod db_test {
             .expect("Failed to open database.");
 
         // Insert three entries for owner 2.
-        db.put(2 + 2 * cutils_bindgen::AID_USER_OFFSET, "test1", TEST_BLOB1)
+        db.put(2 + 2 * rustutils::users::AID_USER_OFFSET, "test1", TEST_BLOB1)
             .expect("Failed to insert test1.");
-        db.put(4 + 2 * cutils_bindgen::AID_USER_OFFSET, "test2", TEST_BLOB2)
+        db.put(4 + 2 * rustutils::users::AID_USER_OFFSET, "test2", TEST_BLOB2)
             .expect("Failed to insert test2.");
         db.put(3, "test3", TEST_BLOB3).expect("Failed to insert test3.");
 
@@ -610,12 +610,12 @@ mod db_test {
 
         assert_eq!(
             Vec::<String>::new(),
-            db.list(2 + 2 * cutils_bindgen::AID_USER_OFFSET).expect("Failed to list entries.")
+            db.list(2 + 2 * rustutils::users::AID_USER_OFFSET).expect("Failed to list entries.")
         );
 
         assert_eq!(
             Vec::<String>::new(),
-            db.list(4 + 2 * cutils_bindgen::AID_USER_OFFSET).expect("Failed to list entries.")
+            db.list(4 + 2 * rustutils::users::AID_USER_OFFSET).expect("Failed to list entries.")
         );
 
         assert_eq!(vec!["test3".to_string(),], db.list(3).expect("Failed to list entries."));
