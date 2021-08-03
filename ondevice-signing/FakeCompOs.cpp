@@ -53,7 +53,8 @@ using android::binder::Status;
 // TODO: Allocate a namespace for CompOS
 const int64_t kCompOsNamespace = 101;
 
-Result<std::unique_ptr<FakeCompOs>> FakeCompOs::newInstance() {
+Result<std::unique_ptr<FakeCompOs>>
+FakeCompOs::startInstance(const std::string& /*instanceImagePath*/) {
     std::unique_ptr<FakeCompOs> compOs(new FakeCompOs);
     auto init = compOs->initialize();
     if (init.ok()) {
@@ -86,69 +87,6 @@ Result<void> FakeCompOs::initialize() {
     }
 
     return {};
-}
-
-Result<FakeCompOs::KeyData> FakeCompOs::generateKey() const {
-    std::vector<KeyParameter> params;
-
-    KeyParameter algo;
-    algo.tag = Tag::ALGORITHM;
-    algo.value = KeyParameterValue::make<KeyParameterValue::algorithm>(Algorithm::RSA);
-    params.push_back(algo);
-
-    KeyParameter key_size;
-    key_size.tag = Tag::KEY_SIZE;
-    key_size.value = KeyParameterValue::make<KeyParameterValue::integer>(kRsaKeySize);
-    params.push_back(key_size);
-
-    KeyParameter digest;
-    digest.tag = Tag::DIGEST;
-    digest.value = KeyParameterValue::make<KeyParameterValue::digest>(Digest::SHA_2_256);
-    params.push_back(digest);
-
-    KeyParameter padding;
-    padding.tag = Tag::PADDING;
-    padding.value =
-        KeyParameterValue::make<KeyParameterValue::paddingMode>(PaddingMode::RSA_PKCS1_1_5_SIGN);
-    params.push_back(padding);
-
-    KeyParameter exponent;
-    exponent.tag = Tag::RSA_PUBLIC_EXPONENT;
-    exponent.value = KeyParameterValue::make<KeyParameterValue::longInteger>(kRsaKeyExponent);
-    params.push_back(exponent);
-
-    KeyParameter purpose;
-    purpose.tag = Tag::PURPOSE;
-    purpose.value = KeyParameterValue::make<KeyParameterValue::keyPurpose>(KeyPurpose::SIGN);
-    params.push_back(purpose);
-
-    KeyParameter auth;
-    auth.tag = Tag::NO_AUTH_REQUIRED;
-    auth.value = KeyParameterValue::make<KeyParameterValue::boolValue>(true);
-    params.push_back(auth);
-
-    KeyDescriptor descriptor;
-    descriptor.domain = Domain::BLOB;
-    descriptor.nspace = kCompOsNamespace;
-
-    KeyMetadata metadata;
-    auto status = mSecurityLevel->generateKey(descriptor, {}, params, 0, {}, &metadata);
-    if (!status.isOk()) {
-        return Error() << "Failed to generate key";
-    }
-
-    auto& cert = metadata.certificate;
-    if (!cert) {
-        return Error() << "No certificate.";
-    }
-
-    auto& blob = metadata.key.blob;
-    if (!blob) {
-        return Error() << "No blob.";
-    }
-
-    KeyData key_data{std::move(metadata.certificate.value()), std::move(metadata.key.blob.value())};
-    return key_data;
 }
 
 Result<FakeCompOs::ByteVector> FakeCompOs::signData(const ByteVector& keyBlob,
