@@ -40,7 +40,6 @@ rust_defaults {
         "android.system.keystore2-V1-rust",
         "libanyhow",
         "libbinder_rs",
-        "libcutils_bindgen",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
@@ -54,7 +53,7 @@ rust_defaults {
         "liblog_rust",
         "librand",
         "librusqlite",
-        "libsystem_properties-rust",
+        "librustutils",
         "libthiserror",
     ],
     shared_libs: [
@@ -124,8 +123,8 @@ rust_binary {
     // be removed once that works correctly.
     shared_libs: [
         "android.hardware.confirmationui@1.0",
-        "android.hardware.security.sharedsecret-V1-ndk_platform",
-        "android.security.compat-ndk_platform",
+        "android.hardware.security.sharedsecret-V1-ndk",
+        "android.security.compat-ndk",
         "libc",
         "libdl_android",
         "libdl",

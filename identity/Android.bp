@@ -48,8 +48,8 @@ cc_binary {
         "android.hardware.identity-support-lib",
         "libkeymaster4support",
         "libkeystore-attestation-application-id",
-        "android.hardware.security.keymint-V1-ndk_platform",
-        "android.security.authorization-ndk_platform",
+        "android.hardware.security.keymint-V1-ndk",
+        "android.security.authorization-ndk",
     ],
     static_libs: [
         "android.hardware.identity-V3-cpp",
