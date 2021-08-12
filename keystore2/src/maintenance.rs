@@ -152,48 +152,20 @@ impl Maintenance {
         }
     }
 
-    fn call_with_watchdog<F>(sec_level: SecurityLevel, name: &'static str, op: &F) -> Result<()>
-    where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
-    {
+    fn early_boot_ended_help(sec_level: SecurityLevel) -> Result<()> {
         let (dev, _, _) = get_keymint_device(&sec_level)
-            .context("In call_with_watchdog: getting keymint device")?;
-        let km_dev: Strong<dyn IKeyMintDevice> = dev
-            .get_interface()
-            .context("In call_with_watchdog: getting keymint device interface")?;
+            .context("In early_boot_ended: getting keymint device")?;
+        let km_dev: Strong<dyn IKeyMintDevice> =
+            dev.get_interface().context("In early_boot_ended: getting keymint device interface")?;
 
-        let _wp = wd::watch_millis_with("In call_with_watchdog", 500, move || {
-            format!("Seclevel: {:?} Op: {}", sec_level, name)
-        });
-        map_km_error(op(km_dev)).with_context(|| format!("In keymint device: calling {}", name))?;
+        let _wp = wd::watch_millis_with(
+            "In early_boot_ended_help: calling earlyBootEnded()",
+            500,
+            move || format!("Seclevel: {:?}", sec_level),
+        );
+        map_km_error(km_dev.earlyBootEnded())
+            .context("In keymint device: calling earlyBootEnded")?;
         Ok(())
-    }
-
-    fn call_on_all_security_levels<F>(name: &'static str, op: F) -> Result<()>
-    where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
-    {
-        let sec_levels = [
-            (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
-            (SecurityLevel::STRONGBOX, "STRONGBOX"),
-        ];
-        sec_levels.iter().fold(Ok(()), move |result, (sec_level, sec_level_string)| {
-            let curr_result = Maintenance::call_with_watchdog(*sec_level, name, &op);
-            match curr_result {
-                Ok(()) => log::info!(
-                    "Call to {} succeeded for security level {}.",
-                    name,
-                    &sec_level_string
-                ),
-                Err(ref e) => log::error!(
-                    "Call to {} failed for security level {}: {}.",
-                    name,
-                    &sec_level_string,
-                    e
-                ),
-            }
-            result.and(curr_result)
-        })
     }
 
     fn early_boot_ended() -> Result<()> {
@@ -204,7 +176,21 @@ impl Maintenance {
         if let Err(e) = DB.with(|db| SUPER_KEY.set_up_boot_level_cache(&mut db.borrow_mut())) {
             log::error!("SUPER_KEY.set_up_boot_level_cache failed:\n{:?}\n:(", e);
         }
-        Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded())
+
+        let sec_levels = [
+            (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
+            (SecurityLevel::STRONGBOX, "STRONGBOX"),
+        ];
+        sec_levels.iter().fold(Ok(()), |result, (sec_level, sec_level_string)| {
+            let curr_result = Maintenance::early_boot_ended_help(*sec_level);
+            if curr_result.is_err() {
+                log::error!(
+                    "Call to earlyBootEnded failed for security level {}.",
+                    &sec_level_string
+                );
+            }
+            result.and(curr_result)
+        })
     }
 
     fn on_device_off_body() -> Result<()> {
@@ -251,15 +237,6 @@ impl Maintenance {
                 check_key_permission(KeyPerm::rebind(), k, &None)
             })
         })
-    }
-
-    fn delete_all_keys() -> Result<()> {
-        // Security critical permission check. This statement must return on fail.
-        check_keystore_permission(KeystorePerm::delete_all_keys())
-            .context("In delete_all_keys. Checking permission")?;
-        log::info!("In delete_all_keys.");
-
-        Maintenance::call_on_all_security_levels("deleteAllKeys", |dev| dev.deleteAllKeys())
     }
 }
 
@@ -308,10 +285,5 @@ impl IKeystoreMaintenance for Maintenance {
     ) -> BinderResult<()> {
         let _wp = wd::watch_millis("IKeystoreMaintenance::migrateKeyNamespace", 500);
         map_or_log_err(Self::migrate_key_namespace(source, destination), Ok)
-    }
-
-    fn deleteAllKeys(&self) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
-        map_or_log_err(Self::delete_all_keys(), Ok)
     }
 }
