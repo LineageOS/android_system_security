@@ -125,3 +125,13 @@ cc_test {
         "libcrypto",
     ],
 }
+
+rust_test {
+    name: "libkeystore2_crypto_bindgen_test",
+    srcs: [":libkeystore2_crypto_bindgen"],
+    crate_name: "keystore2_crypto_bindgen_test",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    clippy_lints: "none",
+    lints: "none",
+}
