@@ -102,5 +102,5 @@ cc_library {
 
     export_include_dirs: ["include"],
 
-    vendor_available: true,
+    vendor: true,
 }
