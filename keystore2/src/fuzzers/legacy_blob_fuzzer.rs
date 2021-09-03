@@ -19,6 +19,8 @@ extern crate libfuzzer_sys;
 use keystore2::legacy_blob::LegacyBlobLoader;
 
 fuzz_target!(|data: &[u8]| {
-    let string = data.iter().filter_map(|c| std::char::from_u32(*c as u32)).collect::<String>();
-    let _res = LegacyBlobLoader::decode_alias(&string);
+    if !data.is_empty() {
+        let string = data.iter().filter_map(|c| std::char::from_u32(*c as u32)).collect::<String>();
+        let _res = LegacyBlobLoader::decode_alias(&string);
+    }
 });
