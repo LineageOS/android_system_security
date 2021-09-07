@@ -84,7 +84,6 @@ cc_binary {
   srcs: [
     "odsign_main.cpp",
     "CertUtils.cpp",
-    "FakeCompOs.cpp",
     "KeystoreKey.cpp",
     "KeystoreHmacKey.cpp",
     "VerityUtils.cpp",
