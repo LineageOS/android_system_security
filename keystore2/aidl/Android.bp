@@ -132,7 +132,7 @@ aidl_interface {
     name: "android.security.maintenance",
     srcs: [ "android/security/maintenance/*.aidl" ],
     imports: [
-        "android.system.keystore2",
+        "android.system.keystore2-V1",
     ],
     unstable: true,
     backend: {
