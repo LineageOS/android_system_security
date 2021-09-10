@@ -208,14 +208,14 @@ fn connect_keymint(
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
-            if keymint_instances.as_vec()?.iter().any(|instance| *instance == "default") {
+            if keymint_instances.iter().any(|instance| *instance == "default") {
                 Some(format!("{}/default", KEYMINT_SERVICE_NAME))
             } else {
                 None
             }
         }
         SecurityLevel::STRONGBOX => {
-            if keymint_instances.as_vec()?.iter().any(|instance| *instance == "strongbox") {
+            if keymint_instances.iter().any(|instance| *instance == "strongbox") {
                 Some(format!("{}/strongbox", KEYMINT_SERVICE_NAME))
             } else {
                 None
@@ -319,7 +319,7 @@ fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
         get_aidl_instances("android.hardware.security.secureclock", 1, "ISecureClock");
 
     let secure_clock_available =
-        secureclock_instances.as_vec()?.iter().any(|instance| *instance == "default");
+        secureclock_instances.iter().any(|instance| *instance == "default");
 
     let default_time_stamp_service_name = format!("{}/default", TIME_STAMP_SERVICE_NAME);
 
@@ -372,14 +372,14 @@ fn connect_remotely_provisioned_component(
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
-            if remotely_prov_instances.as_vec()?.iter().any(|instance| *instance == "default") {
+            if remotely_prov_instances.iter().any(|instance| *instance == "default") {
                 Some(format!("{}/default", REMOTE_PROVISIONING_HAL_SERVICE_NAME))
             } else {
                 None
             }
         }
         SecurityLevel::STRONGBOX => {
-            if remotely_prov_instances.as_vec()?.iter().any(|instance| *instance == "strongbox") {
+            if remotely_prov_instances.iter().any(|instance| *instance == "strongbox") {
                 Some(format!("{}/strongbox", REMOTE_PROVISIONING_HAL_SERVICE_NAME))
             } else {
                 None
