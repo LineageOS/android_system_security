@@ -837,8 +837,12 @@ impl Enforcements {
                         .context("In get_auth_tokens: No auth token found.");
                 }
             } else {
-                return Err(AuthzError::Rc(AuthzResponseCode::NO_AUTH_TOKEN_FOUND))
-                    .context("In get_auth_tokens: Passed-in auth token max age is zero.");
+                return Err(AuthzError::Rc(AuthzResponseCode::NO_AUTH_TOKEN_FOUND)).context(
+                    concat!(
+                        "In get_auth_tokens: No auth token found for ",
+                        "the given challenge and passed-in auth token max age is zero."
+                    ),
+                );
             }
         };
         // Wait and obtain the timestamp token from secure clock service.
