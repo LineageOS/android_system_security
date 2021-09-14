@@ -25,7 +25,8 @@ use keystore2::{apc::ApcManager, shared_secret_negotiation};
 use keystore2::{authorization::AuthorizationManager, id_rotation::IdRotationState};
 use legacykeystore::LegacyKeystore;
 use log::{error, info};
-use std::{panic, path::Path, sync::mpsc::channel};
+use rusqlite::trace as sqlite_trace;
+use std::{os::raw::c_int, panic, path::Path, sync::mpsc::channel};
 
 static KS2_SERVICE_NAME: &str = "android.system.keystore2.IKeystoreService/default";
 static APC_SERVICE_NAME: &str = "android.security.apc";
@@ -51,6 +52,14 @@ fn main() {
 
     let mut args = std::env::args();
     args.next().expect("That's odd. How is there not even a first argument?");
+
+    // This must happen early before any other sqlite operations.
+    log::info!("Setting up sqlite logging for keystore2");
+    fn sqlite_log_handler(err: c_int, message: &str) {
+        log::error!("[SQLITE3] {}: {}", err, message);
+    }
+    unsafe { sqlite_trace::config_log(Some(sqlite_log_handler)) }
+        .expect("Error setting sqlite log callback.");
 
     // Write/update keystore.crash_count system property.
     metrics_store::update_keystore_crash_sysprop();
