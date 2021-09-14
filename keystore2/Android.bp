@@ -106,6 +106,7 @@ rust_binary {
         "libkeystore2",
         "liblog_rust",
         "liblegacykeystore-rust",
+        "librusqlite",
     ],
     init_rc: ["keystore2.rc"],
 
