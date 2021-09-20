@@ -74,8 +74,32 @@ rust_library {
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
     rustlibs: [
+        "libkeystore2_selinux",
         "liblog_rust",
+        "libnix",
         "librand",
+        "libserde",
+        "libserde_cbor",
+    ],
+}
+
+rust_test {
+    name: "keystore2_test_utils_test",
+    srcs: ["test_utils/lib.rs"],
+    test_suites: ["general-tests"],
+    // TODO Remove custom test_config and enable the following two lines when
+    //      b/200602232 was resolved.
+    // require_root: true,
+    // auto_gen_config: true,
+    test_config: "test_utils/AndroidTest.xml",
+    compile_multilib: "first",
+    rustlibs: [
+        "libkeystore2_selinux",
+        "liblog_rust",
+        "libnix",
+        "librand",
+        "libserde",
+        "libserde_cbor",
     ],
 }
 

@@ -19,6 +19,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::{env::temp_dir, ops::Deref};
 
+pub mod run_as;
+
 /// Represents the lifecycle of a temporary directory for testing.
 #[derive(Debug)]
 pub struct TempDir {
