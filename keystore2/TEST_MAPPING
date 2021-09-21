@@ -10,6 +10,9 @@
       "name": "keystore2_test"
     },
     {
+      "name": "keystore2_test_utils_test"
+    },
+    {
       "name": "CtsIdentityTestCases"
     }
   ]
