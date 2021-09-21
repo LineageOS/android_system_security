@@ -321,6 +321,18 @@ pub fn check_access(source: &CStr, target: &CStr, tclass: &str, perm: &str) -> R
     }
 }
 
+/// Safe wrapper around setcon.
+pub fn setcon(target: &CStr) -> std::io::Result<()> {
+    // SAFETY: `setcon` takes a const char* and only performs read accesses on it
+    // using strdup and strcmp. `setcon` does not retain a pointer to `target`
+    // and `target` outlives the call to `setcon`.
+    if unsafe { selinux::setcon(target.as_ptr()) } != 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
