@@ -977,12 +977,18 @@ Certificate:
         return Util.prependSemanticTagForEncodedCbor(readerAuthentication);
     }
 
+    // Returns #6.24(bstr) of the given already encoded CBOR
+    //
+    public static @NonNull DataItem buildCborTaggedByteString(@NonNull byte[] encodedCbor) {
+        DataItem item = new ByteString(encodedCbor);
+        item.setTag(CBOR_SEMANTIC_TAG_ENCODED_CBOR);
+        return item;
+    }
+
     public static byte[] prependSemanticTagForEncodedCbor(byte[] encodedCbor) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try {
-            ByteString taggedBytestring = new ByteString(encodedCbor);
-            taggedBytestring.setTag(CBOR_SEMANTIC_TAG_ENCODED_CBOR);
-            new CborEncoder(baos).encode(taggedBytestring);
+            new CborEncoder(baos).encode(buildCborTaggedByteString(encodedCbor));
         } catch (CborException e) {
             throw new RuntimeException("Error encoding with semantic tag for CBOR encoding", e);
         }
