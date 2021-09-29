@@ -518,7 +518,9 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
     return art::odrefresh::ExitCode::kCompilationRequired;
 }
 
-int main(int /* argc */, char** /* argv */) {
+int main(int /* argc */, char** argv) {
+    android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));
+
     auto errorScopeGuard = []() {
         // In case we hit any error, remove the artifacts and tell Zygote not to use
         // anything
