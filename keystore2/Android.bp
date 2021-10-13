@@ -48,11 +48,9 @@ rust_defaults {
         "libkeystore2_vintf_rust",
         "liblazy_static",
         "liblibc",
-        "liblibsqlite3_sys_noicu",
         "liblog_event_list",
         "liblog_rust",
         "librand",
-        "librusqlite_noicu",
         "librustutils",
         "libthiserror",
     ],
@@ -67,6 +65,19 @@ rust_defaults {
 rust_library {
     name: "libkeystore2",
     defaults: ["libkeystore2_defaults"],
+    rustlibs: [
+        "liblibsqlite3_sys",
+        "librusqlite",
+    ],
+}
+
+rust_library {
+    name: "libkeystore2_noicu",
+    defaults: ["libkeystore2_defaults"],
+    rustlibs: [
+        "liblibsqlite3_sys_noicu",
+        "librusqlite_noicu",
+    ],
 }
 
 rust_library {
@@ -113,7 +124,9 @@ rust_test {
     rustlibs: [
         "libandroid_logger",
         "libkeystore2_test_utils",
+        "liblibsqlite3_sys",
         "libnix",
+        "librusqlite",
     ],
     // The test should always include watchdog.
     features: [
@@ -121,16 +134,13 @@ rust_test {
     ],
 }
 
-rust_binary {
-    name: "keystore2",
+rust_defaults {
+    name: "keystore2_defaults",
     srcs: ["src/keystore2_main.rs"],
     rustlibs: [
         "libandroid_logger",
         "libbinder_rs",
-        "libkeystore2",
         "liblog_rust",
-        "liblegacykeystore-rust",
-        "librusqlite",
     ],
     init_rc: ["keystore2.rc"],
 
@@ -167,4 +177,29 @@ rust_binary {
     vintf_fragments: ["android.system.keystore2-service.xml"],
 
     required: ["keystore_cli_v2"],
+}
+
+rust_binary {
+    name: "keystore2",
+    defaults: ["keystore2_defaults"],
+    rustlibs: [
+        "libkeystore2",
+        "liblegacykeystore-rust",
+        "librusqlite",
+    ],
+}
+
+// Variant of keystore2 for use in microdroid. It doesn't depend on the ICU-enabled sqlite.
+// This can be used also in Android, but we choose not to because it will bring two
+// variants of sqlite to the system causing more RAM usage and CPU cycles when loading.
+rust_binary {
+    name: "keystore2_microdroid",
+    stem: "keystore2",
+    defaults: ["keystore2_defaults"],
+    rustlibs: [
+        "libkeystore2_noicu",
+        "liblegacykeystore-rust_noicu",
+        "librusqlite_noicu",
+    ],
+    installable: false, // don't install this to Android
 }
