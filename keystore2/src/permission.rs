@@ -79,7 +79,6 @@ fn lookup_keystore2_key_context(namespace: i64) -> anyhow::Result<selinux::Conte
 ///
 /// ## Example
 /// ```
-///
 /// implement_permission!(
 ///     /// MyPerm documentation.
 ///     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -213,71 +212,229 @@ implement_permission_aidl!(
 ///    any variant not specified to the default.
 ///  * Every variant has a constructor with a name corresponding to its lower case SELinux string
 ///    representation.
-///  * `MyPerm.to_selinux(&self)` returns the SELinux string representation of the
-///    represented permission.
+///  * `MyPermission::to_selinux(&self)` returns the SELinux string representation of the
+///    corresponding permission.
+///  * An implicit default values `MyPermission::None` is created with a numeric representation
+///    of `0` and a string representation of `"none"`.
+///  * Specifying a value is optional. If the value is omitted it is set to the value of the
+///    previous variant left shifted by 1.
 ///
 /// ## Example
 /// ```
 /// implement_permission!(
-///     /// MyPerm documentation.
+///     /// MyPermission documentation.
 ///     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-///     MyPerm with default (None = 0, none) {
-///         Foo = 1,           selinux name: foo;
-///         Bar = 2,           selinux name: bar;
+///     pub enum MyPermission {
+///         #[selinux(name = foo)]
+///         Foo = 1,
+///         #[selinux(name = bar)]
+///         Bar = 2,
+///         #[selinux(name = snafu)]
+///         Snafu, // Implicit value: MyPermission::Bar << 1 = 4
 ///     }
 /// );
 /// ```
 macro_rules! implement_permission {
-    // This rule provides the public interface of the macro. And starts the preprocessing
-    // recursion (see below).
-    ($(#[$m:meta])* $name:ident with default
-        ($def_name:ident = $def_val:expr, $def_selinux_name:ident)
-        {
-            $($(#[$element_meta:meta])*
-            $element_name:ident = $element_val:expr, selinux name: $selinux_name:ident;)*
-        })
-    => {
-        $(#[$m])*
-        pub enum $name {
-            /// The default variant of an enum.
-            $def_name = $def_val,
+    (
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
             $(
-                $(#[$element_meta])*
-                $element_name = $element_val,
+                $(#[$($emeta:tt)+])*
+                $vname:ident$( = $vval:tt)?
+            ),* $(,)?
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                1
+                []
+                [$(
+                    [] [$(#[$($emeta)+])*]
+                    $vname$( = $vval)?,
+                )*]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[selinux(name = $selinux_name:ident)]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident = $vval:tt,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                ($vval << 1)
+                [
+                    $($out)*
+                    $(#[$mout])*
+                    $(#[$($mtail)+])*
+                    $selinux_name $vname = $vval,
+                ]
+                [$($tail)*]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[selinux(name = $selinux_name:ident)]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                ($next_val << 1)
+                [
+                    $($out)*
+                    $(#[$mout])*
+                    $(#[$($mtail)+])*
+                    $selinux_name $vname = $next_val,
+                ]
+                [$($tail)*]
+            }
+        }
+    };
+
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[$front:meta]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident$( = $vval:tt)?,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                $next_val
+                [$($out)*]
+                [
+                    [
+                        $(#[$mout])*
+                        #[$front]
+                    ]
+                    [$(#[$($mtail)+])*]
+                    $vname$( = $vval)?,
+                    $($tail)*
+                ]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            []
+        }
+    ) => {
+        implement_permission!{
+            @spill
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                $($out)*
+            }
+        }
+    };
+
+    (
+        @spill
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $(
+                $(#[$emeta:meta])*
+                $selinux_name:ident $vname:ident = $vval:tt,
+            )*
+        }
+    ) => {
+        $(#[$enum_meta])*
+        $enum_vis enum $enum_name {
+            /// The default variant of an enum.
+            None = 0,
+            $(
+                $(#[$emeta])*
+                $vname = $vval,
             )*
         }
 
-        impl From<i32> for $name {
+        impl From<i32> for $enum_name {
+            #[allow(non_upper_case_globals)]
             fn from (p: i32) -> Self {
+                // Creating constants forces the compiler to evaluate the value expressions
+                // so that they can be used in the match statement below.
+                $(const $vname: i32 = $vval;)*
                 match p {
-                    $def_val => Self::$def_name,
-                    $($element_val => Self::$element_name,)*
-                    _ => Self::$def_name,
+                    0 => Self::None,
+                    $($vname => Self::$vname,)*
+                    _ => Self::None,
                 }
             }
         }
 
-        impl From<$name> for i32 {
-            fn from(p: $name) -> i32 {
+        impl From<$enum_name> for i32 {
+            fn from(p: $enum_name) -> i32 {
                 p as i32
             }
         }
 
-        impl $name {
+        impl $enum_name {
+
             /// Returns a string representation of the permission as required by
             /// `selinux::check_access`.
             pub fn to_selinux(self) -> &'static str {
                 match self {
-                    Self::$def_name => stringify!($def_selinux_name),
-                    $(Self::$element_name => stringify!($selinux_name),)*
+                    Self::None => &"none",
+                    $(Self::$vname => stringify!($selinux_name),)*
                 }
             }
 
             /// Creates an instance representing a permission with the same name.
-            pub const fn $def_selinux_name() -> Self { Self::$def_name }
+            pub const fn none() -> Self { Self::None }
             $(
                 /// Creates an instance representing a permission with the same name.
-                pub const fn $selinux_name() -> Self { Self::$element_name }
+                pub const fn $selinux_name() -> Self { Self::$vname }
             )*
         }
     };
@@ -287,38 +444,53 @@ implement_permission!(
     /// KeystorePerm provides a convenient abstraction from the SELinux class `keystore2`.
     /// Using the implement_permission macro we get the same features as `KeyPerm`.
     #[derive(Clone, Copy, Debug, PartialEq)]
-    KeystorePerm with default (None = 0, none) {
+    pub enum KeystorePerm {
         /// Checked when a new auth token is installed.
-        AddAuth = 1,    selinux name: add_auth;
+        #[selinux(name = add_auth)]
+        AddAuth,
         /// Checked when an app is uninstalled or wiped.
-        ClearNs = 2,    selinux name: clear_ns;
+        #[selinux(name = clear_ns)]
+        ClearNs,
         /// Checked when the user state is queried from Keystore 2.0.
-        GetState = 4,   selinux name: get_state;
+        #[selinux(name = get_state)]
+        GetState,
         /// Checked when Keystore 2.0 is asked to list a namespace that the caller
         /// does not have the get_info permission for.
-        List = 8,       selinux name: list;
+        #[selinux(name = list)]
+        List,
         /// Checked when Keystore 2.0 gets locked.
-        Lock = 0x10,       selinux name: lock;
+        #[selinux(name = lock)]
+        Lock,
         /// Checked when Keystore 2.0 shall be reset.
-        Reset = 0x20,    selinux name: reset;
+        #[selinux(name = reset)]
+        Reset,
         /// Checked when Keystore 2.0 shall be unlocked.
-        Unlock = 0x40,    selinux name: unlock;
+        #[selinux(name = unlock)]
+        Unlock,
         /// Checked when user is added or removed.
-        ChangeUser = 0x80,    selinux name: change_user;
+        #[selinux(name = change_user)]
+        ChangeUser,
         /// Checked when password of the user is changed.
-        ChangePassword = 0x100,    selinux name: change_password;
+        #[selinux(name = change_password)]
+        ChangePassword,
         /// Checked when a UID is cleared.
-        ClearUID = 0x200,    selinux name: clear_uid;
+        #[selinux(name = clear_uid)]
+        ClearUID,
         /// Checked when Credstore calls IKeystoreAuthorization to obtain auth tokens.
-        GetAuthToken = 0x400,  selinux name: get_auth_token;
+        #[selinux(name = get_auth_token)]
+        GetAuthToken,
         /// Checked when earlyBootEnded() is called.
-        EarlyBootEnded = 0x800,   selinux name: early_boot_ended;
+        #[selinux(name = early_boot_ended)]
+        EarlyBootEnded,
         /// Checked when IKeystoreMaintenance::onDeviceOffBody is called.
-        ReportOffBody = 0x1000, selinux name: report_off_body;
-        /// Checked when IkeystoreMetrics::pullMetris is called.
-        PullMetrics = 0x2000, selinux name: pull_metrics;
+        #[selinux(name = report_off_body)]
+        ReportOffBody,
+        /// Checked when IkeystoreMetrics::pullMetrics is called.
+        #[selinux(name = pull_metrics)]
+        PullMetrics,
         /// Checked when IKeystoreMaintenance::deleteAllKeys is called.
-        DeleteAllKeys = 0x4000, selinux name: delete_all_keys;
+        #[selinux(name = delete_all_keys)]
+        DeleteAllKeys,
     }
 );
 
