@@ -333,6 +333,241 @@ pub fn setcon(target: &CStr) -> std::io::Result<()> {
     }
 }
 
+/// This macro implements an enum with values mapped to SELinux permission names.
+/// The below example wraps the enum MyPermission in the tuple struct `MyPerm` and implements
+///  * From<i32> and Into<i32> are implemented. Where the implementation of From maps
+///    any variant not specified to the default.
+///  * Every variant has a constructor with a name corresponding to its lower case SELinux string
+///    representation.
+///  * `MyPermission::to_selinux(&self)` returns the SELinux string representation of the
+///    corresponding permission.
+///  * An implicit default values `MyPermission::None` is created with a numeric representation
+///    of `0` and a string representation of `"none"`.
+///  * Specifying a value is optional. If the value is omitted it is set to the value of the
+///    previous variant left shifted by 1.
+///
+/// ## Example
+/// ```
+/// implement_permission!(
+///     /// MyPermission documentation.
+///     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///     pub enum MyPermission {
+///         #[selinux(name = foo)]
+///         Foo = 1,
+///         #[selinux(name = bar)]
+///         Bar = 2,
+///         #[selinux(name = snafu)]
+///         Snafu, // Implicit value: MyPermission::Bar << 1 = 4
+///     }
+/// );
+/// ```
+#[macro_export]
+macro_rules! implement_permission {
+    (
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $(
+                $(#[$($emeta:tt)+])*
+                $vname:ident$( = $vval:tt)?
+            ),* $(,)?
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                1
+                []
+                [$(
+                    [] [$(#[$($emeta)+])*]
+                    $vname$( = $vval)?,
+                )*]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[selinux(name = $selinux_name:ident)]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident = $vval:tt,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                ($vval << 1)
+                [
+                    $($out)*
+                    $(#[$mout])*
+                    $(#[$($mtail)+])*
+                    $selinux_name $vname = $vval,
+                ]
+                [$($tail)*]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[selinux(name = $selinux_name:ident)]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                ($next_val << 1)
+                [
+                    $($out)*
+                    $(#[$mout])*
+                    $(#[$($mtail)+])*
+                    $selinux_name $vname = $next_val,
+                ]
+                [$($tail)*]
+            }
+        }
+    };
+
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            [
+                [$(#[$mout:meta])*]
+                [
+                    #[$front:meta]
+                    $(#[$($mtail:tt)+])*
+                ]
+                $vname:ident$( = $vval:tt)?,
+                $($tail:tt)*
+            ]
+        }
+    ) => {
+        implement_permission!{
+            @extract_attr
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                $next_val
+                [$($out)*]
+                [
+                    [
+                        $(#[$mout])*
+                        #[$front]
+                    ]
+                    [$(#[$($mtail)+])*]
+                    $vname$( = $vval)?,
+                    $($tail)*
+                ]
+            }
+        }
+    };
+
+    (
+        @extract_attr
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $next_val:tt
+            [$($out:tt)*]
+            []
+        }
+    ) => {
+        implement_permission!{
+            @spill
+            $(#[$enum_meta])*
+            $enum_vis enum $enum_name {
+                $($out)*
+            }
+        }
+    };
+
+    (
+        @spill
+        $(#[$enum_meta:meta])*
+        $enum_vis:vis enum $enum_name:ident {
+            $(
+                $(#[$emeta:meta])*
+                $selinux_name:ident $vname:ident = $vval:tt,
+            )*
+        }
+    ) => {
+        $(#[$enum_meta])*
+        $enum_vis enum $enum_name {
+            /// The default variant of an enum.
+            None = 0,
+            $(
+                $(#[$emeta])*
+                $vname = $vval,
+            )*
+        }
+
+        impl From<i32> for $enum_name {
+            #[allow(non_upper_case_globals)]
+            fn from (p: i32) -> Self {
+                // Creating constants forces the compiler to evaluate the value expressions
+                // so that they can be used in the match statement below.
+                $(const $vname: i32 = $vval;)*
+                match p {
+                    0 => Self::None,
+                    $($vname => Self::$vname,)*
+                    _ => Self::None,
+                }
+            }
+        }
+
+        impl From<$enum_name> for i32 {
+            fn from(p: $enum_name) -> i32 {
+                p as i32
+            }
+        }
+
+        impl $enum_name {
+
+            /// Returns a string representation of the permission as required by
+            /// `selinux::check_access`.
+            pub fn to_selinux(self) -> &'static str {
+                match self {
+                    Self::None => &"none",
+                    $(Self::$vname => stringify!($selinux_name),)*
+                }
+            }
+
+            /// Creates an instance representing a permission with the same name.
+            pub const fn none() -> Self { Self::None }
+            $(
+                /// Creates an instance representing a permission with the same name.
+                pub const fn $selinux_name() -> Self { Self::$vname }
+            )*
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
