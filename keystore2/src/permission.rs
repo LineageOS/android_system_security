@@ -25,7 +25,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 use anyhow::Context as AnyhowContext;
 use keystore2_selinux as selinux;
 use lazy_static::lazy_static;
-use selinux::{implement_permission, Backend};
+use selinux::{implement_class, Backend, ClassPermission};
 use std::cmp::PartialEq;
 use std::convert::From;
 use std::ffi::CStr;
@@ -64,12 +64,12 @@ fn lookup_keystore2_key_context(namespace: i64) -> anyhow::Result<selinux::Conte
 ///    any variant not specified to the default.
 ///  * Every variant has a constructor with a name corresponding to its lower case SELinux string
 ///    representation.
-///  * `MyPerm.to_selinux(&self)` returns the SELinux string representation of the
+///  * `MyPerm.name()(&self)` returns the SELinux string representation of the
 ///    represented permission.
 ///
 /// ## Special behavior
 /// If the keyword `use` appears as an selinux name `use_` is used as identifier for the
-/// constructor function (e.g. `MePerm::use_()`) but the string returned by `to_selinux` will
+/// constructor function (e.g. `MePerm::use_()`) but the string returned by `name()` will
 /// still be `"use"`.
 ///
 /// ## Example
@@ -149,17 +149,20 @@ macro_rules! implement_permission_aidl {
             }
         }
 
-        impl $name {
-            /// Returns a string representation of the permission as required by
-            /// `selinux::check_access`.
-            pub fn to_selinux(self) -> &'static str {
+        impl ClassPermission for $name {
+            fn name(&self) -> &'static str {
                 match self {
                     Self($aidl_name::$def_name) => stringify!($def_selinux_name),
                     $(Self($aidl_name::$element_name) => stringify!($selinux_name),)*
                     _ => stringify!($def_selinux_name),
                 }
             }
+            fn class_name(&self) -> &'static str {
+                "keystore2_key"
+            }
+        }
 
+        impl $name {
             /// Creates an instance representing a permission with the same name.
             pub const fn $def_selinux_name() -> Self { Self($aidl_name::$def_name) }
             $(
@@ -182,8 +185,7 @@ implement_permission_aidl!(
     /// In this access check `KeyPerm::get_info().to_selinux()` would return the SELinux representation
     /// "info".
     /// ```
-    /// selinux::check_access(source_context, target_context, "keystore2_key",
-    ///                       KeyPerm::get_info().to_selinux());
+    /// selinux::check_permission(source_context, target_context, KeyPerm::get_info());
     /// ```
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     KeyPerm from KeyPermission with default (NONE, none) {
@@ -201,9 +203,10 @@ implement_permission_aidl!(
     }
 );
 
-implement_permission!(
+implement_class!(
     /// KeystorePerm provides a convenient abstraction from the SELinux class `keystore2`.
     /// Using the implement_permission macro we get the same features as `KeyPerm`.
+    #[selinux(class_name = keystore2)]
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub enum KeystorePerm {
         /// Checked when a new auth token is installed.
@@ -363,14 +366,14 @@ impl IntoIterator for KeyPermSet {
     }
 }
 
-/// Uses `selinux::check_access` to check if the given caller context `caller_cxt` may access
+/// Uses `selinux::check_permission` to check if the given caller context `caller_cxt` may access
 /// the given permision `perm` of the `keystore2` security class.
 pub fn check_keystore_permission(caller_ctx: &CStr, perm: KeystorePerm) -> anyhow::Result<()> {
     let target_context = getcon().context("check_keystore_permission: getcon failed.")?;
-    selinux::check_access(caller_ctx, &target_context, "keystore2", perm.to_selinux())
+    selinux::check_permission(caller_ctx, &target_context, perm)
 }
 
-/// Uses `selinux::check_access` to check if the given caller context `caller_cxt` has
+/// Uses `selinux::check_permission` to check if the given caller context `caller_cxt` has
 /// all the permissions indicated in `access_vec` for the target domain indicated by the key
 /// descriptor `key` in the security class `keystore2_key`.
 ///
@@ -395,7 +398,7 @@ pub fn check_grant_permission(
         _ => return Err(KsError::sys()).context(format!("Cannot grant {:?}.", key.domain)),
     };
 
-    selinux::check_access(caller_ctx, &target_context, "keystore2_key", "grant")
+    selinux::check_permission(caller_ctx, &target_context, KeyPerm::grant())
         .context("Grant permission is required when granting.")?;
 
     if access_vec.includes(KeyPerm::grant()) {
@@ -403,19 +406,16 @@ pub fn check_grant_permission(
     }
 
     for p in access_vec.into_iter() {
-        selinux::check_access(caller_ctx, &target_context, "keystore2_key", p.to_selinux())
-            .context(format!(
-                concat!(
-                    "check_grant_permission: check_access failed. ",
-                    "The caller may have tried to grant a permission that they don't possess. {:?}"
-                ),
-                p
-            ))?
+        selinux::check_permission(caller_ctx, &target_context, p).context(format!(
+            "check_grant_permission: check_permission failed. \
+            The caller may have tried to grant a permission that they don't possess. {:?}",
+            p
+        ))?
     }
     Ok(())
 }
 
-/// Uses `selinux::check_access` to check if the given caller context `caller_cxt`
+/// Uses `selinux::check_permission` to check if the given caller context `caller_cxt`
 /// has the permissions indicated by `perm` for the target domain indicated by the key
 /// descriptor `key` in the security class `keystore2_key`.
 ///
@@ -425,7 +425,7 @@ pub fn check_grant_permission(
 ///                      backend, and the result is used as target context.
 ///  * `Domain::BLOB` Same as SELinux but the "manage_blob" permission is always checked additionally
 ///                   to the one supplied in `perm`.
-///  * `Domain::GRANT` Does not use selinux::check_access. Instead the `access_vector`
+///  * `Domain::GRANT` Does not use selinux::check_permission. Instead the `access_vector`
 ///                    parameter is queried for permission, which must be supplied in this case.
 ///
 /// ## Return values.
@@ -469,7 +469,7 @@ pub fn check_key_permission(
             match access_vector {
                 Some(_) => {
                     return Err(selinux::Error::perm())
-                        .context(format!("\"{}\" not granted", perm.to_selinux()));
+                        .context(format!("\"{}\" not granted", perm.name()));
                 }
                 None => {
                     // If DOMAIN_GRANT was selected an access vector must be supplied.
@@ -490,12 +490,7 @@ pub fn check_key_permission(
                 .context("Domain::BLOB: Failed to lookup namespace.")?;
             // If DOMAIN_KEY_BLOB was specified, we check for the "manage_blob"
             // permission in addition to the requested permission.
-            selinux::check_access(
-                caller_ctx,
-                &tctx,
-                "keystore2_key",
-                KeyPerm::manage_blob().to_selinux(),
-            )?;
+            selinux::check_permission(caller_ctx, &tctx, KeyPerm::manage_blob())?;
 
             tctx
         }
@@ -505,7 +500,7 @@ pub fn check_key_permission(
         }
     };
 
-    selinux::check_access(caller_ctx, &target_context, "keystore2_key", perm.to_selinux())
+    selinux::check_permission(caller_ctx, &target_context, perm)
 }
 
 #[cfg(test)]
@@ -881,16 +876,16 @@ mod tests {
             KeyPerm::use_() // Test if the macro accepts missing comma at the end of the list.
         ];
         let mut i = v.into_iter();
-        assert_eq!(i.next().unwrap().to_selinux(), "delete");
-        assert_eq!(i.next().unwrap().to_selinux(), "gen_unique_id");
-        assert_eq!(i.next().unwrap().to_selinux(), "get_info");
-        assert_eq!(i.next().unwrap().to_selinux(), "grant");
-        assert_eq!(i.next().unwrap().to_selinux(), "manage_blob");
-        assert_eq!(i.next().unwrap().to_selinux(), "rebind");
-        assert_eq!(i.next().unwrap().to_selinux(), "req_forced_op");
-        assert_eq!(i.next().unwrap().to_selinux(), "update");
-        assert_eq!(i.next().unwrap().to_selinux(), "use");
-        assert_eq!(i.next().unwrap().to_selinux(), "use_dev_id");
+        assert_eq!(i.next().unwrap().name(), "delete");
+        assert_eq!(i.next().unwrap().name(), "gen_unique_id");
+        assert_eq!(i.next().unwrap().name(), "get_info");
+        assert_eq!(i.next().unwrap().name(), "grant");
+        assert_eq!(i.next().unwrap().name(), "manage_blob");
+        assert_eq!(i.next().unwrap().name(), "rebind");
+        assert_eq!(i.next().unwrap().name(), "req_forced_op");
+        assert_eq!(i.next().unwrap().name(), "update");
+        assert_eq!(i.next().unwrap().name(), "use");
+        assert_eq!(i.next().unwrap().name(), "use_dev_id");
         assert_eq!(None, i.next());
     }
     #[test]
@@ -903,11 +898,11 @@ mod tests {
             KeyPerm::use_(), // Test if macro accepts the comma at the end of the list.
         ];
         let mut i = v.into_iter();
-        assert_eq!(i.next().unwrap().to_selinux(), "gen_unique_id");
-        assert_eq!(i.next().unwrap().to_selinux(), "manage_blob");
-        assert_eq!(i.next().unwrap().to_selinux(), "req_forced_op");
-        assert_eq!(i.next().unwrap().to_selinux(), "update");
-        assert_eq!(i.next().unwrap().to_selinux(), "use");
+        assert_eq!(i.next().unwrap().name(), "gen_unique_id");
+        assert_eq!(i.next().unwrap().name(), "manage_blob");
+        assert_eq!(i.next().unwrap().name(), "req_forced_op");
+        assert_eq!(i.next().unwrap().name(), "update");
+        assert_eq!(i.next().unwrap().name(), "use");
         assert_eq!(None, i.next());
     }
     #[test]
