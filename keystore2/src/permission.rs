@@ -600,28 +600,26 @@ mod tests {
     #[test]
     fn check_keystore_permission_test() -> Result<()> {
         let system_server_ctx = Context::new("u:r:system_server:s0")?;
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::add_auth()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::clear_ns()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::get_state()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::lock()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::reset()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::unlock()).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::change_user()).is_ok());
-        assert!(
-            check_keystore_permission(&system_server_ctx, KeystorePerm::change_password()).is_ok()
-        );
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::clear_uid()).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::AddAuth).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::ClearNs).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::GetState).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Lock).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Reset).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Unlock).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::ChangeUser).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::ChangePassword).is_ok());
+        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::ClearUID).is_ok());
         let shell_ctx = Context::new("u:r:shell:s0")?;
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::add_auth()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::clear_ns()));
-        assert!(check_keystore_permission(&shell_ctx, KeystorePerm::get_state()).is_ok());
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::list()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::lock()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::reset()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::unlock()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::change_user()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::change_password()));
-        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::clear_uid()));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::AddAuth));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::ClearNs));
+        assert!(check_keystore_permission(&shell_ctx, KeystorePerm::GetState).is_ok());
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::List));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::Lock));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::Reset));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::Unlock));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::ChangeUser));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::ChangePassword));
+        assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::ClearUID));
         Ok(())
     }
 

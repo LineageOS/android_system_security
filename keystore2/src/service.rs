@@ -274,7 +274,7 @@ impl KeystoreService {
                 if let Some(selinux::Error::PermissionDenied) =
                     e.root_cause().downcast_ref::<selinux::Error>()
                 {
-                    check_keystore_permission(KeystorePerm::list())
+                    check_keystore_permission(KeystorePerm::List)
                         .context("In list_entries: While checking keystore permission.")?;
                     if namespace != -1 {
                         k.nspace = namespace;

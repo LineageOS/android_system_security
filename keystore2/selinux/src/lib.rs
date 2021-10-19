@@ -345,8 +345,6 @@ pub trait ClassPermission {
 /// The example below implements `enum MyPermission with public visibility:
 ///  * From<i32> and Into<i32> are implemented. Where the implementation of From maps
 ///    any variant not specified to the default `None` with value `0`.
-///  * Every variant has a constructor with a name corresponding to its lower case SELinux string
-///    representation.
 ///  * `MyPermission` implements ClassPermission.
 ///  * An implicit default values `MyPermission::None` is created with a numeric representation
 ///    of `0` and a string representation of `"none"`.
@@ -631,15 +629,6 @@ macro_rules! implement_class {
             fn class_name(&self) -> &'static str {
                 stringify!($class_name)
             }
-        }
-
-        impl $enum_name {
-            /// Creates an instance representing a permission with the same name.
-            pub const fn none() -> Self { Self::None }
-            $(
-                /// Creates an instance representing a permission with the same name.
-                pub const fn $selinux_name() -> Self { Self::$vname }
-            )*
         }
     };
 }
