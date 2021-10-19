@@ -47,159 +47,49 @@ fn lookup_keystore2_key_context(namespace: i64) -> anyhow::Result<selinux::Conte
     KEYSTORE2_KEY_LABEL_BACKEND.lookup(&namespace.to_string())
 }
 
-/// ## Background
-///
-/// AIDL enums are represented as constants of the form:
-/// ```
-/// mod EnumName {
-///     pub type EnumName = i32;
-///     pub const Variant1: EnumName = <value1>;
-///     pub const Variant2: EnumName = <value2>;
-///     ...
-/// }
-///```
-/// This macro wraps the enum in a new type, e.g., `MyPerm` and maps each variant to an SELinux
-/// permission while providing the following interface:
-///  * From<EnumName> and Into<EnumName> are implemented. Where the implementation of From maps
-///    any variant not specified to the default.
-///  * Every variant has a constructor with a name corresponding to its lower case SELinux string
-///    representation.
-///  * `MyPerm.name()(&self)` returns the SELinux string representation of the
-///    represented permission.
-///
-/// ## Special behavior
-/// If the keyword `use` appears as an selinux name `use_` is used as identifier for the
-/// constructor function (e.g. `MePerm::use_()`) but the string returned by `name()` will
-/// still be `"use"`.
-///
-/// ## Example
-/// ```
-/// implement_permission!(
-///     /// MyPerm documentation.
-///     #[derive(Clone, Copy, Debug, PartialEq)]
-///     MyPerm from EnumName with default (None, none) {}
-///         Variant1,    selinux name: variant1;
-///         Variant2,    selinux name: variant1;
-///     }
-/// );
-/// ```
-macro_rules! implement_permission_aidl {
-    // This rule provides the public interface of the macro. And starts the preprocessing
-    // recursion (see below).
-    ($(#[$m:meta])* $name:ident from $aidl_name:ident with default ($($def:tt)*)
-        { $($element:tt)* })
-    => {
-        implement_permission_aidl!(@replace_use $($m)*, $name, $aidl_name, ($($def)*), [],
-            $($element)*);
-    };
-
-    // The following three rules recurse through the elements of the form
-    // `<enum variant>, selinux name: <selinux_name>;`
-    // preprocessing the input.
-
-    // The first rule terminates the recursion and passes the processed arguments to the final
-    // rule that spills out the implementation.
-    (@replace_use $($m:meta)*, $name:ident, $aidl_name:ident, ($($def:tt)*), [$($out:tt)*], ) => {
-        implement_permission_aidl!(@end $($m)*, $name, $aidl_name, ($($def)*) { $($out)* } );
-    };
-
-    // The second rule is triggered if the selinux name of an element is literally `use`.
-    // It produces the tuple `<enum variant>, use_, use;`
-    // and appends it to the out list.
-    (@replace_use $($m:meta)*, $name:ident, $aidl_name:ident, ($($def:tt)*), [$($out:tt)*],
-        $e_name:ident, selinux name: use; $($element:tt)*)
-    => {
-        implement_permission_aidl!(@replace_use $($m)*, $name, $aidl_name, ($($def)*),
-                              [$($out)* $e_name, use_, use;], $($element)*);
-    };
-
-    // The third rule is the default rule which replaces every input tuple with
-    // `<enum variant>, <selinux_name>, <selinux_name>;`
-    // and appends the result to the out list.
-    (@replace_use $($m:meta)*, $name:ident, $aidl_name:ident, ($($def:tt)*), [$($out:tt)*],
-        $e_name:ident, selinux name: $e_str:ident; $($element:tt)*)
-    => {
-        implement_permission_aidl!(@replace_use $($m)*, $name, $aidl_name, ($($def)*),
-                              [$($out)* $e_name, $e_str, $e_str;], $($element)*);
-    };
-
-    (@end $($m:meta)*, $name:ident, $aidl_name:ident,
-        ($def_name:ident, $def_selinux_name:ident) {
-            $($element_name:ident, $element_identifier:ident,
-                $selinux_name:ident;)*
-        })
-    =>
-    {
-        $(#[$m])*
-        pub struct $name(pub $aidl_name);
-
-        impl From<$aidl_name> for $name {
-            fn from (p: $aidl_name) -> Self {
-                match p {
-                    $aidl_name::$def_name => Self($aidl_name::$def_name),
-                    $($aidl_name::$element_name => Self($aidl_name::$element_name),)*
-                    _ => Self($aidl_name::$def_name),
-                }
-            }
-        }
-
-        impl From<$name> for $aidl_name {
-            fn from(p: $name) -> $aidl_name {
-                p.0
-            }
-        }
-
-        impl ClassPermission for $name {
-            fn name(&self) -> &'static str {
-                match self {
-                    Self($aidl_name::$def_name) => stringify!($def_selinux_name),
-                    $(Self($aidl_name::$element_name) => stringify!($selinux_name),)*
-                    _ => stringify!($def_selinux_name),
-                }
-            }
-            fn class_name(&self) -> &'static str {
-                "keystore2_key"
-            }
-        }
-
-        impl $name {
-            /// Creates an instance representing a permission with the same name.
-            pub const fn $def_selinux_name() -> Self { Self($aidl_name::$def_name) }
-            $(
-                /// Creates an instance representing a permission with the same name.
-                pub const fn $element_identifier() -> Self { Self($aidl_name::$element_name) }
-            )*
-        }
-    };
-}
-
-implement_permission_aidl!(
+implement_class!(
     /// KeyPerm provides a convenient abstraction from the SELinux class `keystore2_key`.
     /// At the same time it maps `KeyPermissions` from the Keystore 2.0 AIDL Grant interface to
-    /// the SELinux permissions. With the implement_permission macro, we conveniently
-    /// provide mappings between the wire type bit field values, the rust enum and the SELinux
-    /// string representation.
-    ///
-    /// ## Example
-    ///
-    /// In this access check `KeyPerm::get_info().to_selinux()` would return the SELinux representation
-    /// "info".
-    /// ```
-    /// selinux::check_permission(source_context, target_context, KeyPerm::get_info());
-    /// ```
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    KeyPerm from KeyPermission with default (NONE, none) {
-        CONVERT_STORAGE_KEY_TO_EPHEMERAL,   selinux name: convert_storage_key_to_ephemeral;
-        DELETE,         selinux name: delete;
-        GEN_UNIQUE_ID,  selinux name: gen_unique_id;
-        GET_INFO,       selinux name: get_info;
-        GRANT,          selinux name: grant;
-        MANAGE_BLOB,    selinux name: manage_blob;
-        REBIND,         selinux name: rebind;
-        REQ_FORCED_OP,  selinux name: req_forced_op;
-        UPDATE,         selinux name: update;
-        USE,            selinux name: use;
-        USE_DEV_ID,     selinux name: use_dev_id;
+    /// the SELinux permissions.
+    #[repr(i32)]
+    #[selinux(class_name = keystore2_key)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum KeyPerm {
+        /// Checked when convert_storage_key_to_ephemeral is called.
+        #[selinux(name = convert_storage_key_to_ephemeral)]
+        ConvertStorageKeyToEphemeral = KeyPermission::CONVERT_STORAGE_KEY_TO_EPHEMERAL.0,
+        /// Checked when the caller tries do delete a key.
+        #[selinux(name = delete)]
+        Delete = KeyPermission::DELETE.0,
+        /// Checked when the caller tries to use a unique id.
+        #[selinux(name = gen_unique_id)]
+        GenUniqueId = KeyPermission::GEN_UNIQUE_ID.0,
+        /// Checked when the caller tries to load a key.
+        #[selinux(name = get_info)]
+        GetInfo = KeyPermission::GET_INFO.0,
+        /// Checked when the caller attempts to grant a key to another uid.
+        /// Also used for gating key migration attempts.
+        #[selinux(name = grant)]
+        Grant = KeyPermission::GRANT.0,
+        /// Checked when the caller attempts to use Domain::BLOB.
+        #[selinux(name = manage_blob)]
+        ManageBlob = KeyPermission::MANAGE_BLOB.0,
+        /// Checked when the caller tries to create a key which implies rebinding
+        /// an alias to the new key.
+        #[selinux(name = rebind)]
+        Rebind = KeyPermission::REBIND.0,
+        /// Checked when the caller attempts to create a forced operation.
+        #[selinux(name = req_forced_op)]
+        ReqForcedOp = KeyPermission::REQ_FORCED_OP.0,
+        /// Checked when the caller attempts to update public key artifacts.
+        #[selinux(name = update)]
+        Update = KeyPermission::UPDATE.0,
+        /// Checked when the caller attempts to use a private or public key.
+        #[selinux(name = use)]
+        Use = KeyPermission::USE.0,
+        /// Checked when the caller attempts to use device ids for attestation.
+        #[selinux(name = use_dev_id)]
+        UseDevId = KeyPermission::USE_DEV_ID.0,
     }
 );
 
@@ -268,17 +158,17 @@ implement_class!(
 ///
 /// ## Example
 /// ```
-/// let perms1 = key_perm_set![KeyPerm::use_(), KeyPerm::manage_blob(), KeyPerm::grant()];
-/// let perms2 = key_perm_set![KeyPerm::use_(), KeyPerm::manage_blob()];
+/// let perms1 = key_perm_set![KeyPerm::Use, KeyPerm::ManageBlob, KeyPerm::Grant];
+/// let perms2 = key_perm_set![KeyPerm::Use, KeyPerm::ManageBlob];
 ///
 /// assert!(perms1.includes(perms2))
 /// assert!(!perms2.includes(perms1))
 ///
 /// let i = perms1.into_iter();
 /// // iteration in ascending order of the permission's numeric representation.
-/// assert_eq(Some(KeyPerm::manage_blob()), i.next());
-/// assert_eq(Some(KeyPerm::grant()), i.next());
-/// assert_eq(Some(KeyPerm::use_()), i.next());
+/// assert_eq(Some(KeyPerm::ManageBlob), i.next());
+/// assert_eq(Some(KeyPerm::Grant), i.next());
+/// assert_eq(Some(KeyPerm::Use), i.next());
 /// assert_eq(None, i.next());
 /// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -309,7 +199,7 @@ mod perm {
                 let p = self.vec.0 & (1 << self.pos);
                 self.pos += 1;
                 if p != 0 {
-                    return Some(KeyPerm::from(KeyPermission(p)));
+                    return Some(KeyPerm::from(p));
                 }
             }
         }
@@ -318,7 +208,7 @@ mod perm {
 
 impl From<KeyPerm> for KeyPermSet {
     fn from(p: KeyPerm) -> Self {
-        Self((p.0).0 as i32)
+        Self(p as i32)
     }
 }
 
@@ -353,7 +243,7 @@ impl KeyPermSet {
 macro_rules! key_perm_set {
     () => { KeyPermSet(0) };
     ($head:expr $(, $tail:expr)* $(,)?) => {
-        KeyPermSet(($head.0).0 $(| ($tail.0).0)*)
+        KeyPermSet($head as i32 $(| $tail as i32)*)
     };
 }
 
@@ -398,10 +288,10 @@ pub fn check_grant_permission(
         _ => return Err(KsError::sys()).context(format!("Cannot grant {:?}.", key.domain)),
     };
 
-    selinux::check_permission(caller_ctx, &target_context, KeyPerm::grant())
+    selinux::check_permission(caller_ctx, &target_context, KeyPerm::Grant)
         .context("Grant permission is required when granting.")?;
 
-    if access_vec.includes(KeyPerm::grant()) {
+    if access_vec.includes(KeyPerm::Grant) {
         return Err(selinux::Error::perm()).context("Grant permission cannot be granted.");
     }
 
@@ -490,7 +380,7 @@ pub fn check_key_permission(
                 .context("Domain::BLOB: Failed to lookup namespace.")?;
             // If DOMAIN_KEY_BLOB was specified, we check for the "manage_blob"
             // permission in addition to the requested permission.
-            selinux::check_permission(caller_ctx, &tctx, KeyPerm::manage_blob())?;
+            selinux::check_permission(caller_ctx, &tctx, KeyPerm::ManageBlob)?;
 
             tctx
         }
@@ -511,49 +401,49 @@ mod tests {
     use keystore2_selinux::*;
 
     const ALL_PERMS: KeyPermSet = key_perm_set![
-        KeyPerm::manage_blob(),
-        KeyPerm::delete(),
-        KeyPerm::use_dev_id(),
-        KeyPerm::req_forced_op(),
-        KeyPerm::gen_unique_id(),
-        KeyPerm::grant(),
-        KeyPerm::get_info(),
-        KeyPerm::rebind(),
-        KeyPerm::update(),
-        KeyPerm::use_(),
-        KeyPerm::convert_storage_key_to_ephemeral(),
+        KeyPerm::ManageBlob,
+        KeyPerm::Delete,
+        KeyPerm::UseDevId,
+        KeyPerm::ReqForcedOp,
+        KeyPerm::GenUniqueId,
+        KeyPerm::Grant,
+        KeyPerm::GetInfo,
+        KeyPerm::Rebind,
+        KeyPerm::Update,
+        KeyPerm::Use,
+        KeyPerm::ConvertStorageKeyToEphemeral,
     ];
 
     const SYSTEM_SERVER_PERMISSIONS_NO_GRANT: KeyPermSet = key_perm_set![
-        KeyPerm::delete(),
-        KeyPerm::use_dev_id(),
-        // No KeyPerm::grant()
-        KeyPerm::get_info(),
-        KeyPerm::rebind(),
-        KeyPerm::update(),
-        KeyPerm::use_(),
+        KeyPerm::Delete,
+        KeyPerm::UseDevId,
+        // No KeyPerm::Grant
+        KeyPerm::GetInfo,
+        KeyPerm::Rebind,
+        KeyPerm::Update,
+        KeyPerm::Use,
     ];
 
     const NOT_GRANT_PERMS: KeyPermSet = key_perm_set![
-        KeyPerm::manage_blob(),
-        KeyPerm::delete(),
-        KeyPerm::use_dev_id(),
-        KeyPerm::req_forced_op(),
-        KeyPerm::gen_unique_id(),
-        // No KeyPerm::grant()
-        KeyPerm::get_info(),
-        KeyPerm::rebind(),
-        KeyPerm::update(),
-        KeyPerm::use_(),
-        KeyPerm::convert_storage_key_to_ephemeral(),
+        KeyPerm::ManageBlob,
+        KeyPerm::Delete,
+        KeyPerm::UseDevId,
+        KeyPerm::ReqForcedOp,
+        KeyPerm::GenUniqueId,
+        // No KeyPerm::Grant
+        KeyPerm::GetInfo,
+        KeyPerm::Rebind,
+        KeyPerm::Update,
+        KeyPerm::Use,
+        KeyPerm::ConvertStorageKeyToEphemeral,
     ];
 
     const UNPRIV_PERMS: KeyPermSet = key_perm_set![
-        KeyPerm::delete(),
-        KeyPerm::get_info(),
-        KeyPerm::rebind(),
-        KeyPerm::update(),
-        KeyPerm::use_(),
+        KeyPerm::Delete,
+        KeyPerm::GetInfo,
+        KeyPerm::Rebind,
+        KeyPerm::Update,
+        KeyPerm::Use,
     ];
 
     /// The su_key namespace as defined in su.te and keystore_key_contexts of the
@@ -634,7 +524,7 @@ mod tests {
         // attempts to grant the grant permission must always fail even when privileged.
         assert_perm_failed!(check_grant_permission(
             &system_server_ctx,
-            KeyPerm::grant().into(),
+            KeyPerm::Grant.into(),
             &key
         ));
         // unprivileged grant attempts always fail. shell does not have the grant permission.
@@ -654,7 +544,7 @@ mod tests {
         if is_su {
             assert!(check_grant_permission(&sctx, NOT_GRANT_PERMS, &key).is_ok());
             // attempts to grant the grant permission must always fail even when privileged.
-            assert_perm_failed!(check_grant_permission(&sctx, KeyPerm::grant().into(), &key));
+            assert_perm_failed!(check_grant_permission(&sctx, KeyPerm::Grant.into(), &key));
         } else {
             // unprivileged grant attempts always fail. shell does not have the grant permission.
             assert_perm_failed!(check_grant_permission(&sctx, UNPRIV_PERMS, &key));
@@ -669,7 +559,7 @@ mod tests {
         assert_perm_failed!(check_key_permission(
             0,
             &selinux::Context::new("ignored").unwrap(),
-            KeyPerm::grant(),
+            KeyPerm::Grant,
             &key,
             &Some(UNPRIV_PERMS)
         ));
@@ -677,7 +567,7 @@ mod tests {
         check_key_permission(
             0,
             &selinux::Context::new("ignored").unwrap(),
-            KeyPerm::use_(),
+            KeyPerm::Use,
             &key,
             &Some(ALL_PERMS),
         )
@@ -691,61 +581,31 @@ mod tests {
 
         let key = KeyDescriptor { domain: Domain::APP, nspace: 0, alias: None, blob: None };
 
-        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::use_(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::delete(), &key, &None).is_ok());
-        assert!(
-            check_key_permission(0, &system_server_ctx, KeyPerm::get_info(), &key, &None).is_ok()
-        );
-        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::rebind(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::update(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::grant(), &key, &None).is_ok());
-        assert!(
-            check_key_permission(0, &system_server_ctx, KeyPerm::use_dev_id(), &key, &None).is_ok()
-        );
-        assert!(
-            check_key_permission(0, &gmscore_app, KeyPerm::gen_unique_id(), &key, &None).is_ok()
-        );
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::Use, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::Delete, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::GetInfo, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::Rebind, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::Update, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::Grant, &key, &None).is_ok());
+        assert!(check_key_permission(0, &system_server_ctx, KeyPerm::UseDevId, &key, &None).is_ok());
+        assert!(check_key_permission(0, &gmscore_app, KeyPerm::GenUniqueId, &key, &None).is_ok());
 
-        assert!(check_key_permission(0, &shell_ctx, KeyPerm::use_(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &shell_ctx, KeyPerm::delete(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &shell_ctx, KeyPerm::get_info(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &shell_ctx, KeyPerm::rebind(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &shell_ctx, KeyPerm::update(), &key, &None).is_ok());
-        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::grant(), &key, &None));
-        assert_perm_failed!(check_key_permission(
-            0,
-            &shell_ctx,
-            KeyPerm::req_forced_op(),
-            &key,
-            &None
-        ));
-        assert_perm_failed!(check_key_permission(
-            0,
-            &shell_ctx,
-            KeyPerm::manage_blob(),
-            &key,
-            &None
-        ));
-        assert_perm_failed!(check_key_permission(
-            0,
-            &shell_ctx,
-            KeyPerm::use_dev_id(),
-            &key,
-            &None
-        ));
-        assert_perm_failed!(check_key_permission(
-            0,
-            &shell_ctx,
-            KeyPerm::gen_unique_id(),
-            &key,
-            &None
-        ));
+        assert!(check_key_permission(0, &shell_ctx, KeyPerm::Use, &key, &None).is_ok());
+        assert!(check_key_permission(0, &shell_ctx, KeyPerm::Delete, &key, &None).is_ok());
+        assert!(check_key_permission(0, &shell_ctx, KeyPerm::GetInfo, &key, &None).is_ok());
+        assert!(check_key_permission(0, &shell_ctx, KeyPerm::Rebind, &key, &None).is_ok());
+        assert!(check_key_permission(0, &shell_ctx, KeyPerm::Update, &key, &None).is_ok());
+        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::Grant, &key, &None));
+        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::ReqForcedOp, &key, &None));
+        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::ManageBlob, &key, &None));
+        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::UseDevId, &key, &None));
+        assert_perm_failed!(check_key_permission(0, &shell_ctx, KeyPerm::GenUniqueId, &key, &None));
 
         // Also make sure that the permission fails if the caller is not the owner.
         assert_perm_failed!(check_key_permission(
             1, // the owner is 0
             &system_server_ctx,
-            KeyPerm::use_(),
+            KeyPerm::Use,
             &key,
             &None
         ));
@@ -753,18 +613,18 @@ mod tests {
         assert!(check_key_permission(
             1,
             &system_server_ctx,
-            KeyPerm::use_(),
+            KeyPerm::Use,
             &key,
-            &Some(key_perm_set![KeyPerm::use_()])
+            &Some(key_perm_set![KeyPerm::Use])
         )
         .is_ok());
         // But fail if the grant did not cover the requested permission.
         assert_perm_failed!(check_key_permission(
             1,
             &system_server_ctx,
-            KeyPerm::use_(),
+            KeyPerm::Use,
             &key,
-            &Some(key_perm_set![KeyPerm::get_info()])
+            &Some(key_perm_set![KeyPerm::GetInfo])
         ));
 
         Ok(())
@@ -780,42 +640,24 @@ mod tests {
             blob: None,
         };
 
-        assert!(check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &sctx, KeyPerm::delete(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &sctx, KeyPerm::get_info(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &sctx, KeyPerm::rebind(), &key, &None).is_ok());
-        assert!(check_key_permission(0, &sctx, KeyPerm::update(), &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::Use, &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::Delete, &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::GetInfo, &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::Rebind, &key, &None).is_ok());
+        assert!(check_key_permission(0, &sctx, KeyPerm::Update, &key, &None).is_ok());
 
         if is_su {
-            assert!(check_key_permission(0, &sctx, KeyPerm::grant(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::manage_blob(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::use_dev_id(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::gen_unique_id(), &key, &None).is_ok());
-            assert!(check_key_permission(0, &sctx, KeyPerm::req_forced_op(), &key, &None).is_ok());
+            assert!(check_key_permission(0, &sctx, KeyPerm::Grant, &key, &None).is_ok());
+            assert!(check_key_permission(0, &sctx, KeyPerm::ManageBlob, &key, &None).is_ok());
+            assert!(check_key_permission(0, &sctx, KeyPerm::UseDevId, &key, &None).is_ok());
+            assert!(check_key_permission(0, &sctx, KeyPerm::GenUniqueId, &key, &None).is_ok());
+            assert!(check_key_permission(0, &sctx, KeyPerm::ReqForcedOp, &key, &None).is_ok());
         } else {
-            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::grant(), &key, &None));
-            assert_perm_failed!(check_key_permission(
-                0,
-                &sctx,
-                KeyPerm::req_forced_op(),
-                &key,
-                &None
-            ));
-            assert_perm_failed!(check_key_permission(
-                0,
-                &sctx,
-                KeyPerm::manage_blob(),
-                &key,
-                &None
-            ));
-            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::use_dev_id(), &key, &None));
-            assert_perm_failed!(check_key_permission(
-                0,
-                &sctx,
-                KeyPerm::gen_unique_id(),
-                &key,
-                &None
-            ));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::Grant, &key, &None));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::ReqForcedOp, &key, &None));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::ManageBlob, &key, &None));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::UseDevId, &key, &None));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::GenUniqueId, &key, &None));
         }
         Ok(())
     }
@@ -831,9 +673,9 @@ mod tests {
         };
 
         if is_su {
-            check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None)
+            check_key_permission(0, &sctx, KeyPerm::Use, &key, &None)
         } else {
-            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::use_(), &key, &None));
+            assert_perm_failed!(check_key_permission(0, &sctx, KeyPerm::Use, &key, &None));
             Ok(())
         }
     }
@@ -847,7 +689,7 @@ mod tests {
             check_key_permission(
                 0,
                 &selinux::Context::new("ignored").unwrap(),
-                KeyPerm::use_(),
+                KeyPerm::Use,
                 &key,
                 &None
             )
@@ -862,16 +704,16 @@ mod tests {
     #[test]
     fn key_perm_set_all_test() {
         let v = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::use_dev_id(),
-            KeyPerm::req_forced_op(),
-            KeyPerm::gen_unique_id(),
-            KeyPerm::grant(),
-            KeyPerm::get_info(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_() // Test if the macro accepts missing comma at the end of the list.
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::UseDevId,
+            KeyPerm::ReqForcedOp,
+            KeyPerm::GenUniqueId,
+            KeyPerm::Grant,
+            KeyPerm::GetInfo,
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use // Test if the macro accepts missing comma at the end of the list.
         ];
         let mut i = v.into_iter();
         assert_eq!(i.next().unwrap().name(), "delete");
@@ -889,11 +731,11 @@ mod tests {
     #[test]
     fn key_perm_set_sparse_test() {
         let v = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::req_forced_op(),
-            KeyPerm::gen_unique_id(),
-            KeyPerm::update(),
-            KeyPerm::use_(), // Test if macro accepts the comma at the end of the list.
+            KeyPerm::ManageBlob,
+            KeyPerm::ReqForcedOp,
+            KeyPerm::GenUniqueId,
+            KeyPerm::Update,
+            KeyPerm::Use, // Test if macro accepts the comma at the end of the list.
         ];
         let mut i = v.into_iter();
         assert_eq!(i.next().unwrap().name(), "gen_unique_id");
@@ -912,23 +754,23 @@ mod tests {
     #[test]
     fn key_perm_set_include_subset_test() {
         let v1 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::use_dev_id(),
-            KeyPerm::req_forced_op(),
-            KeyPerm::gen_unique_id(),
-            KeyPerm::grant(),
-            KeyPerm::get_info(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::UseDevId,
+            KeyPerm::ReqForcedOp,
+            KeyPerm::GenUniqueId,
+            KeyPerm::Grant,
+            KeyPerm::GetInfo,
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         let v2 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         assert!(v1.includes(v2));
         assert!(!v2.includes(v1));
@@ -936,18 +778,18 @@ mod tests {
     #[test]
     fn key_perm_set_include_equal_test() {
         let v1 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         let v2 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         assert!(v1.includes(v2));
         assert!(v2.includes(v1));
@@ -955,33 +797,29 @@ mod tests {
     #[test]
     fn key_perm_set_include_overlap_test() {
         let v1 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::grant(), // only in v1
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::Grant, // only in v1
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         let v2 = key_perm_set![
-            KeyPerm::manage_blob(),
-            KeyPerm::delete(),
-            KeyPerm::req_forced_op(), // only in v2
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
+            KeyPerm::ManageBlob,
+            KeyPerm::Delete,
+            KeyPerm::ReqForcedOp, // only in v2
+            KeyPerm::Rebind,
+            KeyPerm::Update,
+            KeyPerm::Use,
         ];
         assert!(!v1.includes(v2));
         assert!(!v2.includes(v1));
     }
     #[test]
     fn key_perm_set_include_no_overlap_test() {
-        let v1 = key_perm_set![KeyPerm::manage_blob(), KeyPerm::delete(), KeyPerm::grant(),];
-        let v2 = key_perm_set![
-            KeyPerm::req_forced_op(),
-            KeyPerm::rebind(),
-            KeyPerm::update(),
-            KeyPerm::use_(),
-        ];
+        let v1 = key_perm_set![KeyPerm::ManageBlob, KeyPerm::Delete, KeyPerm::Grant,];
+        let v2 =
+            key_perm_set![KeyPerm::ReqForcedOp, KeyPerm::Rebind, KeyPerm::Update, KeyPerm::Use,];
         assert!(!v1.includes(v2));
         assert!(!v2.includes(v1));
     }

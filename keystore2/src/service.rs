@@ -138,7 +138,7 @@ impl KeystoreService {
                         KeyType::Client,
                         KeyEntryLoadBits::PUBLIC,
                         caller_uid,
-                        |k, av| check_key_permission(KeyPerm::get_info(), k, &av),
+                        |k, av| check_key_permission(KeyPerm::GetInfo, k, &av),
                     )
                 })
             })
@@ -190,7 +190,7 @@ impl KeystoreService {
                     KeyEntryLoadBits::NONE,
                     caller_uid,
                     |k, av| {
-                        check_key_permission(KeyPerm::update(), k, &av)
+                        check_key_permission(KeyPerm::Update, k, &av)
                             .context("In update_subcomponent.")
                     },
                 )
@@ -236,7 +236,7 @@ impl KeystoreService {
             };
 
             // Security critical: This must return on failure. Do not remove the `?`;
-            check_key_permission(KeyPerm::rebind(), &key, &None)
+            check_key_permission(KeyPerm::Rebind, &key, &None)
                 .context("Caller does not have permission to insert this certificate.")?;
 
             db.store_new_certificate(
@@ -269,7 +269,7 @@ impl KeystoreService {
         // If the first check fails we check if the caller has the list permission allowing to list
         // any namespace. In that case we also adjust the queried namespace if a specific uid was
         // selected.
-        match check_key_permission(KeyPerm::get_info(), &k, &None) {
+        match check_key_permission(KeyPerm::GetInfo, &k, &None) {
             Err(e) => {
                 if let Some(selinux::Error::PermissionDenied) =
                     e.root_cause().downcast_ref::<selinux::Error>()
@@ -309,7 +309,7 @@ impl KeystoreService {
         DB.with(|db| {
             LEGACY_MIGRATOR.with_try_migrate(key, caller_uid, || {
                 db.borrow_mut().unbind_key(key, KeyType::Client, caller_uid, |k, av| {
-                    check_key_permission(KeyPerm::delete(), k, &av).context("During delete_key.")
+                    check_key_permission(KeyPerm::Delete, k, &av).context("During delete_key.")
                 })
             })
         })
@@ -341,7 +341,7 @@ impl KeystoreService {
     fn ungrant(&self, key: &KeyDescriptor, grantee_uid: i32) -> Result<()> {
         DB.with(|db| {
             db.borrow_mut().ungrant(key, ThreadState::get_calling_uid(), grantee_uid as u32, |k| {
-                check_key_permission(KeyPerm::grant(), k, &None)
+                check_key_permission(KeyPerm::Grant, k, &None)
             })
         })
         .context("In KeystoreService::ungrant.")

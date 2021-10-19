@@ -227,9 +227,9 @@ impl Maintenance {
                                 KeyEntryLoadBits::NONE,
                                 caller_uid,
                                 |k, av| {
-                                    check_key_permission(KeyPerm::use_(), k, &av)?;
-                                    check_key_permission(KeyPerm::delete(), k, &av)?;
-                                    check_key_permission(KeyPerm::grant(), k, &av)
+                                    check_key_permission(KeyPerm::Use, k, &av)?;
+                                    check_key_permission(KeyPerm::Delete, k, &av)?;
+                                    check_key_permission(KeyPerm::Grant, k, &av)
                                 },
                             )
                         })
@@ -245,7 +245,7 @@ impl Maintenance {
             };
 
             db.borrow_mut().migrate_key_namespace(key_id_guard, destination, caller_uid, |k| {
-                check_key_permission(KeyPerm::rebind(), k, &None)
+                check_key_permission(KeyPerm::Rebind, k, &None)
             })
         })
     }

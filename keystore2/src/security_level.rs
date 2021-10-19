@@ -216,10 +216,10 @@ impl KeystoreSecurityLevel {
         let scoping_blob: Vec<u8>;
         let (km_blob, key_properties, key_id_guard, blob_metadata) = match key.domain {
             Domain::BLOB => {
-                check_key_permission(KeyPerm::use_(), key, &None)
+                check_key_permission(KeyPerm::Use, key, &None)
                     .context("In create_operation: checking use permission for Domain::BLOB.")?;
                 if forced {
-                    check_key_permission(KeyPerm::req_forced_op(), key, &None).context(
+                    check_key_permission(KeyPerm::ReqForcedOp, key, &None).context(
                         "In create_operation: checking forced permission for Domain::BLOB.",
                     )?;
                 }
@@ -248,9 +248,9 @@ impl KeystoreSecurityLevel {
                                 KeyEntryLoadBits::KM,
                                 caller_uid,
                                 |k, av| {
-                                    check_key_permission(KeyPerm::use_(), k, &av)?;
+                                    check_key_permission(KeyPerm::Use, k, &av)?;
                                     if forced {
-                                        check_key_permission(KeyPerm::req_forced_op(), k, &av)?;
+                                        check_key_permission(KeyPerm::ReqForcedOp, k, &av)?;
                                     }
                                     Ok(())
                                 },
@@ -415,7 +415,7 @@ impl KeystoreSecurityLevel {
         }
 
         if params.iter().any(|kp| kp.tag == Tag::INCLUDE_UNIQUE_ID) {
-            check_key_permission(KeyPerm::gen_unique_id(), key, &None).context(concat!(
+            check_key_permission(KeyPerm::GenUniqueId, key, &None).context(concat!(
                 "In add_certificate_parameters: ",
                 "Caller does not have the permission to generate a unique ID"
             ))?;
@@ -487,7 +487,7 @@ impl KeystoreSecurityLevel {
 
         // generate_key requires the rebind permission.
         // Must return on error for security reasons.
-        check_key_permission(KeyPerm::rebind(), &key, &None).context("In generate_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context("In generate_key.")?;
 
         let attestation_key_info = match (key.domain, attest_key_descriptor) {
             (Domain::BLOB, _) => None,
@@ -601,7 +601,7 @@ impl KeystoreSecurityLevel {
         };
 
         // import_key requires the rebind permission.
-        check_key_permission(KeyPerm::rebind(), &key, &None).context("In import_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context("In import_key.")?;
 
         let params = self
             .add_certificate_parameters(caller_uid, params, &key)
@@ -685,7 +685,7 @@ impl KeystoreSecurityLevel {
         };
 
         // Import_wrapped_key requires the rebind permission for the new key.
-        check_key_permission(KeyPerm::rebind(), &key, &None).context("In import_wrapped_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context("In import_wrapped_key.")?;
 
         let (wrapping_key_id_guard, mut wrapping_key_entry) = DB
             .with(|db| {
@@ -695,7 +695,7 @@ impl KeystoreSecurityLevel {
                         KeyType::Client,
                         KeyEntryLoadBits::KM,
                         caller_uid,
-                        |k, av| check_key_permission(KeyPerm::use_(), k, &av),
+                        |k, av| check_key_permission(KeyPerm::Use, k, &av),
                     )
                 })
             })
@@ -876,7 +876,7 @@ impl KeystoreSecurityLevel {
             )?;
 
         // convert_storage_key_to_ephemeral requires the associated permission
-        check_key_permission(KeyPerm::convert_storage_key_to_ephemeral(), storage_key, &None)
+        check_key_permission(KeyPerm::ConvertStorageKeyToEphemeral, storage_key, &None)
             .context("In convert_storage_key_to_ephemeral: Check permission")?;
 
         let km_dev = &self.keymint;
@@ -935,7 +935,7 @@ impl KeystoreSecurityLevel {
             .ok_or(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
             .context("In IKeystoreSecurityLevel delete_key: No key blob specified")?;
 
-        check_key_permission(KeyPerm::delete(), key, &None)
+        check_key_permission(KeyPerm::Delete, key, &None)
             .context("In IKeystoreSecurityLevel delete_key: Checking delete permissions")?;
 
         let km_dev = &self.keymint;
