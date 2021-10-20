@@ -15,6 +15,7 @@
 //! Implement the android.security.dice.IDiceNode service.
 
 mod error;
+mod permission;
 mod resident_node;
 
 pub use crate::resident_node::ResidentNode;
@@ -29,7 +30,9 @@ use anyhow::{Context, Result};
 use binder::{public_api::Result as BinderResult, BinderFeatures, Strong, ThreadState};
 pub use diced_open_dice_cbor as dice;
 use error::{map_or_log_err, Error};
+use keystore2_selinux as selinux;
 use libc::uid_t;
+use permission::Permission;
 use std::sync::Arc;
 
 /// A DiceNode backend implementation.
@@ -72,6 +75,24 @@ pub struct DiceNode {
     node_impl: Arc<dyn DiceNodeImpl + Sync + Send>,
 }
 
+/// This function uses its namesake in the permission module and in
+/// combination with with_calling_sid from the binder crate to check
+/// if the caller has the given keystore permission.
+pub fn check_caller_permission<T: selinux::ClassPermission>(perm: T) -> Result<()> {
+    ThreadState::with_calling_sid(|calling_sid| {
+        let target_context =
+            selinux::getcon().context("In check_caller_permission: getcon failed.")?;
+
+        selinux::check_permission(
+            calling_sid.ok_or(Error::Rc(ResponseCode::SYSTEM_ERROR)).context(
+                "In check_keystore_permission: Cannot check permission without calling_sid.",
+            )?,
+            &target_context,
+            perm,
+        )
+    })
+}
+
 fn client_input_values(uid: uid_t) -> Result<BinderInputValues> {
     Ok(BinderInputValues {
         codeHash: vec![0; dice::HASH_SIZE],
@@ -101,21 +122,26 @@ impl DiceNode {
     }
 
     fn sign(&self, input_values: &[BinderInputValues], message: &[u8]) -> Result<Signature> {
+        check_caller_permission(Permission::UseSign).context("In DiceNode::sign:")?;
         let client =
             client_input_values(ThreadState::get_calling_uid()).context("In DiceNode::sign:")?;
         self.node_impl.sign(client, input_values, message)
     }
     fn get_attestation_chain(&self, input_values: &[BinderInputValues]) -> Result<Bcc> {
+        check_caller_permission(Permission::GetAttestationChain)
+            .context("In DiceNode::get_attestation_chain:")?;
         let client = client_input_values(ThreadState::get_calling_uid())
             .context("In DiceNode::get_attestation_chain:")?;
         self.node_impl.get_attestation_chain(client, input_values)
     }
     fn derive(&self, input_values: &[BinderInputValues]) -> Result<BccHandover> {
+        check_caller_permission(Permission::Derive).context("In DiceNode::derive:")?;
         let client =
             client_input_values(ThreadState::get_calling_uid()).context("In DiceNode::extend:")?;
         self.node_impl.derive(client, input_values)
     }
     fn demote(&self, input_values: &[BinderInputValues]) -> Result<()> {
+        check_caller_permission(Permission::Demote).context("In DiceNode::demote:")?;
         let client =
             client_input_values(ThreadState::get_calling_uid()).context("In DiceNode::demote:")?;
         self.node_impl.demote(client, input_values)
