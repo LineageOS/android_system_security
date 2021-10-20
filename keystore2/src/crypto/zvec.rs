@@ -58,6 +58,14 @@ impl ZVec {
             self.len = len;
         }
     }
+
+    /// Attempts to make a clone of the Zvec. This may fail due trying to mlock
+    /// the new memory region.
+    pub fn try_clone(&self) -> Result<Self, Error> {
+        let mut result = Self::new(self.len())?;
+        result[..].copy_from_slice(&self[..]);
+        Ok(result)
+    }
 }
 
 impl Drop for ZVec {
