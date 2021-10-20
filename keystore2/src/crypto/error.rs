@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! This module implements Error for the keystore2_crypto library.
+use crate::zvec;
 
 /// Crypto specific error codes.
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
@@ -93,4 +94,8 @@ pub enum Error {
     /// This is returned if the C implementation of extractSubjectFromCertificate failed.
     #[error("Failed to extract certificate subject.")]
     ExtractSubjectFailed,
+
+    /// Zvec error.
+    #[error(transparent)]
+    ZVec(#[from] zvec::Error),
 }
