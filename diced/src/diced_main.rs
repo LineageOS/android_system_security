@@ -14,13 +14,13 @@
 
 //! Main entry point for diced, the friendly neighborhood DICE service.
 
-use diced::dice::CDI_SIZE;
-use diced::DiceNode;
-use diced::ResidentNode;
+use diced::{DiceMaintenance, DiceNode, ResidentNode};
+use std::convert::TryInto;
 use std::panic;
 use std::sync::Arc;
 
-static DICE_SERVICE_NAME: &str = "android.security.dice";
+static DICE_NODE_SERVICE_NAME: &str = "android.security.dice.IDiceNode";
+static DICE_MAINTENANCE_SERVICE_NAME: &str = "android.security.dice.IDiceMaintenance";
 
 fn main() {
     android_logger::init_once(
@@ -34,16 +34,29 @@ fn main() {
     // Saying hi.
     log::info!("Diced, your friendly neighborhood DICE service, is starting.");
 
+    let (cdi_attest, cdi_seal, bcc) = diced_sample_inputs::make_sample_bcc_and_cdis()
+        .expect("Failed to create sample dice artifacts.");
+
     let node_impl = Arc::new(
-        ResidentNode::new(&[0u8; CDI_SIZE], &[1u8; CDI_SIZE], vec![])
-            .expect("Failed to construct a resident node."),
+        ResidentNode::new(
+            cdi_attest[..].try_into().expect("Failed to convert cdi_attest into array ref."),
+            cdi_seal[..].try_into().expect("Failed to convert cdi_seal into array ref."),
+            bcc,
+        )
+        .expect("Failed to construct a resident node."),
     );
 
-    let node =
-        DiceNode::new_as_binder(node_impl).expect("Failed to create IDiceNode service instance.");
+    let node = DiceNode::new_as_binder(node_impl.clone())
+        .expect("Failed to create IDiceNode service instance.");
 
-    binder::add_service(DICE_SERVICE_NAME, node.as_binder())
+    let maintenance = DiceMaintenance::new_as_binder(node_impl)
+        .expect("Failed to create IDiceMaintenance service instance.");
+
+    binder::add_service(DICE_NODE_SERVICE_NAME, node.as_binder())
         .expect("Failed to register IDiceNode Service");
+
+    binder::add_service(DICE_MAINTENANCE_SERVICE_NAME, maintenance.as_binder())
+        .expect("Failed to register IDiceMaintenance Service");
 
     log::info!("Joining thread pool now.");
     binder::ProcessState::join_thread_pool();

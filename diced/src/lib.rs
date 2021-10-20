@@ -24,7 +24,8 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     InputValues::InputValues as BinderInputValues, Mode::Mode, Signature::Signature,
 };
 use android_security_dice::aidl::android::security::dice::{
-    IDiceNode::BnDiceNode, IDiceNode::IDiceNode, ResponseCode::ResponseCode,
+    IDiceMaintenance::BnDiceMaintenance, IDiceMaintenance::IDiceMaintenance, IDiceNode::BnDiceNode,
+    IDiceNode::IDiceNode, ResponseCode::ResponseCode,
 };
 use anyhow::{Context, Result};
 use binder::{public_api::Result as BinderResult, BinderFeatures, Strong, ThreadState};
@@ -162,5 +163,39 @@ impl IDiceNode for DiceNode {
     }
     fn demote(&self, input_values: &[BinderInputValues]) -> BinderResult<()> {
         map_or_log_err(self.demote(input_values), Ok)
+    }
+}
+
+/// Wraps a DiceNodeImpl and implements the IDiceMaintenance AIDL API.
+pub struct DiceMaintenance {
+    node_impl: Arc<dyn DiceNodeImpl + Sync + Send>,
+}
+
+impl DiceMaintenance {
+    /// Constructs an instance of DiceMaintenance, wraps it with a BnDiceMaintenance object and
+    /// returns a strong pointer to the binder. The result can be used to register the service
+    /// with service manager.
+    pub fn new_as_binder(
+        node_impl: Arc<dyn DiceNodeImpl + Sync + Send>,
+    ) -> Result<Strong<dyn IDiceMaintenance>> {
+        let result = BnDiceMaintenance::new_binder(
+            DiceMaintenance { node_impl },
+            BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
+        );
+        Ok(result)
+    }
+
+    fn demote_self(&self, input_values: &[BinderInputValues]) -> Result<()> {
+        check_caller_permission(Permission::DemoteSelf)
+            .context("In DiceMaintenance::demote_self:")?;
+        self.node_impl.demote_self(input_values)
+    }
+}
+
+impl binder::Interface for DiceMaintenance {}
+
+impl IDiceMaintenance for DiceMaintenance {
+    fn demoteSelf(&self, input_values: &[BinderInputValues]) -> BinderResult<()> {
+        map_or_log_err(self.demote_self(input_values), Ok)
     }
 }
