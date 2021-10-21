@@ -119,7 +119,7 @@ impl AuthorizationManager {
 
     fn add_auth_token(&self, auth_token: &HardwareAuthToken) -> Result<()> {
         // Check keystore permission.
-        check_keystore_permission(KeystorePerm::add_auth()).context("In add_auth_token.")?;
+        check_keystore_permission(KeystorePerm::AddAuth).context("In add_auth_token.")?;
 
         ENFORCEMENTS.add_auth_token(auth_token.clone());
         Ok(())
@@ -143,7 +143,7 @@ impl AuthorizationManager {
             (LockScreenEvent::UNLOCK, Some(password)) => {
                 // This corresponds to the unlock() method in legacy keystore API.
                 // check permission
-                check_keystore_permission(KeystorePerm::unlock())
+                check_keystore_permission(KeystorePerm::Unlock)
                     .context("In on_lock_screen_event: Unlock with password.")?;
                 ENFORCEMENTS.set_device_locked(user_id, false);
 
@@ -177,7 +177,7 @@ impl AuthorizationManager {
                 Ok(())
             }
             (LockScreenEvent::UNLOCK, None) => {
-                check_keystore_permission(KeystorePerm::unlock())
+                check_keystore_permission(KeystorePerm::Unlock)
                     .context("In on_lock_screen_event: Unlock.")?;
                 ENFORCEMENTS.set_device_locked(user_id, false);
                 DB.with(|db| {
@@ -187,7 +187,7 @@ impl AuthorizationManager {
                 Ok(())
             }
             (LockScreenEvent::LOCK, None) => {
-                check_keystore_permission(KeystorePerm::lock())
+                check_keystore_permission(KeystorePerm::Lock)
                     .context("In on_lock_screen_event: Lock")?;
                 ENFORCEMENTS.set_device_locked(user_id, true);
                 DB.with(|db| {
@@ -215,7 +215,7 @@ impl AuthorizationManager {
     ) -> Result<AuthorizationTokens> {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
-        check_keystore_permission(KeystorePerm::get_auth_token())
+        check_keystore_permission(KeystorePerm::GetAuthToken)
             .context("In get_auth_tokens_for_credstore.")?;
 
         // If the challenge is zero, return error

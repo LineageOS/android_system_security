@@ -69,7 +69,7 @@ impl Maintenance {
     fn on_user_password_changed(user_id: i32, password: Option<Password>) -> Result<()> {
         //Check permission. Function should return if this failed. Therefore having '?' at the end
         //is very important.
-        check_keystore_permission(KeystorePerm::change_password())
+        check_keystore_permission(KeystorePerm::ChangePassword)
             .context("In on_user_password_changed.")?;
 
         if let Some(pw) = password.as_ref() {
@@ -106,7 +106,7 @@ impl Maintenance {
     fn add_or_remove_user(&self, user_id: i32) -> Result<()> {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
-        check_keystore_permission(KeystorePerm::change_user()).context("In add_or_remove_user.")?;
+        check_keystore_permission(KeystorePerm::ChangeUser).context("In add_or_remove_user.")?;
         DB.with(|db| {
             UserState::reset_user(
                 &mut db.borrow_mut(),
@@ -124,7 +124,7 @@ impl Maintenance {
 
     fn clear_namespace(&self, domain: Domain, nspace: i64) -> Result<()> {
         // Permission check. Must return on error. Do not touch the '?'.
-        check_keystore_permission(KeystorePerm::clear_uid()).context("In clear_namespace.")?;
+        check_keystore_permission(KeystorePerm::ClearUID).context("In clear_namespace.")?;
 
         LEGACY_MIGRATOR
             .bulk_delete_uid(domain, nspace)
@@ -139,7 +139,7 @@ impl Maintenance {
     fn get_state(user_id: i32) -> Result<AidlUserState> {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
-        check_keystore_permission(KeystorePerm::get_state()).context("In get_state.")?;
+        check_keystore_permission(KeystorePerm::GetState).context("In get_state.")?;
         let state = DB
             .with(|db| {
                 UserState::get(&mut db.borrow_mut(), &LEGACY_MIGRATOR, &SUPER_KEY, user_id as u32)
@@ -195,7 +195,7 @@ impl Maintenance {
     }
 
     fn early_boot_ended() -> Result<()> {
-        check_keystore_permission(KeystorePerm::early_boot_ended())
+        check_keystore_permission(KeystorePerm::EarlyBootEnded)
             .context("In early_boot_ended. Checking permission")?;
         log::info!("In early_boot_ended.");
 
@@ -207,8 +207,7 @@ impl Maintenance {
 
     fn on_device_off_body() -> Result<()> {
         // Security critical permission check. This statement must return on fail.
-        check_keystore_permission(KeystorePerm::report_off_body())
-            .context("In on_device_off_body.")?;
+        check_keystore_permission(KeystorePerm::ReportOffBody).context("In on_device_off_body.")?;
 
         DB.with(|db| db.borrow_mut().update_last_off_body(MonotonicRawTime::now()));
         Ok(())
@@ -228,9 +227,9 @@ impl Maintenance {
                                 KeyEntryLoadBits::NONE,
                                 caller_uid,
                                 |k, av| {
-                                    check_key_permission(KeyPerm::use_(), k, &av)?;
-                                    check_key_permission(KeyPerm::delete(), k, &av)?;
-                                    check_key_permission(KeyPerm::grant(), k, &av)
+                                    check_key_permission(KeyPerm::Use, k, &av)?;
+                                    check_key_permission(KeyPerm::Delete, k, &av)?;
+                                    check_key_permission(KeyPerm::Grant, k, &av)
                                 },
                             )
                         })
@@ -246,14 +245,14 @@ impl Maintenance {
             };
 
             db.borrow_mut().migrate_key_namespace(key_id_guard, destination, caller_uid, |k| {
-                check_key_permission(KeyPerm::rebind(), k, &None)
+                check_key_permission(KeyPerm::Rebind, k, &None)
             })
         })
     }
 
     fn delete_all_keys() -> Result<()> {
         // Security critical permission check. This statement must return on fail.
-        check_keystore_permission(KeystorePerm::delete_all_keys())
+        check_keystore_permission(KeystorePerm::DeleteAllKeys)
             .context("In delete_all_keys. Checking permission")?;
         log::info!("In delete_all_keys.");
 
