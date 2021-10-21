@@ -3704,8 +3704,8 @@ mod tests {
             alias: Some("key".to_string()),
             blob: None,
         };
-        const PVEC1: KeyPermSet = key_perm_set![KeyPerm::use_(), KeyPerm::get_info()];
-        const PVEC2: KeyPermSet = key_perm_set![KeyPerm::use_()];
+        const PVEC1: KeyPermSet = key_perm_set![KeyPerm::Use, KeyPerm::GetInfo];
+        const PVEC2: KeyPermSet = key_perm_set![KeyPerm::Use];
 
         // Reset totally predictable random number generator in case we
         // are not the first test running on this thread.
@@ -4181,7 +4181,7 @@ mod tests {
                 },
                 1,
                 2,
-                key_perm_set![KeyPerm::use_()],
+                key_perm_set![KeyPerm::Use],
                 |_k, _av| Ok(()),
             )
             .unwrap();
@@ -4191,7 +4191,7 @@ mod tests {
         let (_key_guard, key_entry) = db
             .load_key_entry(&granted_key, KeyType::Client, KeyEntryLoadBits::BOTH, 2, |k, av| {
                 assert_eq!(Domain::GRANT, k.domain);
-                assert!(av.unwrap().includes(KeyPerm::use_()));
+                assert!(av.unwrap().includes(KeyPerm::Use));
                 Ok(())
             })
             .unwrap();
@@ -4238,7 +4238,7 @@ mod tests {
             },
             OWNER_UID,
             GRANTEE_UID,
-            key_perm_set![KeyPerm::use_()],
+            key_perm_set![KeyPerm::Use],
             |_k, _av| Ok(()),
         )
         .unwrap();
@@ -4257,7 +4257,7 @@ mod tests {
                 |k, av| {
                     assert_eq!(Domain::APP, k.domain);
                     assert_eq!(OWNER_UID as i64, k.nspace);
-                    assert!(av.unwrap().includes(KeyPerm::use_()));
+                    assert!(av.unwrap().includes(KeyPerm::Use));
                     Ok(())
                 },
             )
@@ -5675,7 +5675,7 @@ mod tests {
             },
             OWNER as u32,
             123,
-            key_perm_set![KeyPerm::use_()],
+            key_perm_set![KeyPerm::Use],
             |_, _| Ok(()),
         )?;
 
