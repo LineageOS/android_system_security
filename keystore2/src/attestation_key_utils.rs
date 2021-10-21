@@ -109,7 +109,7 @@ fn load_attest_key_blob_and_cert(
                     KeyType::Client,
                     KeyEntryLoadBits::BOTH,
                     caller_uid,
-                    |k, av| check_key_permission(KeyPerm::use_(), k, &av),
+                    |k, av| check_key_permission(KeyPerm::Use, k, &av),
                 )
                 .context("In load_attest_key_blob_and_cert: Failed to load key.")?;
 
