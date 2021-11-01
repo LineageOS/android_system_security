@@ -16,7 +16,7 @@
 //! Keystore 2.0.
 
 mod error;
-mod zvec;
+pub mod zvec;
 pub use error::Error;
 use keystore2_crypto_bindgen::{
     extractSubjectFromCertificate, generateKeyFromPassword, randomBytes, AES_gcm_decrypt,
