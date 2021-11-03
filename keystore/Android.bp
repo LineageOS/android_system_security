@@ -63,7 +63,7 @@ cc_binary {
 
 // Library used by both keystore and credstore for generating the ASN.1 stored
 // in Tag::ATTESTATION_APPLICATION_ID
-cc_library_shared {
+cc_library {
     name: "libkeystore-attestation-application-id",
     defaults: ["keystore_defaults"],
 
