@@ -36,3 +36,64 @@ cc_fuzz {
         componentid: 155276,
     },
 }
+
+cc_defaults {
+    name: "keystoreAttestation_defaults",
+    static_libs: [
+        "libkeystore-attestation-application-id",
+        "liblog",
+        "libutils",
+        "libbase",
+        "libhidlbase",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libcrypto",
+    ],
+    fuzz_config: {
+        cc: [
+            "android-media-fuzzing-reports@google.com",
+        ],
+        componentid: 155276,
+    },
+}
+
+cc_fuzz {
+    name: "keystoreSignature_fuzzer",
+    srcs: [
+        "keystoreSignature_fuzzer.cpp",
+    ],
+    defaults: [
+        "keystoreAttestation_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "keystorePackageInfo_fuzzer",
+    srcs: [
+        "keystorePackageInfo_fuzzer.cpp",
+    ],
+    defaults: [
+        "keystoreAttestation_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "keystoreApplicationId_fuzzer",
+    srcs: [
+        "keystoreApplicationId_fuzzer.cpp",
+    ],
+    defaults: [
+        "keystoreAttestation_defaults",
+    ],
+}
+
+cc_fuzz {
+    name: "keystoreAttestationId_fuzzer",
+    srcs: [
+        "keystoreAttestationId_fuzzer.cpp",
+    ],
+    defaults: [
+        "keystoreAttestation_defaults",
+    ],
+}
