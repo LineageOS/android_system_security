@@ -24,10 +24,12 @@ rust_library {
     rustlibs: [
         // For ZVec
         "libkeystore2_crypto_rust",
+        "libopen_dice_bcc_bindgen",
         "libopen_dice_cbor_bindgen",
         "libthiserror",
     ],
     static_libs: [
+        "libopen_dice_bcc",
         "libopen_dice_cbor",
     ],
 }

@@ -32,6 +32,7 @@
 //! ```
 
 use keystore2_crypto::{zvec, ZVec};
+use open_dice_bcc_bindgen::BccMainFlow;
 use open_dice_cbor_bindgen::{
     DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed,
     DiceGenerateCertificate, DiceHash, DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow,
@@ -51,7 +52,7 @@ use open_dice_cbor_bindgen::{
     DiceResult_kDiceResultOk as DICE_RESULT_OK,
     DiceResult_kDiceResultPlatformError as DICE_RESULT_PLATFORM_ERROR,
 };
-use std::ffi::c_void;
+use std::ffi::{c_void, NulError};
 
 /// The size of a DICE hash.
 pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
@@ -92,6 +93,11 @@ pub enum Error {
     /// The allocation of a ZVec failed. Most likely due to a failure during the call to mlock.
     #[error("ZVec allocation failed")]
     ZVec(#[from] zvec::Error),
+
+    /// Functions that have to convert str to CString may fail if the string has an interior
+    /// nul byte.
+    #[error("Input string has an interior nul byte.")]
+    CStrNulError(#[from] NulError),
 }
 
 /// Open dice result type.
@@ -384,6 +390,9 @@ pub type CdiSeal = ZVec;
 /// Type alias for Vec<u8> indicating that it hold a DICE certificate.
 pub type Cert = Vec<u8>;
 
+/// Type alias for Vec<u8> indicating that it holds a BCC certificate chain.
+pub type Bcc = Vec<u8>;
+
 const INITIAL_OUT_BUFFER_SIZE: usize = 1024;
 
 /// ContextImpl is a mixin trait that implements the safe wrappers around the open dice
@@ -646,7 +655,7 @@ pub trait ContextImpl: Context + Send {
         // * The fifth argument and the sixth argument are the length of and the pointer to the
         //   allocated certificate buffer respectively. They are used to return
         //   the generated certificate.
-        // * The seventh argument is a pointer to a mutable size_t object. It is
+        // * The seventh argument is a pointer to a mutable usize object. It is
         //   used to return the actual size of the output certificate.
         // * All pointers must be valid for the duration of the function call but not beyond.
         call_with_input_values(input_values, |input_values| {
@@ -657,13 +666,127 @@ pub trait ContextImpl: Context + Send {
                         subject_private_key_seed.as_ptr(),
                         authority_private_key_seed.as_ptr(),
                         input_values,
-                        cert.len().try_into()?,
+                        cert.len(),
                         cert.as_mut_ptr(),
                         actual_size as *mut _,
                     )
                 })
             })?;
             Ok(cert)
+        })
+    }
+
+    /// Safe wrapper around open-dice BccDiceMainFlow, see open dice
+    /// documentation for details.
+    /// Returns a tuple of:
+    ///  * The next attestation CDI,
+    ///  * the next seal CDI, and
+    ///  * the next bcc adding the new certificate to the given bcc.
+    /// `(next_attest_cdi, next_seal_cdi, next_bcc)`
+    fn bcc_main_flow<T: InputValues + ?Sized>(
+        &mut self,
+        current_cdi_attest: &[u8; CDI_SIZE],
+        current_cdi_seal: &[u8; CDI_SIZE],
+        bcc: &[u8],
+        input_values: &T,
+    ) -> Result<(CdiAttest, CdiSeal, Bcc)> {
+        let mut next_attest = CdiAttest::new(CDI_SIZE)?;
+        let mut next_seal = CdiSeal::new(CDI_SIZE)?;
+
+        // SAFETY (BccMainFlow):
+        // * The first context argument may be NULL and is unused by the wrapped
+        //   implementation.
+        // * The second argument and the third argument are const arrays of size CDI_SIZE.
+        //   This is fulfilled as per the definition of the arguments `current_cdi_attest`
+        //   and `current_cdi_seal`.
+        // * The fourth argument and the fifth argument are the pointer to and size of the buffer
+        //   holding the current bcc.
+        // * The sixth argument is a pointer to `DiceInputValues` it, and its indirect
+        //   references must be valid for the duration of the function call which
+        //   is guaranteed by `call_with_input_values` which puts `DiceInputValues`
+        //   on the stack and initializes it from the `input_values` argument which
+        //   implements the `InputValues` trait.
+        // * The seventh argument and the eighth argument are the length of and the pointer to the
+        //   allocated certificate buffer respectively. They are used to return the generated
+        //   certificate.
+        // * The ninth argument is a pointer to a mutable usize object. It is
+        //   used to return the actual size of the output certificate.
+        // * The tenth argument and the eleventh argument are pointers to mutable buffers of
+        //   size CDI_SIZE. This is fulfilled if the allocation above succeeded.
+        // * No pointers are expected to be valid beyond the scope of the function
+        //   call.
+        call_with_input_values(input_values, |input_values| {
+            let next_bcc = retry_while_adjusting_output_buffer(|next_bcc, actual_size| {
+                check_result(unsafe {
+                    BccMainFlow(
+                        self.get_context(),
+                        current_cdi_attest.as_ptr(),
+                        current_cdi_seal.as_ptr(),
+                        bcc.as_ptr(),
+                        bcc.len(),
+                        input_values,
+                        next_bcc.len(),
+                        next_bcc.as_mut_ptr(),
+                        actual_size as *mut _,
+                        next_attest.as_mut_ptr(),
+                        next_seal.as_mut_ptr(),
+                    )
+                })
+            })?;
+            Ok((next_attest, next_seal, next_bcc))
+        })
+    }
+}
+
+/// This submodule provides additional support for the Boot Certificate Chain (BCC)
+/// specification.
+/// See https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/keymint/aidl/android/hardware/security/keymint/ProtectedData.aidl
+pub mod bcc {
+    use super::{check_result, retry_while_adjusting_output_buffer, Result};
+    use open_dice_bcc_bindgen::{
+        BccConfigValues, BccFormatConfigDescriptor, BCC_INPUT_COMPONENT_NAME,
+        BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
+    };
+    use std::ffi::CString;
+
+    /// Safe wrapper around BccFormatConfigDescriptor, see open dice documentation for details.
+    pub fn format_config_descriptor(
+        component_name: Option<&str>,
+        component_version: Option<u64>,
+        resettable: bool,
+    ) -> Result<Vec<u8>> {
+        let component_name = match component_name {
+            Some(n) => Some(CString::new(n)?),
+            None => None,
+        };
+        let input = BccConfigValues {
+            inputs: if component_name.is_some() { BCC_INPUT_COMPONENT_NAME } else { 0 }
+                | if component_version.is_some() { BCC_INPUT_COMPONENT_VERSION } else { 0 }
+                | if resettable { BCC_INPUT_RESETTABLE } else { 0 },
+            // SAFETY: The as_ref() in the line below is vital to keep the component_name object
+            //         alive. Removing as_ref will move the component_name and the pointer will
+            //         become invalid after this statement.
+            component_name: component_name.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            component_version: component_version.unwrap_or(0),
+        };
+
+        // SAFETY:
+        // * The first argument is a pointer to the BccConfigValues input assembled above.
+        //   It and its indirections must be valid for the duration of the function call.
+        // * The second argument and the third argument are the length of and the pointer to the
+        //   allocated output buffer respectively. The buffer must be at least as long
+        //   as indicated by the size argument.
+        // * The forth argument is a pointer to the actual size returned by the function.
+        // * All pointers must be valid for the duration of the function call but not beyond.
+        retry_while_adjusting_output_buffer(|config_descriptor, actual_size| {
+            check_result(unsafe {
+                BccFormatConfigDescriptor(
+                    &input as *const BccConfigValues,
+                    config_descriptor.len(),
+                    config_descriptor.as_mut_ptr(),
+                    actual_size as *mut _,
+                )
+            })
         })
     }
 }
