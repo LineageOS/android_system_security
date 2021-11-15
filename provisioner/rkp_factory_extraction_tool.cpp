@@ -77,9 +77,13 @@ std::vector<uint8_t> generateChallenge() {
     uint8_t* writePtr = challenge.data();
     while (bytesRemaining > 0) {
         int bytesRead = getrandom(writePtr, bytesRemaining, /*flags=*/0);
-        if (bytesRead < 0 && errno != EINTR) {
-            std::cerr << errno << ": " << strerror(errno) << std::endl;
-            exit(-1);
+        if (bytesRead < 0) {
+            if (errno == EINTR) {
+                continue;
+            } else {
+                std::cerr << errno << ": " << strerror(errno) << std::endl;
+                exit(-1);
+            }
         }
         bytesRemaining -= bytesRead;
         writePtr += bytesRead;
@@ -158,7 +162,7 @@ void getCsrForInstance(const char* name, void* /*context*/) {
     auto rkp_service = IRemotelyProvisionedComponent::fromBinder(rkp_binder);
     if (!rkp_service) {
         std::cerr << "Unable to get binder object for '" << fullName << "', skipping.";
-        return;
+        exit(-1);
     }
 
     std::vector<uint8_t> keysToSignMac;
