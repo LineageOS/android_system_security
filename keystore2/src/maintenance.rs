@@ -215,6 +215,8 @@ impl Maintenance {
 
     fn migrate_key_namespace(source: &KeyDescriptor, destination: &KeyDescriptor) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
+        let migrate_any_key_permission =
+            check_keystore_permission(KeystorePerm::MigrateAnyKey).is_ok();
 
         DB.with(|db| {
             let key_id_guard = match source.domain {
@@ -227,9 +229,12 @@ impl Maintenance {
                                 KeyEntryLoadBits::NONE,
                                 caller_uid,
                                 |k, av| {
-                                    check_key_permission(KeyPerm::Use, k, &av)?;
-                                    check_key_permission(KeyPerm::Delete, k, &av)?;
-                                    check_key_permission(KeyPerm::Grant, k, &av)
+                                    if !migrate_any_key_permission {
+                                        check_key_permission(KeyPerm::Use, k, &av)?;
+                                        check_key_permission(KeyPerm::Delete, k, &av)?;
+                                        check_key_permission(KeyPerm::Grant, k, &av)?;
+                                    }
+                                    Ok(())
                                 },
                             )
                         })
@@ -245,7 +250,10 @@ impl Maintenance {
             };
 
             db.borrow_mut().migrate_key_namespace(key_id_guard, destination, caller_uid, |k| {
-                check_key_permission(KeyPerm::Rebind, k, &None)
+                if !migrate_any_key_permission {
+                    check_key_permission(KeyPerm::Rebind, k, &None)?;
+                }
+                Ok(())
             })
         })
     }
