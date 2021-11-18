@@ -133,3 +133,26 @@ rust_test {
         "libthiserror",
     ],
 }
+
+rust_test {
+    name: "diced_client_test",
+    srcs: [
+        "src/diced_client_test.rs",
+    ],
+    require_root: true,
+    auto_gen_config: true,
+    test_suites: [
+        "general-tests",
+    ],
+
+    rustlibs: [
+        "android.hardware.security.dice-V1-rust",
+        "android.security.dice-rust",
+        "libanyhow",
+        "libbinder_rs",
+        "libdiced_open_dice_cbor",
+        "libdiced_sample_inputs",
+        "libdiced_utils",
+        "libnix",
+    ],
+}
