@@ -25,6 +25,7 @@ rust_library {
     name: "libdiced_utils",
     crate_name: "diced_utils",
     srcs: ["src/utils.rs"],
+    vendor_available: true,
 
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
@@ -52,6 +53,7 @@ rust_library {
     name: "libdiced_sample_inputs",
     crate_name: "diced_sample_inputs",
     srcs: ["src/sample_inputs.rs"],
+    vendor_available: true,
 
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
@@ -97,6 +99,28 @@ rust_library {
     ],
 }
 
+rust_library {
+    name: "libdiced_vendor",
+    crate_name: "diced",
+    srcs: ["src/lib_vendor.rs"],
+
+    vendor_available: true,
+    rustlibs: [
+        "android.hardware.security.dice-V1-rust",
+        "libdiced_open_dice_cbor",
+        "libanyhow",
+        "libbinder_rs",
+        "libdiced_utils",
+        "libkeystore2_crypto_rust",
+        "liblibc",
+        "liblog_rust",
+        "libnix",
+        "libserde",
+        "libserde_cbor",
+        "libthiserror",
+    ],
+}
+
 rust_binary {
     name: "diced",
     srcs: ["src/diced_main.rs"],
@@ -130,6 +154,32 @@ rust_test {
         "libkeystore2_vintf_rust",
         "liblibc",
         "liblog_rust",
+        "libnix",
+        "libserde",
+        "libserde_cbor",
+        "libthiserror",
+    ],
+}
+
+rust_test {
+    name: "diced_vendor_test",
+    crate_name: "diced_vendor_test",
+    srcs: ["src/lib_vendor.rs"],
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    rustlibs: [
+        "android.hardware.security.dice-V1-rust",
+        "libanyhow",
+        "libdiced_open_dice_cbor",
+        "libdiced_sample_inputs",
+        "libdiced_utils",
+        "libbinder_rs",
+        "libkeystore2_crypto_rust",
+        "liblibc",
+        "liblog_rust",
+        "libnix",
+        "libserde",
+        "libserde_cbor",
         "libthiserror",
     ],
 }

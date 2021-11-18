@@ -12,25 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package {
-    default_applicable_licenses: ["system_security_license"],
-}
+//! This crate implements the android.hardware.security.dice.IDiceDevice interface
+//! and provides support for implementing a DICE HAL service.
 
-rust_library {
-    name: "libdiced_open_dice_cbor",
-    crate_name: "diced_open_dice_cbor",
-    srcs: ["lib.rs"],
-
-    rustlibs: [
-        // For ZVec
-        "libkeystore2_crypto_rust",
-        "libopen_dice_bcc_bindgen",
-        "libopen_dice_cbor_bindgen",
-        "libthiserror",
-    ],
-    static_libs: [
-        "libopen_dice_bcc",
-        "libopen_dice_cbor",
-    ],
-    vendor_available: true,
-}
+mod error_vendor;
+pub mod hal_node;
+pub use diced_open_dice_cbor as dice;
