@@ -19,6 +19,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include <base/command_line.h>
