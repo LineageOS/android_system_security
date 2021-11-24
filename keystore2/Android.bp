@@ -52,6 +52,8 @@ rust_defaults {
         "liblog_rust",
         "librand",
         "librustutils",
+        "libserde",
+        "libserde_cbor",
         "libthiserror",
     ],
     shared_libs: [
