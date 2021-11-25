@@ -38,6 +38,8 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 };
 use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
+use serde_cbor::Value;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::database::{CertificateChain, KeystoreDB, Uuid};
@@ -55,6 +57,11 @@ pub struct RemProvState {
     km_uuid: Uuid,
     is_hal_present: AtomicBool,
 }
+
+static COSE_KEY_XCOORD: Value = Value::Integer(-2);
+static COSE_KEY_YCOORD: Value = Value::Integer(-3);
+static COSE_MAC0_LEN: usize = 4;
+static COSE_MAC0_PAYLOAD: usize = 2;
 
 impl RemProvState {
     /// Creates a RemProvState struct.
@@ -261,6 +268,27 @@ impl RemoteProvisioningService {
         Ok(BnRemoteProvisioning::new_binder(result, BinderFeatures::default()))
     }
 
+    fn extract_payload_from_cose_mac(data: &[u8]) -> Result<Value> {
+        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data).context(
+            "In extract_payload_from_cose_mac: COSE_Mac0 returned from IRPC cannot be parsed",
+        )?;
+        if cose_mac0.len() != COSE_MAC0_LEN {
+            return Err(error::Error::sys()).context(format!(
+                "In extract_payload_from_cose_mac: COSE_Mac0 has improper length. \
+                    Expected: {}, Actual: {}",
+                COSE_MAC0_LEN,
+                cose_mac0.len(),
+            ));
+        }
+        match &cose_mac0[COSE_MAC0_PAYLOAD] {
+            Value::Bytes(key) => Ok(serde_cbor::from_slice(key)
+                .context("In extract_payload_from_cose_mac: COSE_Mac0 payload is malformed.")?),
+            _ => Err(error::Error::sys()).context(
+                "In extract_payload_from_cose_mac: COSE_Mac0 payload is the wrong type.",
+            )?,
+        }
+    }
+
     /// Generates a CBOR blob which will be assembled by the calling code into a larger
     /// CBOR blob intended for delivery to a provisioning serever. This blob will contain
     /// `num_csr` certificate signing requests for attestation keys generated in the TEE,
@@ -290,7 +318,7 @@ impl RemoteProvisioningService {
                 .map(|key| MacedPublicKey { macedKey: key.to_vec() })
                 .collect())
         })?;
-        let mut mac = map_rem_prov_error(dev.generateCertificateRequest(
+        let mac = map_rem_prov_error(dev.generateCertificateRequest(
             test_mode,
             &keys_to_sign,
             eek,
@@ -299,30 +327,16 @@ impl RemoteProvisioningService {
             protected_data,
         ))
         .context("In generate_csr: Failed to generate csr")?;
-        // TODO(b/180392379): Replace this manual CBOR generation with the cbor-serde crate as well.
-        //                    This generates an array consisting of the mac and the public key Maps.
-        //                    Just generate the actual MacedPublicKeys structure when the crate is
-        //                    available.
-        let mut cose_mac_0: Vec<u8> = vec![
-            (0b100_00000 | (keys_to_sign.len() + 1)) as u8,
-            0b010_11000, // mac
-            (mac.len() as u8),
-        ];
-        cose_mac_0.append(&mut mac);
-        // If this is a test mode key, there is an extra 6 bytes added as an additional entry in
-        // the COSE_Key struct to denote that.
-        let test_mode_entry_shift = if test_mode { 0 } else { 6 };
-        let byte_dist_mac0_payload = 8;
-        let cose_key_size = 83 - test_mode_entry_shift;
+        let mut mac_and_keys: Vec<Value> = vec![Value::from(mac)];
         for maced_public_key in keys_to_sign {
-            if maced_public_key.macedKey.len() > cose_key_size + byte_dist_mac0_payload {
-                cose_mac_0.extend_from_slice(
-                    &maced_public_key.macedKey
-                        [byte_dist_mac0_payload..cose_key_size + byte_dist_mac0_payload],
-                );
-            }
+            mac_and_keys.push(
+                Self::extract_payload_from_cose_mac(&maced_public_key.macedKey)
+                    .context("In generate_csr: Failed to get the payload from the COSE_Mac0")?,
+            )
         }
-        Ok(cose_mac_0)
+        let cbor_array: Value = Value::Array(mac_and_keys);
+        serde_cbor::to_vec(&cbor_array)
+            .context("In generate_csr: Failed to serialize the mac and keys array")
     }
 
     /// Provisions a certificate chain for a key whose CSR was included in generate_csr. The
@@ -351,6 +365,66 @@ impl RemoteProvisioningService {
         })
     }
 
+    fn parse_cose_mac0_for_coords(data: &[u8]) -> Result<Vec<u8>> {
+        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data).context(
+            "In parse_cose_mac0_for_coords: COSE_Mac0 returned from IRPC cannot be parsed",
+        )?;
+        if cose_mac0.len() != COSE_MAC0_LEN {
+            return Err(error::Error::sys()).context(format!(
+                "In parse_cose_mac0_for_coords: COSE_Mac0 has improper length. \
+                    Expected: {}, Actual: {}",
+                COSE_MAC0_LEN,
+                cose_mac0.len(),
+            ));
+        }
+        let cose_key: BTreeMap<Value, Value> = match &cose_mac0[COSE_MAC0_PAYLOAD] {
+            Value::Bytes(key) => serde_cbor::from_slice(key)
+                .context("In parse_cose_mac0_for_coords: COSE_Key is malformed.")?,
+            _ => Err(error::Error::sys())
+                .context("In parse_cose_mac0_for_coords: COSE_Mac0 payload is the wrong type.")?,
+        };
+        if !cose_key.contains_key(&COSE_KEY_XCOORD) || !cose_key.contains_key(&COSE_KEY_YCOORD) {
+            return Err(error::Error::sys()).context(
+                "In parse_cose_mac0_for_coords: \
+                COSE_Key returned from IRPC is lacking required fields",
+            );
+        }
+        let mut raw_key: Vec<u8> = vec![0; 64];
+        match &cose_key[&COSE_KEY_XCOORD] {
+            Value::Bytes(x_coord) if x_coord.len() == 32 => {
+                raw_key[0..32].clone_from_slice(x_coord)
+            }
+            Value::Bytes(x_coord) => {
+                return Err(error::Error::sys()).context(format!(
+                "In parse_cose_mac0_for_coords: COSE_Key X-coordinate is not the right length. \
+                Expected: 32; Actual: {}",
+                    x_coord.len()
+                ))
+            }
+            _ => {
+                return Err(error::Error::sys())
+                    .context("In parse_cose_mac0_for_coords: COSE_Key X-coordinate is not a bstr")
+            }
+        }
+        match &cose_key[&COSE_KEY_YCOORD] {
+            Value::Bytes(y_coord) if y_coord.len() == 32 => {
+                raw_key[32..64].clone_from_slice(y_coord)
+            }
+            Value::Bytes(y_coord) => {
+                return Err(error::Error::sys()).context(format!(
+                "In parse_cose_mac0_for_coords: COSE_Key Y-coordinate is not the right length. \
+                Expected: 32; Actual: {}",
+                    y_coord.len()
+                ))
+            }
+            _ => {
+                return Err(error::Error::sys())
+                    .context("In parse_cose_mac0_for_coords: COSE_Key Y-coordinate is not a bstr")
+            }
+        }
+        Ok(raw_key)
+    }
+
     /// Submits a request to the Remote Provisioner HAL to generate a signing key pair.
     /// `is_test_mode` indicates whether or not the returned public key should be marked as being
     /// for testing in order to differentiate them from private keys. If the call is successful,
@@ -362,18 +436,8 @@ impl RemoteProvisioningService {
         let priv_key =
             map_rem_prov_error(dev.generateEcdsaP256KeyPair(is_test_mode, &mut maced_key))
                 .context("In generate_key_pair: Failed to generated ECDSA keypair.")?;
-        // TODO(b/180392379): This is a brittle hack that relies on the consistent formatting of
-        //                    the returned CBOR blob in order to extract the public key.
-        let data = &maced_key.macedKey;
-        if data.len() < 85 {
-            return Err(error::Error::sys()).context(concat!(
-                "In generate_key_pair: CBOR blob returned from",
-                "RemotelyProvisionedComponent is definitely malformatted or empty."
-            ));
-        }
-        let mut raw_key: Vec<u8> = vec![0; 64];
-        raw_key[0..32].clone_from_slice(&data[18..18 + 32]);
-        raw_key[32..64].clone_from_slice(&data[53..53 + 32]);
+        let raw_key = Self::parse_cose_mac0_for_coords(&maced_key.macedKey)
+            .context("In generate_key_pair: Failed to parse raw key")?;
         DB.with::<_, Result<()>>(|db| {
             let mut db = db.borrow_mut();
             db.create_attestation_key_entry(&maced_key.macedKey, &raw_key, &priv_key, &uuid)
@@ -487,5 +551,110 @@ impl IRemoteProvisioning for RemoteProvisioningService {
     fn deleteAllKeys(&self) -> binder::public_api::Result<i64> {
         let _wp = wd::watch_millis("IRemoteProvisioning::deleteAllKeys", 500);
         map_or_log_err(self.delete_all_keys(), Ok)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_cbor::Value;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_parse_cose_mac0_for_coords_raw_bytes() -> Result<()> {
+        let cose_mac0: Vec<u8> = vec![
+            0x84, 0x01, 0x02, 0x58, 0x4D, 0xA5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58,
+            0x20, 0x1A, 0xFB, 0xB2, 0xD9, 0x9D, 0xF6, 0x2D, 0xF0, 0xC3, 0xA8, 0xFC, 0x7E, 0xC9,
+            0x21, 0x26, 0xED, 0xB5, 0x4A, 0x98, 0x9B, 0xF3, 0x0D, 0x91, 0x3F, 0xC6, 0x42, 0x5C,
+            0x43, 0x22, 0xC8, 0xEE, 0x03, 0x22, 0x58, 0x20, 0x40, 0xB3, 0x9B, 0xFC, 0x47, 0x95,
+            0x90, 0xA7, 0x5C, 0x5A, 0x16, 0x31, 0x34, 0xAF, 0x0C, 0x5B, 0xF2, 0xB2, 0xD8, 0x2A,
+            0xA3, 0xB3, 0x1A, 0xB4, 0x4C, 0xA6, 0x3B, 0xE7, 0x22, 0xEC, 0x41, 0xDC, 0x03,
+        ];
+        let raw_key = RemoteProvisioningService::parse_cose_mac0_for_coords(&cose_mac0)?;
+        assert_eq!(
+            raw_key,
+            vec![
+                0x1A, 0xFB, 0xB2, 0xD9, 0x9D, 0xF6, 0x2D, 0xF0, 0xC3, 0xA8, 0xFC, 0x7E, 0xC9, 0x21,
+                0x26, 0xED, 0xB5, 0x4A, 0x98, 0x9B, 0xF3, 0x0D, 0x91, 0x3F, 0xC6, 0x42, 0x5C, 0x43,
+                0x22, 0xC8, 0xEE, 0x03, 0x40, 0xB3, 0x9B, 0xFC, 0x47, 0x95, 0x90, 0xA7, 0x5C, 0x5A,
+                0x16, 0x31, 0x34, 0xAF, 0x0C, 0x5B, 0xF2, 0xB2, 0xD8, 0x2A, 0xA3, 0xB3, 0x1A, 0xB4,
+                0x4C, 0xA6, 0x3B, 0xE7, 0x22, 0xEC, 0x41, 0xDC,
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_cose_mac0_for_coords_constructed_mac() -> Result<()> {
+        let x_coord: Vec<u8> = vec![0; 32];
+        let y_coord: Vec<u8> = vec![1; 32];
+        let mut expected_key: Vec<u8> = Vec::new();
+        expected_key.extend(&x_coord);
+        expected_key.extend(&y_coord);
+        let key_map: BTreeMap<Value, Value> = BTreeMap::from([
+            (Value::Integer(1), Value::Integer(2)),
+            (Value::Integer(3), Value::Integer(-7)),
+            (Value::Integer(-1), Value::Integer(1)),
+            (Value::Integer(-2), Value::Bytes(x_coord)),
+            (Value::Integer(-3), Value::Bytes(y_coord)),
+        ]);
+        let cose_mac0: Vec<Value> = vec![
+            Value::Integer(0),
+            Value::Integer(1),
+            Value::from(serde_cbor::to_vec(&key_map)?),
+            Value::Integer(2),
+        ];
+        let raw_key = RemoteProvisioningService::parse_cose_mac0_for_coords(&serde_cbor::to_vec(
+            &Value::from(cose_mac0),
+        )?)?;
+        assert_eq!(expected_key, raw_key);
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_from_cose_mac() -> Result<()> {
+        let key_map = Value::Map(BTreeMap::from([(Value::Integer(1), Value::Integer(2))]));
+        let payload = Value::Bytes(serde_cbor::to_vec(&key_map)?);
+        let cose_mac0 =
+            Value::Array(vec![Value::Integer(0), Value::Integer(1), payload, Value::Integer(3)]);
+        let extracted_map = RemoteProvisioningService::extract_payload_from_cose_mac(
+            &serde_cbor::to_vec(&cose_mac0)?,
+        )?;
+        assert_eq!(key_map, extracted_map);
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_from_cose_mac_fails_malformed_payload() -> Result<()> {
+        let payload = Value::Bytes(vec![5; 10]);
+        let cose_mac0 =
+            Value::Array(vec![Value::Integer(0), Value::Integer(1), payload, Value::Integer(3)]);
+        let extracted_payload = RemoteProvisioningService::extract_payload_from_cose_mac(
+            &serde_cbor::to_vec(&cose_mac0)?,
+        );
+        assert!(extracted_payload.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_from_cose_mac_fails_type() -> Result<()> {
+        let payload = Value::Integer(1);
+        let cose_mac0 =
+            Value::Array(vec![Value::Integer(0), Value::Integer(1), payload, Value::Integer(3)]);
+        let extracted_payload = RemoteProvisioningService::extract_payload_from_cose_mac(
+            &serde_cbor::to_vec(&cose_mac0)?,
+        );
+        assert!(extracted_payload.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_payload_from_cose_mac_fails_length() -> Result<()> {
+        let cose_mac0 = Value::Array(vec![Value::Integer(0), Value::Integer(1)]);
+        let extracted_payload = RemoteProvisioningService::extract_payload_from_cose_mac(
+            &serde_cbor::to_vec(&cose_mac0)?,
+        );
+        assert!(extracted_payload.is_err());
+        Ok(())
     }
 }
