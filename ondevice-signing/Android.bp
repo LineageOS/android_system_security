@@ -74,6 +74,34 @@ cc_defaults {
   ],
 }
 
+cc_library {
+  name: "libsigningutils",
+  defaults: [
+    "odsign_flags_defaults",
+  ],
+  cpp_std: "experimental",
+  srcs: [
+    "CertUtils.cpp",
+    "VerityUtils.cpp",
+  ],
+
+  static_libs: [
+    "libc++fs",
+    "lib_compos_proto",
+  ],
+
+  shared_libs: [
+    "libbase",
+    "libcrypto",
+    "libcrypto_utils",
+    "libfsverity",
+    "libprotobuf-cpp-lite",
+    "libutils",
+  ],
+  export_include_dirs: ["include"],
+  recovery_available: true,
+}
+
 cc_binary {
   name: "odsign",
   defaults: [
@@ -82,21 +110,19 @@ cc_binary {
   cpp_std: "experimental",
   init_rc: ["odsign.rc"],
   srcs: [
-    "odsign_main.cpp",
-    "CertUtils.cpp",
     "KeystoreKey.cpp",
     "KeystoreHmacKey.cpp",
-    "VerityUtils.cpp",
+    "odsign_main.cpp",
   ],
 
   header_libs: ["odrefresh_headers"],
 
   static_libs: [
     "libc++fs",
+    "libsigningutils",
     "lib_odsign_proto",
     "lib_compos_proto",
   ],
-
   shared_libs: [
     "android.system.keystore2-V1-cpp",
     "android.hardware.security.keymint-V1-cpp",
