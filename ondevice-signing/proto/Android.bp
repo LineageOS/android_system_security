@@ -40,4 +40,5 @@ cc_library_static {
         "//apex_available:platform",
         "com.android.compos",
     ],
+    recovery_available: true,
 }
