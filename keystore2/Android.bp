@@ -25,9 +25,11 @@ rust_defaults {
     name: "libkeystore2_defaults",
     crate_name: "keystore2",
     srcs: ["src/lib.rs"],
+    defaults: [
+        "keymint_use_latest_hal_aidl_rust",
+    ],
 
     rustlibs: [
-        "android.hardware.security.keymint-V1-rust",
         "android.hardware.security.secureclock-V1-rust",
         "android.hardware.security.sharedsecret-V1-rust",
         "android.os.permissions_aidl-rust",
