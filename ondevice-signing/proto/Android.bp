@@ -42,18 +42,3 @@ rust_protobuf {
         "com.android.compos",
     ],
 }
-
-cc_library_static {
-    name: "lib_compos_proto",
-    host_supported: true,
-    proto: {
-        export_proto_headers: true,
-        type: "lite",
-    },
-    srcs: ["compos_signature.proto"],
-    apex_available: [
-        "//apex_available:platform",
-        "com.android.compos",
-    ],
-    recovery_available: true,
-}

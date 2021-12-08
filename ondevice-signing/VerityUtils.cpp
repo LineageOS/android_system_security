@@ -75,7 +75,7 @@ static int read_callback(void* file, void* buf, size_t count) {
     return 0;
 }
 
-Result<std::vector<uint8_t>> createDigest(int fd) {
+static Result<std::vector<uint8_t>> createDigest(int fd) {
     struct stat filestat;
     int ret = fstat(fd, &filestat);
     if (ret < 0) {
@@ -148,7 +148,7 @@ static Result<std::vector<uint8_t>> signDigest(const SigningKey& key,
     return std::vector<uint8_t>(signed_digest->begin(), signed_digest->end());
 }
 
-Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
+static Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
     struct fsverity_enable_arg arg = {.version = 1};
 
     arg.sig_ptr = reinterpret_cast<uint64_t>(pkcs7.data());
@@ -165,7 +165,7 @@ Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
     return {};
 }
 
-Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
+static Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
     auto digest = createDigest(fd);
     if (!digest.ok()) {
         return Error() << digest.error();
@@ -190,20 +190,7 @@ Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
     return toHex(digest.value());
 }
 
-Result<std::string> enableFsVerity(const std::string& path, const SigningKey& key) {
-    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
-    if (!fd.ok()) {
-        return ErrnoError() << "Failed to open " << path;
-    }
-
-    auto enableStatus = enableFsVerity(fd.get(), key);
-    if (!enableStatus.ok()) {
-        return Error() << path << ": " << enableStatus.error();
-    }
-    return enableStatus;
-}
-
-Result<std::string> isFileInVerity(int fd) {
+static Result<std::string> isFileInVerity(int fd) {
     auto d = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
     d->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
     auto ret = ioctl(fd, FS_IOC_MEASURE_VERITY, d.get());
@@ -217,7 +204,7 @@ Result<std::string> isFileInVerity(int fd) {
     return toHex({&d->digest[0], &d->digest[d->digest_size]});
 }
 
-Result<std::string> isFileInVerity(const std::string& path) {
+static Result<std::string> isFileInVerity(const std::string& path) {
     unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
     if (!fd.ok()) {
         return ErrnoError() << "Failed to open " << path;
