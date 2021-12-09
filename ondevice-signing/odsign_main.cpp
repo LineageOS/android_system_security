@@ -65,8 +65,14 @@ const std::string kCompOsCurrentPublicKey =
     "/data/misc/apexdata/com.android.compos/current/key.pubkey";
 const std::string kCompOsPendingPublicKey =
     "/data/misc/apexdata/com.android.compos/pending/key.pubkey";
-
 const std::string kCompOsPendingArtifactsDir = "/data/misc/apexdata/com.android.art/compos-pending";
+const std::string kCompOsInfo = kArtArtifactsDir + "/compos.info";
+const std::string kCompOsInfoSignature = kCompOsInfo + ".signature";
+
+constexpr const char* kCompOsPendingInfoPath =
+    "/data/misc/apexdata/com.android.art/compos-pending/compos.info";
+constexpr const char* kCompOsPendingInfoSignaturePath =
+    "/data/misc/apexdata/com.android.art/compos-pending/compos.info.signature";
 
 constexpr const char* kOdsignVerificationDoneProp = "odsign.verification.done";
 constexpr const char* kOdsignKeyDoneProp = "odsign.key.done";
@@ -241,7 +247,7 @@ Result<std::vector<uint8_t>> verifyCompOsKey(const SigningKey& signingKey) {
         auto existing_key =
             extractRsaPublicKeyFromLeafCert(signingKey, kCompOsCert, kCompOsSubject.commonName);
         if (existing_key.ok()) {
-            LOG(INFO) << "Found and verified existing CompOs public key certificate: "
+            LOG(INFO) << "Found and verified existing CompOS public key certificate: "
                       << kCompOsCert;
             return existing_key.value();
         }
@@ -254,7 +260,7 @@ Result<std::vector<uint8_t>> verifyCompOsKey(const SigningKey& signingKey) {
     }
 
     if (!verified) {
-        return Error() << "No valid CompOs key present.";
+        return Error() << "No valid CompOS key present.";
     }
 
     // If the pending key was verified it will have been promoted to current, so
@@ -262,7 +268,7 @@ Result<std::vector<uint8_t>> verifyCompOsKey(const SigningKey& signingKey) {
     auto publicKey = readBytesFromFile(kCompOsCurrentPublicKey);
     if (publicKey.empty()) {
         // This shouldn`t really happen.
-        return Error() << "Failed to read CompOs key.";
+        return Error() << "Failed to read CompOS key.";
     }
 
     // One way or another we now have a valid public key. Persist a certificate so
@@ -274,10 +280,10 @@ Result<std::vector<uint8_t>> verifyCompOsKey(const SigningKey& signingKey) {
     auto certStatus = createLeafCertificate(kCompOsSubject, publicKey, signFunction,
                                             kSigningKeyCert, kCompOsCert);
     if (!certStatus.ok()) {
-        return Error() << "Failed to create CompOs cert: " << certStatus.error();
+        return Error() << "Failed to create CompOS cert: " << certStatus.error();
     }
 
-    LOG(INFO) << "Verified key, wrote new CompOs cert";
+    LOG(INFO) << "Verified key, wrote new CompOS cert";
 
     return publicKey;
 }
@@ -447,23 +453,58 @@ Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& si
     if (!cert_add_result.ok()) {
         // Best efforts only - nothing we can do if deletion fails.
         unlink(kCompOsCert.c_str());
-        return Error() << "Failed to add CompOs certificate to fs-verity keyring: "
+        return Error() << "Failed to add CompOS certificate to fs-verity keyring: "
                        << cert_add_result.error();
     }
 
     return publicKey;
 }
 
+Result<OdsignInfo> getComposInfo(const std::vector<uint8_t>& compos_key) {
+    std::string compos_signature;
+    if (!android::base::ReadFileToString(kCompOsInfoSignature, &compos_signature)) {
+        return ErrnoError() << "Failed to read " << kCompOsInfoSignature;
+    }
+
+    std::string compos_info_str;
+    if (!android::base::ReadFileToString(kCompOsInfo, &compos_info_str)) {
+        return ErrnoError() << "Failed to read " << kCompOsInfo;
+    }
+
+    // Delete the files - if they're valid we don't need them any more, and
+    // they'd confuse artifact verification; if they're not we never need to
+    // look at them again.
+    if (unlink(kCompOsInfo.c_str()) != 0 || unlink(kCompOsInfoSignature.c_str()) != 0) {
+        return ErrnoError() << "Unable to delete CompOS info/signature file";
+    }
+
+    // Verify the signature
+    auto verified = verifyRsaPublicKeySignature(compos_info_str, compos_signature, compos_key);
+    if (!verified.ok()) {
+        return Error() << kCompOsInfoSignature << " does not match.";
+    } else {
+        LOG(INFO) << kCompOsInfoSignature << " matches.";
+    }
+
+    OdsignInfo compos_info;
+    if (!compos_info.ParseFromString(compos_info_str)) {
+        return Error() << "Failed to parse " << kCompOsInfo;
+    }
+
+    LOG(INFO) << "Loaded " << kCompOsInfo;
+    return compos_info;
+}
+
 art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>& compos_key,
-                                                     const SigningKey& signingKey,
+                                                     const SigningKey& signing_key,
                                                      bool* digests_verified) {
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
-    // CompOs has generated some artifacts that may, or may not, match the
+    // CompOS has generated some artifacts that may, or may not, match the
     // current state.  But if there are already valid artifacts present the
-    // CompOs ones are redundant.
+    // CompOS ones are redundant.
     art::odrefresh::ExitCode odrefresh_status = checkArtifacts();
     if (odrefresh_status != art::odrefresh::ExitCode::kCompilationRequired) {
         if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
@@ -473,7 +514,14 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
         return odrefresh_status;
     }
 
-    // No useful current artifacts, lets see if the CompOs ones are ok
+    // No useful current artifacts, lets see if the CompOS ones are ok
+    if (access(kCompOsPendingInfoPath, R_OK) != 0 ||
+        access(kCompOsPendingInfoSignaturePath, R_OK) != 0) {
+        LOG(INFO) << "Missing CompOS info/signature, deleting pending artifacts";
+        removeDirectory(kCompOsPendingArtifactsDir);
+        return art::odrefresh::ExitCode::kCompilationRequired;
+    }
+
     LOG(INFO) << "Current artifacts are out of date, switching to pending artifacts";
     removeDirectory(kArtArtifactsDir);
     if (!rename(kCompOsPendingArtifactsDir, kArtArtifactsDir)) {
@@ -481,9 +529,6 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
-    // TODO: Make sure that we check here that the contents of the artifacts
-    // correspond to their filenames (and extensions) - the CompOs signatures
-    // can't guarantee that.
     odrefresh_status = checkArtifacts();
     if (odrefresh_status != art::odrefresh::ExitCode::kOkay) {
         LOG(WARNING) << "Pending artifacts are not OK";
@@ -492,24 +537,28 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
 
     // The artifacts appear to be up to date - but we haven't
     // verified that they are genuine yet.
-    Result<std::map<std::string, std::string>> digests =
-        verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_key);
 
-    if (digests.ok()) {
-        auto persisted = persistDigests(digests.value(), signingKey);
-
-        // Having signed the digests (or failed to), we're done with the signing key.
-        SetProperty(kOdsignKeyDoneProp, "1");
-
-        if (persisted.ok()) {
-            *digests_verified = true;
-            LOG(INFO) << "Pending artifacts successfully verified.";
-            return art::odrefresh::ExitCode::kOkay;
-        } else {
-            LOG(WARNING) << persisted.error();
-        }
+    auto compos_info = getComposInfo(compos_key);
+    if (!compos_info.ok()) {
+        LOG(WARNING) << compos_info.error();
     } else {
-        LOG(WARNING) << "Pending artifact verification failed: " << digests.error();
+        std::map<std::string, std::string> compos_digests(compos_info->file_hashes().begin(),
+                                                          compos_info->file_hashes().end());
+
+        auto status = verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_digests, signing_key);
+        if (!status.ok()) {
+            LOG(WARNING) << status.error();
+        } else {
+            auto persisted = persistDigests(compos_digests, signing_key);
+
+            if (!persisted.ok()) {
+                LOG(WARNING) << persisted.error();
+            } else {
+                LOG(INFO) << "Pending artifacts successfully verified.";
+                *digests_verified = true;
+                return art::odrefresh::ExitCode::kOkay;
+            }
+        }
     }
 
     // We can't use the existing artifacts, so we will need to generate new
