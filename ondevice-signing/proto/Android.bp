@@ -32,6 +32,17 @@ cc_library_static {
     ],
 }
 
+rust_protobuf {
+    name: "libodsign_proto_rust",
+    crate_name: "odsign_proto",
+    protos: ["odsign_info.proto"],
+    source_stem: "odsign_proto",
+    host_supported: true,
+    apex_available: [
+        "com.android.compos",
+    ],
+}
+
 cc_library_static {
     name: "lib_compos_proto",
     host_supported: true,
