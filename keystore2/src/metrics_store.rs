@@ -287,7 +287,6 @@ fn process_key_creation_event_stats<U>(
                     EcCurve::P_256 => MetricsEcCurve::P_256,
                     EcCurve::P_384 => MetricsEcCurve::P_384,
                     EcCurve::P_521 => MetricsEcCurve::P_521,
-                    EcCurve::CURVE_25519 => MetricsEcCurve::CURVE_25519,
                     _ => MetricsEcCurve::EC_CURVE_UNSPECIFIED,
                 }
             }
