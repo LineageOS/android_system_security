@@ -39,7 +39,7 @@ rust_defaults {
         "android.security.maintenance-rust",
         "android.security.metrics-rust",
         "android.security.remoteprovisioning-rust",
-        "android.system.keystore2-V2-rust",
+        "android.system.keystore2-V1-rust",
         "libanyhow",
         "libbinder_rs",
         "libkeystore2_aaid-rust",
