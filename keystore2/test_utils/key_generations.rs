@@ -129,3 +129,42 @@ pub fn generate_ec_p256_signing_key(
         Err(e) => Err(e),
     }
 }
+
+/// Generate EC signing key.
+pub fn generate_ec_key<S: IKeystoreSecurityLevel + ?Sized>(
+    sec_level: &S,
+    domain: Domain,
+    nspace: i64,
+    alias: Option<String>,
+    ec_curve: EcCurve,
+    digest: Digest,
+) -> binder::Result<KeyMetadata> {
+    let gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(digest)
+        .ec_curve(ec_curve);
+
+    let key_metadata = sec_level.generateKey(
+        &KeyDescriptor { domain, nspace, alias, blob: None },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    // Must have a public key.
+    assert!(key_metadata.certificate.is_some());
+
+    // Should not have an attestation record.
+    assert!(key_metadata.certificateChain.is_none());
+
+    if domain == Domain::BLOB {
+        assert!(key_metadata.key.blob.is_some());
+    } else {
+        assert!(key_metadata.key.blob.is_none());
+    }
+    Ok(key_metadata)
+}
