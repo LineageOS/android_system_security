@@ -85,13 +85,15 @@ constexpr const char* kStopServiceProp = "ctl.stop";
 
 enum class CompOsInstance { kCurrent, kPending };
 
-static std::vector<uint8_t> readBytesFromFile(const std::string& path) {
+namespace {
+
+std::vector<uint8_t> readBytesFromFile(const std::string& path) {
     std::string str;
     android::base::ReadFileToString(path, &str);
     return std::vector<uint8_t>(str.begin(), str.end());
 }
 
-static bool rename(const std::string& from, const std::string& to) {
+bool rename(const std::string& from, const std::string& to) {
     std::error_code ec;
     std::filesystem::rename(from, to, ec);
     if (ec) {
@@ -101,7 +103,7 @@ static bool rename(const std::string& from, const std::string& to) {
     return true;
 }
 
-static int removeDirectory(const std::string& directory) {
+int removeDirectory(const std::string& directory) {
     std::error_code ec;
     auto num_removed = std::filesystem::remove_all(directory, ec);
     if (ec) {
@@ -115,7 +117,7 @@ static int removeDirectory(const std::string& directory) {
     }
 }
 
-static bool directoryHasContent(const std::string& directory) {
+bool directoryHasContent(const std::string& directory) {
     std::error_code ec;
     return std::filesystem::is_directory(directory, ec) &&
            !std::filesystem::is_empty(directory, ec);
@@ -135,7 +137,7 @@ art::odrefresh::ExitCode checkArtifacts() {
     return static_cast<art::odrefresh::ExitCode>(exit_code);
 }
 
-static std::string toHex(const std::vector<uint8_t>& digest) {
+std::string toHex(const std::vector<uint8_t>& digest) {
     std::stringstream ss;
     for (auto it = digest.begin(); it != digest.end(); ++it) {
         ss << std::setfill('0') << std::setw(2) << std::hex << static_cast<unsigned>(*it);
@@ -434,9 +436,8 @@ Result<void> persistDigests(const std::map<std::string, std::string>& digests,
     return {};
 }
 
-static Result<void>
-verifyArtifactsIntegrity(const std::map<std::string, std::string>& trusted_digests,
-                         bool supportsFsVerity) {
+Result<void> verifyArtifactsIntegrity(const std::map<std::string, std::string>& trusted_digests,
+                                      bool supportsFsVerity) {
     Result<void> integrityStatus;
 
     if (supportsFsVerity) {
@@ -574,6 +575,7 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
     removeDirectory(kArtArtifactsDir);
     return art::odrefresh::ExitCode::kCompilationRequired;
 }
+}  // namespace
 
 int main(int /* argc */, char** argv) {
     android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));

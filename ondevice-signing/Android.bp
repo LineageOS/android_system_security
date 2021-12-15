@@ -87,7 +87,6 @@ cc_library {
 
   static_libs: [
     "libc++fs",
-    "lib_compos_proto",
   ],
 
   shared_libs: [
@@ -121,7 +120,6 @@ cc_binary {
     "libc++fs",
     "libsigningutils",
     "lib_odsign_proto",
-    "lib_compos_proto",
   ],
   shared_libs: [
     "android.system.keystore2-V1-cpp",
