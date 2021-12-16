@@ -228,11 +228,18 @@ fn connect_keymint(
     };
 
     let (keymint, hal_version) = if let Some(service_name) = service_name {
-        (
+        let km: Strong<dyn IKeyMintDevice> =
             map_binder_status_code(binder::get_interface(&service_name))
-                .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?,
-            Some(100i32), // The HAL version code for KeyMint V1 is 100.
-        )
+                .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?;
+        // Map the HAL version code for KeyMint to be <AIDL version> * 100, so
+        // - V1 is 100
+        // - V2 is 200
+        // etc.
+        let hal_version = km
+            .getInterfaceVersion()
+            .map(|v| v * 100i32)
+            .context("In connect_keymint: Trying to determine KeyMint AIDL version")?;
+        (km, Some(hal_version))
     } else {
         // This is a no-op if it was called before.
         keystore2_km_compat::add_keymint_device_service();
@@ -260,11 +267,14 @@ fn connect_keymint(
 
     // The legacy wrapper sets hw_info.versionNumber to the underlying HAL version like so:
     // 10 * <major> + <minor>, e.g., KM 3.0 = 30. So 30, 40, and 41 are the only viable values.
-    // For KeyMint the versionNumber is implementation defined and thus completely meaningless
-    // to Keystore 2.0. So at this point the versionNumber field is set to the HAL version, so
-    // that higher levels have a meaningful guide as to which feature set to expect from the
-    // implementation. As of this writing the only meaningful version number is 100 for KeyMint V1,
-    // and future AIDL versions should follow the pattern <AIDL version> * 100.
+    //
+    // For KeyMint the returned versionNumber is implementation defined and thus completely
+    // meaningless to Keystore 2.0.  So set the versionNumber field that is returned to
+    // the rest of the code to be the <AIDL version> * 100, so KeyMint V1 is 100, KeyMint V2 is 200
+    // and so on.
+    //
+    // This ensures that versionNumber value across KeyMaster and KeyMint is monotonically
+    // increasing (and so comparisons like `versionNumber >= KEY_MINT_1` are valid).
     if let Some(hal_version) = hal_version {
         hw_info.versionNumber = hal_version;
     }
