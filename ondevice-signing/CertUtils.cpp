@@ -352,7 +352,7 @@ Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::string& path) {
     return extractPublicKey(X509_get_pubkey(cert.value().get()));
 }
 
-Result<std::vector<uint8_t>> extractRsaPublicKey(EVP_PKEY* pkey) {
+static Result<std::vector<uint8_t>> extractRsaPublicKey(EVP_PKEY* pkey) {
     RSA* rsa = EVP_PKEY_get0_RSA(pkey);
     if (rsa == nullptr) {
         return Error() << "The public key is not an RSA key";
