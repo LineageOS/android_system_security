@@ -59,6 +59,8 @@ impl KeyMintDevice {
     pub const KEY_MASTER_V4_1: i32 = 41;
     /// Version number of KeyMintDevice@V1
     pub const KEY_MINT_V1: i32 = 100;
+    /// Version number of KeyMintDevice@V2
+    pub const KEY_MINT_V2: i32 = 200;
 
     /// Get a [`KeyMintDevice`] for the given [`SecurityLevel`]
     pub fn get(security_level: SecurityLevel) -> Result<KeyMintDevice> {
