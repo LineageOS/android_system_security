@@ -18,7 +18,6 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 };
 use android_security_dice::aidl::android::security::dice::IDiceMaintenance::IDiceMaintenance;
 use android_security_dice::aidl::android::security::dice::IDiceNode::IDiceNode;
-use anyhow::Result;
 use binder::Strong;
 use diced_open_dice_cbor as dice;
 use nix::libc::uid_t;
@@ -49,15 +48,12 @@ fn equivalence_test() {
     let input_values = diced_sample_inputs::get_input_values_vector();
     let former = node.derive(&[]).expect("Trying to call derive.");
     let latter = node.derive(&input_values).expect("Trying to call derive with input values.");
-    let artifacts = diced_utils::ResidentArtifacts::new(
-        former.cdiAttest[..].try_into().unwrap(),
-        former.cdiSeal[..].try_into().unwrap(),
-        &former.bcc.data,
-    )
-    .unwrap();
+    let artifacts =
+        diced_utils::ResidentArtifacts::new(&former.cdiAttest, &former.cdiSeal, &former.bcc.data)
+            .unwrap();
 
     let input_values: Vec<diced_utils::InputValues> =
-        input_values.iter().map(|v| v.try_into()).collect::<Result<_>>().unwrap();
+        input_values.iter().map(|v| v.into()).collect();
 
     let artifacts =
         artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
@@ -101,7 +97,7 @@ fn demote_test() {
     .unwrap();
 
     let input_values: Vec<diced_utils::InputValues> =
-        input_values.iter().map(|v| v.try_into()).collect::<Result<_>>().unwrap();
+        input_values.iter().map(|v| v.into()).collect();
 
     let artifacts =
         artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
@@ -119,15 +115,15 @@ fn demote_test() {
 
 fn client_input_values(uid: uid_t) -> BinderInputValues {
     BinderInputValues {
-        codeHash: vec![0; dice::HASH_SIZE],
+        codeHash: [0; dice::HASH_SIZE],
         config: BinderConfig {
             desc: dice::bcc::format_config_descriptor(Some(&format!("{}", uid)), None, true)
                 .unwrap(),
         },
-        authorityHash: vec![0; dice::HASH_SIZE],
+        authorityHash: [0; dice::HASH_SIZE],
         authorityDescriptor: None,
         mode: BinderMode::NORMAL,
-        hidden: vec![0; dice::HIDDEN_SIZE],
+        hidden: [0; dice::HIDDEN_SIZE],
     }
 }
 
@@ -164,12 +160,8 @@ fn demote_self_test() {
     .unwrap();
 
     let client = [client];
-    let input_values: Vec<diced_utils::InputValues> = input_values
-        .iter()
-        .chain(client.iter())
-        .map(|v| v.try_into())
-        .collect::<Result<_>>()
-        .unwrap();
+    let input_values: Vec<diced_utils::InputValues> =
+        input_values.iter().chain(client.iter()).map(|v| v.into()).collect();
 
     let artifacts =
         artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
