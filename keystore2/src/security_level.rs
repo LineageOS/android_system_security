@@ -405,23 +405,26 @@ impl KeystoreSecurityLevel {
             );
         }
 
-        result.push(KeyParameter {
-            tag: Tag::CREATION_DATETIME,
-            value: KeyParameterValue::DateTime(
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .context(
-                        "In KeystoreSecurityLevel::add_required_parameters: \
+        // Add CREATION_DATETIME only if the backend version Keymint V1 (100) or newer.
+        if self.hw_info.versionNumber >= 100 {
+            result.push(KeyParameter {
+                tag: Tag::CREATION_DATETIME,
+                value: KeyParameterValue::DateTime(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .context(
+                            "In KeystoreSecurityLevel::add_required_parameters: \
                         Failed to get epoch time.",
-                    )?
-                    .as_millis()
-                    .try_into()
-                    .context(
-                        "In KeystoreSecurityLevel::add_required_parameters: \
+                        )?
+                        .as_millis()
+                        .try_into()
+                        .context(
+                            "In KeystoreSecurityLevel::add_required_parameters: \
                         Failed to convert epoch time.",
-                    )?,
-            ),
-        });
+                        )?,
+                ),
+            });
+        }
 
         // If there is an attestation challenge we need to get an application id.
         if params.iter().any(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE) {
