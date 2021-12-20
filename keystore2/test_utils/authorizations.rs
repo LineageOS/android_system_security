@@ -17,8 +17,9 @@
 use std::ops::Deref;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    Algorithm::Algorithm, Digest::Digest, EcCurve::EcCurve, KeyParameter::KeyParameter,
-    KeyParameterValue::KeyParameterValue, KeyPurpose::KeyPurpose, Tag::Tag,
+    Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
+    KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue, KeyPurpose::KeyPurpose,
+    PaddingMode::PaddingMode, Tag::Tag,
 };
 
 /// Helper struct to create set of Authorizations.
@@ -84,6 +85,60 @@ impl AuthSetBuilder {
         self.0.push(KeyParameter {
             tag: Tag::NO_AUTH_REQUIRED,
             value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Add RSA_public_exponent.
+    pub fn rsa_public_exponent(mut self, e: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::RSA_PUBLIC_EXPONENT,
+            value: KeyParameterValue::LongInteger(e),
+        });
+        self
+    }
+
+    /// Add key size.
+    pub fn key_size(mut self, s: i32) -> Self {
+        self.0.push(KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(s) });
+        self
+    }
+
+    /// Add block mode.
+    pub fn block_mode(mut self, b: BlockMode) -> Self {
+        self.0.push(KeyParameter { tag: Tag::BLOCK_MODE, value: KeyParameterValue::BlockMode(b) });
+        self
+    }
+
+    /// Add certificate_not_before.
+    pub fn cert_not_before(mut self, b: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CERTIFICATE_NOT_BEFORE,
+            value: KeyParameterValue::DateTime(b),
+        });
+        self
+    }
+
+    /// Add certificate_not_after.
+    pub fn cert_not_after(mut self, a: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CERTIFICATE_NOT_AFTER,
+            value: KeyParameterValue::DateTime(a),
+        });
+        self
+    }
+
+    /// Add padding mode.
+    pub fn padding_mode(mut self, p: PaddingMode) -> Self {
+        self.0.push(KeyParameter { tag: Tag::PADDING, value: KeyParameterValue::PaddingMode(p) });
+        self
+    }
+
+    /// Add mgf_digest.
+    pub fn mgf_digest(mut self, d: Digest) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::RSA_OAEP_MGF_DIGEST,
+            value: KeyParameterValue::Digest(d),
         });
         self
     }
