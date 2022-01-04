@@ -538,19 +538,21 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
-    odrefresh_status = checkArtifacts();
-    if (odrefresh_status != art::odrefresh::ExitCode::kOkay) {
-        LOG(WARNING) << "Pending artifacts are not OK";
-        return odrefresh_status;
-    }
-
-    // The artifacts appear to be up to date - but we haven't
-    // verified that they are genuine yet.
-
+    // Read the CompOS signature before checking, otherwise odrefresh will delete it
+    // (And there's no point checking the artifacts if we don't have a valid signature.)
     auto compos_info = getComposInfo(compos_key);
     if (!compos_info.ok()) {
         LOG(WARNING) << compos_info.error();
     } else {
+        odrefresh_status = checkArtifacts();
+        if (odrefresh_status != art::odrefresh::ExitCode::kOkay) {
+            LOG(WARNING) << "Pending artifacts are not OK";
+            return odrefresh_status;
+        }
+
+        // The artifacts appear to be up to date - but we haven't
+        // verified that they are genuine yet.
+
         std::map<std::string, std::string> compos_digests(compos_info->file_hashes().begin(),
                                                           compos_info->file_hashes().end());
 
