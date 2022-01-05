@@ -3231,7 +3231,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fmt::Write;
     use std::sync::atomic::{AtomicU8, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::{Duration, SystemTime};
     #[cfg(disabled)]
@@ -3251,7 +3251,7 @@ mod tests {
     where
         F: Fn(&Uuid, &[u8]) -> Result<()> + Send + 'static,
     {
-        let super_key: Arc<SuperKeyManager> = Default::default();
+        let super_key: Arc<RwLock<SuperKeyManager>> = Default::default();
 
         let gc_db = KeystoreDB::new(path, None).expect("Failed to open test gc db_connection.");
         let gc = Gc::new_init_with(Default::default(), move || (Box::new(cb), gc_db, super_key));

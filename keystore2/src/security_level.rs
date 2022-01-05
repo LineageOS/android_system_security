@@ -160,6 +160,8 @@ impl KeystoreSecurityLevel {
                     let mut db = db.borrow_mut();
 
                     let (key_blob, mut blob_metadata) = SUPER_KEY
+                        .read()
+                        .unwrap()
                         .handle_super_encryption_on_key_init(
                             &mut db,
                             &LEGACY_MIGRATOR,
@@ -303,6 +305,8 @@ impl KeystoreSecurityLevel {
             .context("In create_operation.")?;
 
         let km_blob = SUPER_KEY
+            .read()
+            .unwrap()
             .unwrap_key_if_required(&blob_metadata, km_blob)
             .context("In create_operation. Failed to handle super encryption.")?;
 
@@ -736,8 +740,11 @@ impl KeystoreSecurityLevel {
             .ok_or_else(error::Error::sys)
             .context("No km_blob after successfully loading key. This should never happen.")?;
 
-        let wrapping_key_blob =
-            SUPER_KEY.unwrap_key_if_required(&wrapping_blob_metadata, &wrapping_key_blob).context(
+        let wrapping_key_blob = SUPER_KEY
+            .read()
+            .unwrap()
+            .unwrap_key_if_required(&wrapping_blob_metadata, &wrapping_key_blob)
+            .context(
                 "In import_wrapped_key. Failed to handle super encryption for wrapping key.",
             )?;
 
