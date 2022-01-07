@@ -146,6 +146,17 @@ impl ResidentArtifacts {
         })
     }
 
+    /// Creates a ResidentArtifacts object from another one implementing the DiceArtifacts
+    /// trait. Like `new` this function can only create artifacts of appropriate size
+    /// because DiceArtifacts returns array references of appropriate size.
+    pub fn new_from<T: DiceArtifacts + ?Sized>(artifacts: &T) -> Result<Self> {
+        Ok(ResidentArtifacts {
+            cdi_attest: artifacts.cdi_attest()[..].try_into()?,
+            cdi_seal: artifacts.cdi_seal()[..].try_into()?,
+            bcc: artifacts.bcc(),
+        })
+    }
+
     /// Attempts to clone the artifacts. This operation is fallible due to the fallible
     /// nature of ZVec.
     pub fn try_clone(&self) -> Result<Self> {
@@ -197,6 +208,47 @@ impl ResidentArtifacts {
             .into_iter()
             .try_fold(self, |acc, input_values| acc.execute_step(input_values))
             .context("In ResidentArtifacts::execute_step:")
+    }
+}
+
+/// An object that implements this trait provides the typical DICE artifacts.
+/// CDI_ATTEST, CDI_SEAL, and a certificate chain up to the public key that
+/// can be derived from CDI_ATTEST. Implementations should check the length of
+/// the stored CDI_* secrets on creation so that any valid instance returns the
+/// correct secrets in an infallible way.
+pub trait DiceArtifacts {
+    /// Returns CDI_ATTEST.
+    fn cdi_attest(&self) -> &[u8; dice::CDI_SIZE];
+    /// Returns CDI_SEAL.
+    fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE];
+    /// Returns the attestation certificate chain in BCC format.
+    fn bcc(&self) -> Vec<u8>;
+}
+
+/// Implement this trait to provide read and write access to a secure artifact
+/// storage that can be used by the ResidentHal implementation.
+pub trait UpdatableDiceArtifacts {
+    /// With artifacts provides access to the stored artifacts for the duration
+    /// of the function call by means of calling the callback.
+    fn with_artifacts<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&dyn DiceArtifacts) -> Result<T>;
+
+    /// Consumes the object and returns a an updated version of itself.
+    fn update(self, new_artifacts: &impl DiceArtifacts) -> Result<Self>
+    where
+        Self: Sized;
+}
+
+impl DiceArtifacts for ResidentArtifacts {
+    fn cdi_attest(&self) -> &[u8; dice::CDI_SIZE] {
+        self.cdi_attest[..].try_into().unwrap()
+    }
+    fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE] {
+        self.cdi_seal[..].try_into().unwrap()
+    }
+    fn bcc(&self) -> Vec<u8> {
+        self.bcc.clone()
     }
 }
 
