@@ -253,3 +253,46 @@ pub fn generate_rsa_key(
 
     Ok(key_metadata)
 }
+
+/// Generate AES key.
+pub fn generate_aes_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    size: i32,
+    alias: &str,
+    padding_mode: &PaddingMode,
+    block_mode: &BlockMode,
+    min_mac_len: Option<i32>,
+) -> binder::Result<KeyMetadata> {
+    let mut gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::AES)
+        .purpose(KeyPurpose::ENCRYPT)
+        .purpose(KeyPurpose::DECRYPT)
+        .key_size(size)
+        .padding_mode(*padding_mode)
+        .block_mode(*block_mode);
+
+    if let Some(val) = min_mac_len {
+        gen_params = gen_params.min_mac_length(val);
+    }
+
+    let key_metadata = sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    // Should not have public certificate.
+    assert!(key_metadata.certificate.is_none());
+
+    // Should not have an attestation record.
+    assert!(key_metadata.certificateChain.is_none());
+    Ok(key_metadata)
+}

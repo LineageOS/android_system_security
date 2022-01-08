@@ -142,6 +142,25 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Add nonce.
+    pub fn nonce(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter { tag: Tag::NONCE, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add MAC length.
+    pub fn mac_length(mut self, l: i32) -> Self {
+        self.0.push(KeyParameter { tag: Tag::MAC_LENGTH, value: KeyParameterValue::Integer(l) });
+        self
+    }
+
+    /// Add min MAC length.
+    pub fn min_mac_length(mut self, l: i32) -> Self {
+        self.0
+            .push(KeyParameter { tag: Tag::MIN_MAC_LENGTH, value: KeyParameterValue::Integer(l) });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
