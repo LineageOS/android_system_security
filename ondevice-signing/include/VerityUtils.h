@@ -34,6 +34,7 @@ verifyAllFilesInVerity(const std::string& path);
 android::base::Result<std::map<std::string, std::string>>
 addFilesToVerityRecursive(const std::string& path, const SigningKey& key);
 
-android::base::Result<void> verifyAllFilesUsingCompOs(const std::string& directory_path,
-                                                      std::map<std::string, std::string> digests,
-                                                      const SigningKey& signing_key);
+android::base::Result<void>
+verifyAllFilesUsingCompOs(const std::string& directory_path,
+                          const std::map<std::string, std::string>& digests,
+                          const SigningKey& signing_key);
