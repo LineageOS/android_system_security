@@ -538,43 +538,57 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
-    // Read the CompOS signature before checking, otherwise odrefresh will delete it
-    // (And there's no point checking the artifacts if we don't have a valid signature.)
+    // Make sure the artifacts we have are genuinely produced by the current
+    // instance of CompOS.
     auto compos_info = getComposInfo(compos_key);
     if (!compos_info.ok()) {
         LOG(WARNING) << compos_info.error();
     } else {
-        odrefresh_status = checkArtifacts();
-        if (odrefresh_status != art::odrefresh::ExitCode::kOkay) {
-            LOG(WARNING) << "Pending artifacts are not OK";
-            return odrefresh_status;
-        }
-
-        // The artifacts appear to be up to date - but we haven't
-        // verified that they are genuine yet.
-
         std::map<std::string, std::string> compos_digests(compos_info->file_hashes().begin(),
                                                           compos_info->file_hashes().end());
 
         auto status = verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_digests, signing_key);
         if (!status.ok()) {
-            LOG(WARNING) << status.error();
+            LOG(WARNING) << "Faild to verify CompOS artifacts: " << status.error();
         } else {
-            auto persisted = persistDigests(compos_digests, signing_key);
-
-            if (!persisted.ok()) {
-                LOG(WARNING) << persisted.error();
-            } else {
-                LOG(INFO) << "Pending artifacts successfully verified.";
+            LOG(INFO) << "CompOS artifacts successfully verified.";
+            odrefresh_status = checkArtifacts();
+            switch (odrefresh_status) {
+            case art::odrefresh::ExitCode::kCompilationRequired:
+                // We have verified all the files, and we need to make sure
+                // we don't check them against odsign.info which will be out
+                // of date.
                 *digests_verified = true;
-                return art::odrefresh::ExitCode::kOkay;
+                return odrefresh_status;
+            case art::odrefresh::ExitCode::kOkay: {
+                // We have digests of all the files, so we can just sign them & save them now.
+                // We need to make sure we don't check them against odsign.info which will
+                // be out of date.
+                auto persisted = persistDigests(compos_digests, signing_key);
+                if (!persisted.ok()) {
+                    LOG(ERROR) << persisted.error();
+                    // Don't try to compile again - if we can't write the digests, things
+                    // are pretty bad.
+                    return art::odrefresh::ExitCode::kCleanupFailed;
+                }
+                LOG(INFO) << "Persisted CompOS digests.";
+                *digests_verified = true;
+                return odrefresh_status;
+            }
+            default:
+                return odrefresh_status;
             }
         }
     }
 
     // We can't use the existing artifacts, so we will need to generate new
     // ones.
-    removeDirectory(kArtArtifactsDir);
+    if (removeDirectory(kArtArtifactsDir) == 0) {
+        // We have unsigned artifacts that we can't delete, so it's not safe to continue.
+        LOG(ERROR) << "Unable to delete invalid CompOS artifacts";
+        return art::odrefresh::ExitCode::kCleanupFailed;
+    }
+
     return art::odrefresh::ExitCode::kCompilationRequired;
 }
 }  // namespace
