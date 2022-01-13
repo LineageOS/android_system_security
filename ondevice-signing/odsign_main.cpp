@@ -39,7 +39,6 @@
 
 using android::base::ErrnoError;
 using android::base::Error;
-using android::base::GetProperty;
 using android::base::Result;
 using android::base::SetProperty;
 
@@ -147,11 +146,6 @@ std::string toHex(const std::vector<uint8_t>& digest) {
 
 bool compOsPresent() {
     return access(kCompOsVerifyPath, X_OK) == 0 && access(kKvmDevicePath, F_OK) == 0;
-}
-
-bool isDebugBuild() {
-    std::string build_type = GetProperty("ro.build.type", "");
-    return build_type == "userdebug" || build_type == "eng";
 }
 
 Result<void> verifyExistingRootCert(const SigningKey& key) {
@@ -621,7 +615,7 @@ int main(int /* argc */, char** argv) {
         LOG(INFO) << "Device doesn't support fsverity. Falling back to full verification.";
     }
 
-    bool useCompOs = kUseCompOs && supportsFsVerity && compOsPresent() && isDebugBuild();
+    bool useCompOs = kUseCompOs && supportsFsVerity && compOsPresent();
 
     if (supportsFsVerity) {
         auto existing_cert = verifyExistingRootCert(*key);
