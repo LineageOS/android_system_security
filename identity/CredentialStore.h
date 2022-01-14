@@ -30,12 +30,14 @@ namespace identity {
 
 using ::android::sp;
 using ::android::binder::Status;
+using ::std::optional;
 using ::std::string;
 using ::std::unique_ptr;
 using ::std::vector;
 
 using ::android::hardware::identity::HardwareInformation;
 using ::android::hardware::identity::IIdentityCredentialStore;
+using ::android::hardware::identity::IPresentationSession;
 
 class CredentialStore : public BnCredentialStore {
   public:
@@ -43,6 +45,12 @@ class CredentialStore : public BnCredentialStore {
     ~CredentialStore();
 
     bool init();
+
+    // Used by both getCredentialByName() and Session::getCredential()
+    //
+    Status getCredentialCommon(const string& credentialName, int32_t cipherSuite,
+                               sp<IPresentationSession> halSessionBinder,
+                               sp<ICredential>* _aidl_return);
 
     // ICredentialStore overrides
     Status getSecurityHardwareInfo(SecurityHardwareInfoParcel* _aidl_return) override;
@@ -52,6 +60,8 @@ class CredentialStore : public BnCredentialStore {
 
     Status getCredentialByName(const string& credentialName, int32_t cipherSuite,
                                sp<ICredential>* _aidl_return) override;
+
+    Status createPresentationSession(int32_t cipherSuite, sp<ISession>* _aidl_return) override;
 
   private:
     string dataPath_;
