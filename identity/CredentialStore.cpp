@@ -25,6 +25,7 @@
 #include "Credential.h"
 #include "CredentialData.h"
 #include "CredentialStore.h"
+#include "Session.h"
 #include "Util.h"
 #include "WritableCredential.h"
 
@@ -95,7 +96,8 @@ Status CredentialStore::createCredential(const std::string& credentialName,
     return Status::ok();
 }
 
-Status CredentialStore::getCredentialByName(const std::string& credentialName, int32_t cipherSuite,
+Status CredentialStore::getCredentialCommon(const std::string& credentialName, int32_t cipherSuite,
+                                            sp<IPresentationSession> halSessionBinder,
                                             sp<ICredential>* _aidl_return) {
     *_aidl_return = nullptr;
 
@@ -113,8 +115,9 @@ Status CredentialStore::getCredentialByName(const std::string& credentialName, i
 
     // Note: IdentityCredentialStore.java's CipherSuite enumeration and CipherSuite from the
     // HAL is manually kept in sync. So this cast is safe.
-    sp<Credential> credential = new Credential(CipherSuite(cipherSuite), dataPath_, credentialName,
-                                               callingUid, hwInfo_, hal_, halApiVersion_);
+    sp<Credential> credential =
+        new Credential(CipherSuite(cipherSuite), dataPath_, credentialName, callingUid, hwInfo_,
+                       hal_, halSessionBinder, halApiVersion_);
 
     Status loadStatus = credential->ensureOrReplaceHalBinder();
     if (!loadStatus.isOk()) {
@@ -123,6 +126,23 @@ Status CredentialStore::getCredentialByName(const std::string& credentialName, i
         *_aidl_return = credential;
     }
     return loadStatus;
+}
+
+Status CredentialStore::getCredentialByName(const std::string& credentialName, int32_t cipherSuite,
+                                            sp<ICredential>* _aidl_return) {
+    return getCredentialCommon(credentialName, cipherSuite, nullptr, _aidl_return);
+}
+
+Status CredentialStore::createPresentationSession(int32_t cipherSuite, sp<ISession>* _aidl_return) {
+    sp<IPresentationSession> halPresentationSession;
+    Status status =
+        hal_->createPresentationSession(CipherSuite(cipherSuite), &halPresentationSession);
+    if (!status.isOk()) {
+        return halStatusToGenericError(status);
+    }
+
+    *_aidl_return = new Session(cipherSuite, halPresentationSession, this);
+    return Status::ok();
 }
 
 }  // namespace identity
