@@ -36,6 +36,7 @@ cc_binary {
         "WritableCredential.cpp",
         "Credential.cpp",
         "CredentialData.cpp",
+        "Session.cpp",
         "Util.cpp",
     ],
     init_rc: ["credstore.rc"],
@@ -52,10 +53,11 @@ cc_binary {
         "libkeymaster4support",
         "libkeystore-attestation-application-id",
         "android.security.authorization-ndk",
+        "libutilscallstack",
     ],
     static_libs: [
-        "android.hardware.identity-V3-cpp",
-        "android.hardware.keymaster-V3-cpp",
+        "android.hardware.identity-V4-cpp",
+        "android.hardware.keymaster-V4-cpp",
         "libcppbor_external",
     ],
 }
@@ -77,6 +79,7 @@ filegroup {
         "binder/android/security/identity/AuthKeyParcel.aidl",
         "binder/android/security/identity/SecurityHardwareInfoParcel.aidl",
         "binder/android/security/identity/ICredentialStoreFactory.aidl",
+        "binder/android/security/identity/ISession.aidl",
     ],
     path: "binder",
 }
