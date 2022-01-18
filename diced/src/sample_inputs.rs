@@ -134,7 +134,7 @@ fn make_input_values(
     hidden: &[u8; dice::HIDDEN_SIZE],
 ) -> Result<BinderInputValues> {
     Ok(BinderInputValues {
-        codeHash: code_hash.to_vec(),
+        codeHash: *code_hash,
         config: BinderConfig {
             desc: dice::bcc::format_config_descriptor(
                 Some(config_name),
@@ -143,9 +143,9 @@ fn make_input_values(
             )
             .context("In make_input_values: Failed to format config descriptor.")?,
         },
-        authorityHash: authority_hash.to_vec(),
+        authorityHash: *authority_hash,
         authorityDescriptor: None,
-        hidden: hidden.to_vec(),
+        hidden: *hidden,
         mode,
     })
 }

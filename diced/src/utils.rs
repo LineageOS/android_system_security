@@ -18,41 +18,20 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Bcc::Bcc, BccHandover::BccHandover, InputValues::InputValues as BinderInputValues,
     Mode::Mode as BinderMode,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use dice::ContextImpl;
 use diced_open_dice_cbor as dice;
 use keystore2_crypto::ZVec;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 
 /// This new type wraps a reference to BinderInputValues and implements the open dice
 /// InputValues trait.
 #[derive(Debug)]
 pub struct InputValues<'a>(&'a BinderInputValues);
 
-impl<'a> TryFrom<&'a BinderInputValues> for InputValues<'a> {
-    type Error = anyhow::Error;
-
-    fn try_from(input_values: &'a BinderInputValues) -> Result<InputValues<'a>> {
-        if input_values.codeHash.len() != dice::HASH_SIZE {
-            return Err(anyhow!(format!(
-                "In try_from: Code hash has invalid size: {}",
-                input_values.codeHash.len()
-            )));
-        }
-        if input_values.authorityHash.len() != dice::HASH_SIZE {
-            return Err(anyhow!(format!(
-                "In try_from: Authority hash has invalid size: {}",
-                input_values.authorityHash.len()
-            )));
-        }
-        if input_values.hidden.len() != dice::HIDDEN_SIZE {
-            return Err(anyhow!(format!(
-                "In try_from: Hidden has invalid size: {}",
-                input_values.hidden.len()
-            )));
-        }
-
-        Ok(Self(input_values))
+impl<'a> From<&'a BinderInputValues> for InputValues<'a> {
+    fn from(input_values: &'a BinderInputValues) -> InputValues<'a> {
+        Self(input_values)
     }
 }
 
@@ -69,8 +48,7 @@ impl From<InputValues<'_>> for BinderInputValues {
 
 impl dice::InputValues for InputValues<'_> {
     fn code_hash(&self) -> &[u8; dice::HASH_SIZE] {
-        // If `self` was created using try_from the length was checked and this cannot panic.
-        self.0.codeHash.as_slice().try_into().unwrap()
+        &self.0.codeHash
     }
 
     fn config(&self) -> dice::Config {
@@ -78,8 +56,7 @@ impl dice::InputValues for InputValues<'_> {
     }
 
     fn authority_hash(&self) -> &[u8; dice::HASH_SIZE] {
-        // If `self` was created using try_from the length was checked and this cannot panic.
-        self.0.authorityHash.as_slice().try_into().unwrap()
+        &self.0.authorityHash
     }
 
     fn authority_descriptor(&self) -> Option<&[u8]> {
@@ -98,7 +75,7 @@ impl dice::InputValues for InputValues<'_> {
 
     fn hidden(&self) -> &[u8; dice::HIDDEN_SIZE] {
         // If `self` was created using try_from the length was checked and this cannot panic.
-        self.0.hidden.as_slice().try_into().unwrap()
+        &self.0.hidden
     }
 }
 
@@ -109,11 +86,7 @@ pub fn make_bcc_handover(
     cdi_seal: &[u8; dice::CDI_SIZE],
     bcc: &[u8],
 ) -> Result<BccHandover> {
-    Ok(BccHandover {
-        cdiAttest: cdi_attest.to_vec(),
-        cdiSeal: cdi_seal.to_vec(),
-        bcc: Bcc { data: bcc.to_vec() },
-    })
+    Ok(BccHandover { cdiAttest: *cdi_attest, cdiSeal: *cdi_seal, bcc: Bcc { data: bcc.to_vec() } })
 }
 
 /// ResidentArtifacts stores a set of dice artifacts comprising CDI_ATTEST, CDI_SEAL,
@@ -404,94 +377,5 @@ pub mod cbor {
                 &[0b000_11011, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use android_hardware_security_dice::aidl::android::hardware::security::dice::{
-        Config::Config as BinderConfig, InputValues::InputValues as BinderInputValues,
-    };
-    use dice::InputValues as DiceInputValues;
-    use diced_open_dice_cbor as dice;
-
-    static CODE_HASH_TEST_VECTOR: [u8; dice::HASH_SIZE] = [1u8; dice::HASH_SIZE];
-    static CONFIG_DESCRIPTOR_TEST_VECTOR: &[u8] = &[3, 2, 1];
-    static AUTHORITY_HASH_TEST_VECTOR: [u8; dice::HASH_SIZE] = [3u8; dice::HASH_SIZE];
-    static AUTHORITY_DESCRIPTOR_TEST_VECTOR: &[u8] = &[1, 2, 3];
-    static HIDDEN_TEST_VECTOR: [u8; dice::HIDDEN_SIZE] = [4u8; dice::HIDDEN_SIZE];
-
-    #[test]
-    fn try_from_input_values_binder() {
-        let input_values_good = BinderInputValues {
-            codeHash: CODE_HASH_TEST_VECTOR.to_vec(),
-            config: BinderConfig { desc: CONFIG_DESCRIPTOR_TEST_VECTOR.to_vec() },
-            authorityHash: AUTHORITY_HASH_TEST_VECTOR.to_vec(),
-            authorityDescriptor: Some(AUTHORITY_DESCRIPTOR_TEST_VECTOR.to_vec()),
-            mode: BinderMode::NORMAL,
-            hidden: HIDDEN_TEST_VECTOR.to_vec(),
-        };
-
-        let converted_input_values: InputValues =
-            (&input_values_good).try_into().expect("This should succeed.");
-        assert_eq!(*converted_input_values.code_hash(), CODE_HASH_TEST_VECTOR);
-        assert_eq!(
-            converted_input_values.config(),
-            dice::Config::Descriptor(CONFIG_DESCRIPTOR_TEST_VECTOR)
-        );
-        assert_eq!(*converted_input_values.authority_hash(), AUTHORITY_HASH_TEST_VECTOR);
-        assert_eq!(
-            converted_input_values.authority_descriptor(),
-            Some(AUTHORITY_DESCRIPTOR_TEST_VECTOR)
-        );
-        assert_eq!(converted_input_values.mode(), dice::Mode::Normal);
-        assert_eq!(*converted_input_values.hidden(), HIDDEN_TEST_VECTOR);
-
-        // One more time without authority descriptor.
-        let input_values_still_good_without_authority_descriptor =
-            BinderInputValues { authorityDescriptor: None, ..input_values_good.clone() };
-
-        let converted_input_values: InputValues =
-            (&input_values_still_good_without_authority_descriptor)
-                .try_into()
-                .expect("This should succeed.");
-        assert_eq!(*converted_input_values.code_hash(), CODE_HASH_TEST_VECTOR);
-        assert_eq!(
-            converted_input_values.config(),
-            dice::Config::Descriptor(CONFIG_DESCRIPTOR_TEST_VECTOR)
-        );
-        assert_eq!(*converted_input_values.authority_hash(), AUTHORITY_HASH_TEST_VECTOR);
-        assert_eq!(converted_input_values.authority_descriptor(), None);
-        assert_eq!(converted_input_values.mode(), dice::Mode::Normal);
-        assert_eq!(*converted_input_values.hidden(), HIDDEN_TEST_VECTOR);
-
-        // Now check the failure cases.
-        // Wrong sized codeHash.
-        let input_values_bad_code_hash = BinderInputValues {
-            codeHash: vec![1u8; dice::HASH_SIZE + 1],
-            ..input_values_good.clone()
-        };
-
-        InputValues::try_from(&input_values_bad_code_hash)
-            .expect_err("Conversion of input values with wrong sized code hash succeeded.");
-
-        // Wrong sized authority hash.
-        let input_values_bad_authority_hash = BinderInputValues {
-            authorityHash: vec![1u8; dice::HASH_SIZE + 1],
-            ..input_values_good.clone()
-        };
-
-        InputValues::try_from(&input_values_bad_authority_hash)
-            .expect_err("Conversion of input values with wrong sized authority hash succeeded.");
-
-        // Wrong sized hidden.
-        let input_values_bad_hidden = BinderInputValues {
-            authorityHash: vec![1u8; dice::HASH_SIZE + 1],
-            ..input_values_good.clone()
-        };
-
-        InputValues::try_from(&input_values_bad_hidden)
-            .expect_err("Conversion of input values with wrong sized hidden succeeded.");
     }
 }
