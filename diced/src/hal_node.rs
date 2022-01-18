@@ -33,7 +33,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     InputValues::InputValues as BinderInputValues, Signature::Signature,
 };
 use anyhow::{Context, Result};
-use binder::public_api::{BinderFeatures, Result as BinderResult, Strong};
+use binder::{BinderFeatures, Result as BinderResult, Strong};
 use dice::{ContextImpl, OpenDiceCborContext};
 use diced_open_dice_cbor as dice;
 use diced_utils as utils;
