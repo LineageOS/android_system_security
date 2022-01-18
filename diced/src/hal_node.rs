@@ -188,7 +188,7 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Re
         run_forked(move || {
             let artifacts = artifacts.with_artifacts(|a| ResidentArtifacts::new_from(a))?;
             let input_values: Vec<utils::InputValues> =
-                input_values.iter().map(|v| v.try_into()).collect::<Result<_>>()?;
+                input_values.iter().map(|v| v.into()).collect();
             let artifacts = artifacts
                 .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
                 .context("In ResidentHal::get_effective_artifacts:")?;
@@ -280,7 +280,7 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
             let new_artifacts =
                 artifacts_clone.with_artifacts(|a| ResidentArtifacts::new_from(a))?;
             let input_values: Vec<utils::InputValues> =
-                input_values.iter().map(|v| v.try_into()).collect::<Result<_>>()?;
+                input_values.iter().map(|v| v.into()).collect();
 
             let new_artifacts = new_artifacts
                 .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
@@ -383,17 +383,21 @@ mod test {
         Ok(BinderInputValues {
             codeHash: dice_ctx
                 .hash(code.as_bytes())
-                .context("In make_input_values: code hash failed.")?,
+                .context("In make_input_values: code hash failed.")?
+                .as_slice()
+                .try_into()?,
             config: BinderConfig {
                 desc: dice::bcc::format_config_descriptor(Some(config_name), None, true)
                     .context("In make_input_values: Failed to format config descriptor.")?,
             },
             authorityHash: dice_ctx
                 .hash(authority.as_bytes())
-                .context("In make_input_values: authority hash failed.")?,
+                .context("In make_input_values: authority hash failed.")?
+                .as_slice()
+                .try_into()?,
             authorityDescriptor: None,
             mode: BinderMode::NORMAL,
-            hidden: vec![0; dice::HIDDEN_SIZE],
+            hidden: [0; dice::HIDDEN_SIZE],
         })
     }
 
@@ -411,8 +415,7 @@ mod test {
             make_input_values("component 3 code", "component 3", "component 3 authority")?,
         ];
 
-        let input_values: Vec<utils::InputValues> =
-            input_values.iter().map(|v| v.try_into()).collect::<Result<_>>()?;
+        let input_values: Vec<utils::InputValues> = input_values.iter().map(|v| v.into()).collect();
 
         let new_artifacts =
             artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))?;
