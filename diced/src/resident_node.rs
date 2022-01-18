@@ -66,8 +66,8 @@ impl ResidentNode {
             .map(|v| v.iter())
             .unwrap_or_else(|| client_arr.iter())
             .chain(input_values.iter())
-            .map(|v| v.try_into())
-            .collect::<Result<_>>()?;
+            .map(|v| v.into())
+            .collect();
 
         artifacts
             .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
