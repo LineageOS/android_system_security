@@ -124,6 +124,7 @@ rust_library {
 rust_binary {
     name: "diced",
     srcs: ["src/diced_main.rs"],
+    prefer_rlib: true,
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libandroid_logger",
