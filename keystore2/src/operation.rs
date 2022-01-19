@@ -493,7 +493,7 @@ impl OperationDb {
     /// owner uid and returns a new Operation wrapped in a `std::sync::Arc`.
     pub fn create_operation(
         &self,
-        km_op: binder::public_api::Strong<dyn IKeyMintOperation>,
+        km_op: binder::Strong<dyn IKeyMintOperation>,
         owner: u32,
         auth_info: AuthInfo,
         forced: bool,
@@ -771,9 +771,7 @@ impl KeystoreOperation {
     /// BnKeystoreOperation proxy object. It also enables
     /// `BinderFeatures::set_requesting_sid` on the new interface, because
     /// we need it for checking Keystore permissions.
-    pub fn new_native_binder(
-        operation: Arc<Operation>,
-    ) -> binder::public_api::Strong<dyn IKeystoreOperation> {
+    pub fn new_native_binder(operation: Arc<Operation>) -> binder::Strong<dyn IKeystoreOperation> {
         BnKeystoreOperation::new_binder(
             Self { operation: Mutex::new(Some(operation)) },
             BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
@@ -821,7 +819,7 @@ impl KeystoreOperation {
 impl binder::Interface for KeystoreOperation {}
 
 impl IKeystoreOperation for KeystoreOperation {
-    fn updateAad(&self, aad_input: &[u8]) -> binder::public_api::Result<()> {
+    fn updateAad(&self, aad_input: &[u8]) -> binder::Result<()> {
         let _wp = wd::watch_millis("IKeystoreOperation::updateAad", 500);
         map_or_log_err(
             self.with_locked_operation(
@@ -832,7 +830,7 @@ impl IKeystoreOperation for KeystoreOperation {
         )
     }
 
-    fn update(&self, input: &[u8]) -> binder::public_api::Result<Option<Vec<u8>>> {
+    fn update(&self, input: &[u8]) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch_millis("IKeystoreOperation::update", 500);
         map_or_log_err(
             self.with_locked_operation(
@@ -846,7 +844,7 @@ impl IKeystoreOperation for KeystoreOperation {
         &self,
         input: Option<&[u8]>,
         signature: Option<&[u8]>,
-    ) -> binder::public_api::Result<Option<Vec<u8>>> {
+    ) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch_millis("IKeystoreOperation::finish", 500);
         map_or_log_err(
             self.with_locked_operation(
@@ -857,7 +855,7 @@ impl IKeystoreOperation for KeystoreOperation {
         )
     }
 
-    fn abort(&self) -> binder::public_api::Result<()> {
+    fn abort(&self) -> binder::Result<()> {
         let _wp = wd::watch_millis("IKeystoreOperation::abort", 500);
         map_err_with(
             self.with_locked_operation(
