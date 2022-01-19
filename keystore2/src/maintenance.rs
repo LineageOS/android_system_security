@@ -158,7 +158,7 @@ impl Maintenance {
 
     fn call_with_watchdog<F>(sec_level: SecurityLevel, name: &'static str, op: &F) -> Result<()>
     where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::Result<()>,
+        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
     {
         let (km_dev, _, _) = get_keymint_device(&sec_level)
             .context("In call_with_watchdog: getting keymint device")?;
@@ -172,7 +172,7 @@ impl Maintenance {
 
     fn call_on_all_security_levels<F>(name: &'static str, op: F) -> Result<()>
     where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::Result<()>,
+        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
     {
         let sec_levels = [
             (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
