@@ -265,7 +265,7 @@ impl IKeystoreAuthorization for AuthorizationManager {
         challenge: i64,
         secure_user_id: i64,
         auth_token_max_age_millis: i64,
-    ) -> binder::Result<AuthorizationTokens> {
+    ) -> binder::public_api::Result<AuthorizationTokens> {
         let _wp = wd::watch_millis("IKeystoreAuthorization::getAuthTokensForCredStore", 500);
         map_or_log_err(
             self.get_auth_tokens_for_credstore(
