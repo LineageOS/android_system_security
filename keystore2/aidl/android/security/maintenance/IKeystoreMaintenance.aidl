@@ -23,8 +23,13 @@ import android.security.maintenance.UserState;
  * user's password.
  * @hide
  */
- @SensitiveData
+@SensitiveData
 interface IKeystoreMaintenance {
+
+    /**
+     * Special value indicating the callers uid.
+     */
+    const int UID_SELF = -1;
 
     /**
      * Allows LockSettingsService to inform keystore about adding a new user.
@@ -115,6 +120,10 @@ interface IKeystoreMaintenance {
      * The source may be specified by Domain::APP, Domain::SELINUX, or Domain::KEY_ID. The target
      * may be specified by Domain::APP or Domain::SELINUX.
      *
+     * If Domain::APP is selected in either source or destination, nspace must be set to UID_SELF,
+     * implying the caller's UID. If the caller has the MIGRATE_ANY_KEY permission, Domain::APP may
+     * be used with other nspace values which then indicates the UID of a different application.
+     *
      * ## Error conditions:
      * `ResponseCode::PERMISSION_DENIED` - If the caller lacks any of the required permissions.
      * `ResponseCode::KEY_NOT_FOUND` - If the source did not exist.
@@ -131,4 +140,22 @@ interface IKeystoreMaintenance {
      * Tag::ROLLBACK_RESISTANCE may or may not be rendered unusable.
      */
     void deleteAllKeys();
+
+    /**
+     * List all entries accessible by the caller in the given `domain` and `nspace`.
+     *
+     * Callers either has to have the `GET_INFO` permission for the requested namespace or `LIST`
+     * permission to list all the entries.
+     *
+     * ## Error conditions
+     * `ResponseCode::INVALID_ARGUMENT` if `domain` is other than `Domain::APP` or `Domain::SELINUX`
+     * `ResponseCode::PERMISSION_DENIED` if the caller does not have the permission
+     *
+     * @param domain `Domain::APP` or `Domain::SELINUX`.
+     *
+     * @param nspace The SELinux keystore2_key namespace.
+     *
+     * @return List of KeyDescriptors.
+     */
+    KeyDescriptor[] listEntries(in Domain domain, in long nspace);
 }
