@@ -30,7 +30,7 @@ use android_security_dice::aidl::android::security::dice::{
     IDiceNode::IDiceNode, ResponseCode::ResponseCode,
 };
 use anyhow::{Context, Result};
-use binder::{BinderFeatures, Result as BinderResult, Strong, ThreadState};
+use binder::{public_api::Result as BinderResult, BinderFeatures, Strong, ThreadState};
 pub use diced_open_dice_cbor as dice;
 use error::{map_or_log_err, Error};
 use keystore2_selinux as selinux;

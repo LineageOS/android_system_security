@@ -23,7 +23,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     InputValues::InputValues as BinderInputValues, Signature::Signature,
 };
 use anyhow::{Context, Result};
-use binder::Strong;
+use binder::public_api::Strong;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
