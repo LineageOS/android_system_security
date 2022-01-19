@@ -22,7 +22,7 @@ use crate::permission::{KeyPerm, KeystorePerm};
 use crate::security_level::KeystoreSecurityLevel;
 use crate::utils::{
     check_grant_permission, check_key_permission, check_keystore_permission,
-    key_parameters_to_authorizations, watchdog as wd,
+    key_parameters_to_authorizations, list_key_entries, watchdog as wd,
 };
 use crate::{
     database::Uuid,
@@ -286,22 +286,7 @@ impl KeystoreService {
             Ok(()) => {}
         };
 
-        let mut result = LEGACY_MIGRATOR
-            .list_uid(k.domain, k.nspace)
-            .context("In list_entries: Trying to list legacy keys.")?;
-
-        result.append(
-            &mut DB
-                .with(|db| {
-                    let mut db = db.borrow_mut();
-                    db.list(k.domain, k.nspace, KeyType::Client)
-                })
-                .context("In list_entries: Trying to list keystore database.")?,
-        );
-
-        result.sort_unstable();
-        result.dedup();
-        Ok(result)
+        DB.with(|db| list_key_entries(&mut db.borrow_mut(), k.domain, k.nspace))
     }
 
     fn delete_key(&self, key: &KeyDescriptor) -> Result<()> {
