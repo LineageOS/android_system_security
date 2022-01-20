@@ -15,6 +15,7 @@
 //! This module implements IKeystoreAuthorization AIDL interface.
 
 use crate::error::Error as KeystoreError;
+use crate::error::anyhow_error_to_cstring;
 use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_MIGRATOR};
 use crate::permission::KeystorePerm;
 use crate::super_key::UserState;
@@ -88,7 +89,10 @@ where
                     // as well.
                     _ => ResponseCode::SYSTEM_ERROR.0,
                 };
-                return Err(BinderStatus::new_service_specific_error(rc, None));
+                return Err(BinderStatus::new_service_specific_error(
+                    rc,
+                    anyhow_error_to_cstring(&e).as_deref(),
+                ));
             }
             let rc = match root_cause.downcast_ref::<Error>() {
                 Some(Error::Rc(rcode)) => rcode.0,
@@ -98,7 +102,10 @@ where
                     _ => ResponseCode::SYSTEM_ERROR.0,
                 },
             };
-            Err(BinderStatus::new_service_specific_error(rc, None))
+            Err(BinderStatus::new_service_specific_error(
+                rc,
+                anyhow_error_to_cstring(&e).as_deref(),
+            ))
         },
         handle_ok,
     )
