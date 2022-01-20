@@ -18,6 +18,10 @@
 use crate::error::{map_binder_status, Error, ErrorCode};
 use crate::permission;
 use crate::permission::{KeyPerm, KeyPermSet, KeystorePerm};
+use crate::{
+    database::{KeyType, KeystoreDB},
+    globals::LEGACY_MIGRATOR,
+};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     KeyCharacteristics::KeyCharacteristics, Tag::Tag,
 };
@@ -27,9 +31,9 @@ use android_security_apc::aidl::android::security::apc::{
     ResponseCode::ResponseCode as ApcResponseCode,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    Authorization::Authorization, KeyDescriptor::KeyDescriptor,
+    Authorization::Authorization, Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use binder::{Strong, ThreadState};
 use keystore2_apc_compat::{
     ApcCompatUiOptions, APC_COMPAT_ERROR_ABORTED, APC_COMPAT_ERROR_CANCELLED,
@@ -197,6 +201,28 @@ pub const AID_KEYSTORE: u32 = rustutils::users::AID_KEYSTORE;
 /// Extracts the android user from the given uid.
 pub fn uid_to_android_user(uid: u32) -> u32 {
     rustutils::users::multiuser_get_user_id(uid)
+}
+
+/// List all key aliases for a given domain + namespace.
+pub fn list_key_entries(
+    db: &mut KeystoreDB,
+    domain: Domain,
+    namespace: i64,
+) -> Result<Vec<KeyDescriptor>> {
+    let mut result = Vec::new();
+    result.append(
+        &mut LEGACY_MIGRATOR
+            .list_uid(domain, namespace)
+            .context("In list_key_entries: Trying to list legacy keys.")?,
+    );
+    result.append(
+        &mut db
+            .list(domain, namespace, KeyType::Client)
+            .context("In list_key_entries: Trying to list keystore database.")?,
+    );
+    result.sort_unstable();
+    result.dedup();
+    Ok(result)
 }
 
 /// This module provides helpers for simplified use of the watchdog module.
