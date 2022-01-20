@@ -489,7 +489,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         &self,
         expired_by: i64,
         sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<AttestationPoolStatus> {
+    ) -> binder::Result<AttestationPoolStatus> {
         let _wp = wd::watch_millis("IRemoteProvisioning::getPoolStatus", 500);
         map_or_log_err(get_pool_status(expired_by, sec_level), Ok)
     }
@@ -503,7 +503,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         sec_level: SecurityLevel,
         protected_data: &mut ProtectedData,
         device_info: &mut DeviceInfo,
-    ) -> binder::public_api::Result<Vec<u8>> {
+    ) -> binder::Result<Vec<u8>> {
         let _wp = wd::watch_millis("IRemoteProvisioning::generateCsr", 500);
         map_or_log_err(
             self.generate_csr(
@@ -526,7 +526,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         certs: &[u8],
         expiration_date: i64,
         sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<()> {
+    ) -> binder::Result<()> {
         let _wp = wd::watch_millis("IRemoteProvisioning::provisionCertChain", 500);
         map_or_log_err(
             self.provision_cert_chain(public_key, batch_cert, certs, expiration_date, sec_level),
@@ -534,21 +534,17 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         )
     }
 
-    fn generateKeyPair(
-        &self,
-        is_test_mode: bool,
-        sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<()> {
+    fn generateKeyPair(&self, is_test_mode: bool, sec_level: SecurityLevel) -> binder::Result<()> {
         let _wp = wd::watch_millis("IRemoteProvisioning::generateKeyPair", 500);
         map_or_log_err(self.generate_key_pair(is_test_mode, sec_level), Ok)
     }
 
-    fn getImplementationInfo(&self) -> binder::public_api::Result<Vec<ImplInfo>> {
+    fn getImplementationInfo(&self) -> binder::Result<Vec<ImplInfo>> {
         let _wp = wd::watch_millis("IRemoteProvisioning::getSecurityLevels", 500);
         map_or_log_err(self.get_implementation_info(), Ok)
     }
 
-    fn deleteAllKeys(&self) -> binder::public_api::Result<i64> {
+    fn deleteAllKeys(&self) -> binder::Result<i64> {
         let _wp = wd::watch_millis("IRemoteProvisioning::deleteAllKeys", 500);
         map_or_log_err(self.delete_all_keys(), Ok)
     }

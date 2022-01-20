@@ -14,9 +14,7 @@
 
 use android_hardware_security_dice::aidl::android::hardware::security::dice::ResponseCode::ResponseCode;
 use anyhow::Result;
-use binder::public_api::{
-    ExceptionCode, Result as BinderResult, Status as BinderStatus, StatusCode,
-};
+use binder::{ExceptionCode, Result as BinderResult, Status as BinderStatus, StatusCode};
 use std::ffi::CString;
 
 /// This is the error type for DICE HAL implementations. It wraps
