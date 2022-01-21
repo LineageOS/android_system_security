@@ -166,6 +166,7 @@ rust_binary {
         "liblegacykeystore-rust",
         "librusqlite",
     ],
+    afdo: true,
 }
 
 // Variant of keystore2 for use in microdroid. It doesn't depend on the ICU-enabled sqlite.
