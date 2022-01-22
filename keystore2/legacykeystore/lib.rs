@@ -25,8 +25,8 @@ use android_security_legacykeystore::binder::{
 };
 use anyhow::{Context, Result};
 use keystore2::{
-    async_task::AsyncTask, legacy_blob::LegacyBlobLoader, maintenance::DeleteListener,
-    maintenance::Domain, utils::watchdog as wd,
+    async_task::AsyncTask, error::anyhow_error_to_cstring, legacy_blob::LegacyBlobLoader,
+    maintenance::DeleteListener, maintenance::Domain, utils::watchdog as wd,
 };
 use rusqlite::{
     params, Connection, OptionalExtension, Transaction, TransactionBehavior, NO_PARAMS,
@@ -226,7 +226,10 @@ where
             if log_error {
                 log::error!("{:?}", e);
             }
-            Err(BinderStatus::new_service_specific_error(rc, None))
+            Err(BinderStatus::new_service_specific_error(
+                rc,
+                anyhow_error_to_cstring(&e).as_deref(),
+            ))
         },
         handle_ok,
     )

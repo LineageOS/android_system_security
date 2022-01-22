@@ -14,9 +14,7 @@
 
 use android_security_dice::aidl::android::security::dice::ResponseCode::ResponseCode;
 use anyhow::Result;
-use binder::{
-    public_api::Result as BinderResult, ExceptionCode, Status as BinderStatus, StatusCode,
-};
+use binder::{ExceptionCode, Result as BinderResult, Status as BinderStatus, StatusCode};
 use keystore2_selinux as selinux;
 use std::ffi::CString;
 
