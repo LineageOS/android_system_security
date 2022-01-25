@@ -67,9 +67,14 @@ impl Error {
         Error::Rc(ResponseCode::SYSTEM_ERROR)
     }
 
-    /// Short hand for `Error::Rc(ResponseCode::PERMISSION_DENIED`
+    /// Short hand for `Error::Rc(ResponseCode::PERMISSION_DENIED)`
     pub fn perm() -> Self {
         Error::Rc(ResponseCode::PERMISSION_DENIED)
+    }
+
+    /// Short hand for `Error::Rc(ResponseCode::OUT_OF_KEYS)`
+    pub fn out_of_keys() -> Self {
+        Error::Rc(ResponseCode::OUT_OF_KEYS)
     }
 }
 
