@@ -22,7 +22,9 @@ use crate::globals::get_keymint_device;
 use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::UserState;
-use crate::utils::{check_key_permission, check_keystore_permission, watchdog as wd};
+use crate::utils::{
+    check_key_permission, check_keystore_permission, uid_to_android_user, watchdog as wd,
+};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::IKeyMintDevice::IKeyMintDevice;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_security_maintenance::aidl::android::security::maintenance::{
@@ -219,11 +221,13 @@ impl Maintenance {
     fn migrate_key_namespace(source: &KeyDescriptor, destination: &KeyDescriptor) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
 
+        let super_key = SUPER_KEY.get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+
         DB.with(|db| {
             let key_id_guard = match source.domain {
                 Domain::APP | Domain::SELINUX | Domain::KEY_ID => {
                     let (key_id_guard, _) = LEGACY_IMPORTER
-                        .with_try_import(&source, caller_uid, || {
+                        .with_try_import(&source, caller_uid, super_key, || {
                             db.borrow_mut().load_key_entry(
                                 &source,
                                 KeyType::Client,

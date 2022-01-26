@@ -18,7 +18,7 @@ use crate::attestation_key_utils::{get_attest_key_info, AttestationKeyInfo};
 use crate::audit_log::{
     log_key_deleted, log_key_generated, log_key_imported, log_key_integrity_violation,
 };
-use crate::database::{CertificateInfo, KeyIdGuard};
+use crate::database::{BlobInfo, CertificateInfo, KeyIdGuard};
 use crate::error::{self, map_km_error, map_or_log_err, Error, ErrorCode};
 use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
 use crate::key_parameter::KeyParameter as KsKeyParam;
@@ -180,7 +180,7 @@ impl KeystoreSecurityLevel {
                             &key,
                             KeyType::Client,
                             &key_parameters,
-                            &(&key_blob, &blob_metadata),
+                            &BlobInfo::new(&key_blob, &blob_metadata),
                             &cert_info,
                             &key_metadata,
                             &self.km_uuid,
@@ -241,9 +241,11 @@ impl KeystoreSecurityLevel {
                 )
             }
             _ => {
+                let super_key =
+                    SUPER_KEY.get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
                 let (key_id_guard, mut key_entry) = DB
                     .with::<_, Result<(KeyIdGuard, KeyEntry)>>(|db| {
-                        LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
+                        LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                             db.borrow_mut().load_key_entry(
                                 &key,
                                 KeyType::Client,
@@ -717,9 +719,11 @@ impl KeystoreSecurityLevel {
         // Import_wrapped_key requires the rebind permission for the new key.
         check_key_permission(KeyPerm::rebind(), &key, &None).context("In import_wrapped_key.")?;
 
+        let super_key = SUPER_KEY.get_per_boot_key_by_user_id(user_id);
+
         let (wrapping_key_id_guard, mut wrapping_key_entry) = DB
             .with(|db| {
-                LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
+                LEGACY_IMPORTER.with_try_import(&key, caller_uid, super_key, || {
                     db.borrow_mut().load_key_entry(
                         &wrapping_key,
                         KeyType::Client,
@@ -823,7 +827,7 @@ impl KeystoreSecurityLevel {
     fn upgrade_keyblob_if_required_with<T, F>(
         &self,
         km_dev: &dyn IKeyMintDevice,
-        key_id_guard: Option<KeyIdGuard>,
+        mut key_id_guard: Option<KeyIdGuard>,
         key_blob: &KeyBlob,
         blob_metadata: &BlobMetaData,
         params: &[KeyParameter],
@@ -832,60 +836,42 @@ impl KeystoreSecurityLevel {
     where
         F: Fn(&[u8]) -> Result<T, Error>,
     {
-        match f(key_blob) {
-            Err(Error::Km(ErrorCode::KEY_REQUIRES_UPGRADE)) => {
-                let upgraded_blob = {
-                    let _wp = self.watch_millis(
-                        concat!(
-                            "In KeystoreSecurityLevel::upgrade_keyblob_if_required_with: ",
-                            "calling upgradeKey."
-                        ),
-                        500,
-                    );
-                    map_km_error(km_dev.upgradeKey(key_blob, params))
-                }
-                .context("In upgrade_keyblob_if_required_with: Upgrade failed.")?;
-
-                if let Some(kid) = key_id_guard {
+        let (v, upgraded_blob) = crate::utils::upgrade_keyblob_if_required_with(
+            km_dev,
+            key_blob,
+            params,
+            f,
+            |upgraded_blob| {
+                if key_id_guard.is_some() {
+                    // Unwrap cannot panic, because the is_some was true.
+                    let kid = key_id_guard.take().unwrap();
                     Self::store_upgraded_keyblob(
                         kid,
                         blob_metadata.km_uuid(),
                         key_blob,
-                        &upgraded_blob,
+                        upgraded_blob,
                     )
-                    .context(
-                        "In upgrade_keyblob_if_required_with: store_upgraded_keyblob failed",
-                    )?;
+                    .context("In upgrade_keyblob_if_required_with: store_upgraded_keyblob failed")
+                } else {
+                    Ok(())
                 }
+            },
+        )
+        .context("In KeystoreSecurityLevel::upgrade_keyblob_if_required_with.")?;
 
-                match f(&upgraded_blob) {
-                    Ok(v) => Ok((v, Some(upgraded_blob))),
-                    Err(e) => Err(e).context(concat!(
+        // If no upgrade was needed, use the opportunity to reencrypt the blob if required
+        // and if the a key_id_guard is held. Note: key_id_guard can only be Some if no
+        // upgrade was performed above and if one was given in the first place.
+        if key_blob.force_reencrypt() {
+            if let Some(kid) = key_id_guard {
+                Self::store_upgraded_keyblob(kid, blob_metadata.km_uuid(), key_blob, key_blob)
+                    .context(concat!(
                         "In upgrade_keyblob_if_required_with: ",
-                        "Failed to perform operation on second try."
-                    )),
-                }
-            }
-            result => {
-                if let Some(kid) = key_id_guard {
-                    if key_blob.force_reencrypt() {
-                        Self::store_upgraded_keyblob(
-                            kid,
-                            blob_metadata.km_uuid(),
-                            key_blob,
-                            key_blob,
-                        )
-                        .context(concat!(
-                            "In upgrade_keyblob_if_required_with: ",
-                            "store_upgraded_keyblob failed in forced reencrypt"
-                        ))?;
-                    }
-                }
-                result
-                    .map(|v| (v, None))
-                    .context("In upgrade_keyblob_if_required_with: Called closure failed.")
+                        "store_upgraded_keyblob failed in forced reencrypt"
+                    ))?;
             }
         }
+        Ok((v, upgraded_blob))
     }
 
     fn convert_storage_key_to_ephemeral(
