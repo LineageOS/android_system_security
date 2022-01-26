@@ -3207,7 +3207,7 @@ impl KeystoreDB {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use super::*;
     use crate::key_parameter::{
@@ -3237,7 +3237,7 @@ mod tests {
     #[cfg(disabled)]
     use std::time::Instant;
 
-    fn new_test_db() -> Result<KeystoreDB> {
+    pub fn new_test_db() -> Result<KeystoreDB> {
         let conn = KeystoreDB::make_connection("file::memory:")?;
 
         let mut db = KeystoreDB { conn, gc: None, perboot: Arc::new(perboot::PerbootDB::new()) };
