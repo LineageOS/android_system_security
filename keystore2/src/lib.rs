@@ -46,6 +46,7 @@ pub mod utils;
 mod attestation_key_utils;
 mod audit_log;
 mod gc;
+mod km_compat;
 mod super_key;
 
 #[cfg(feature = "watchdog")]
