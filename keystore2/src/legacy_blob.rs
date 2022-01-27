@@ -1340,7 +1340,7 @@ mod test {
             CACERT_NON_AUTHBOUND,
         )?;
 
-        let key_manager: SuperKeyManager = Default::default();
+        let mut key_manager: SuperKeyManager = Default::default();
         let mut db = crate::database::KeystoreDB::new(temp_dir.path(), None)?;
         let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
 
