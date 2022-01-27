@@ -156,7 +156,7 @@ lazy_static! {
     pub static ref DB_PATH: RwLock<PathBuf> = RwLock::new(
         Path::new("/data/misc/keystore").to_path_buf());
     /// Runtime database of unwrapped super keys.
-    pub static ref SUPER_KEY: Arc<SuperKeyManager> = Default::default();
+    pub static ref SUPER_KEY: Arc<RwLock<SuperKeyManager>> = Default::default();
     /// Map of KeyMint devices.
     static ref KEY_MINT_DEVICES: Mutex<DevicesMap<dyn IKeyMintDevice>> = Default::default();
     /// Timestamp service.
