@@ -21,7 +21,7 @@ use crate::error::Error;
 use crate::globals::get_keymint_device;
 use crate::globals::{DB, LEGACY_MIGRATOR, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
-use crate::super_key::UserState;
+use crate::super_key::{SuperKeyManager, UserState};
 use crate::utils::{
     check_key_permission, check_keystore_permission, list_key_entries, watchdog as wd,
 };
@@ -70,24 +70,25 @@ impl Maintenance {
     }
 
     fn on_user_password_changed(user_id: i32, password: Option<Password>) -> Result<()> {
-        //Check permission. Function should return if this failed. Therefore having '?' at the end
-        //is very important.
+        // Check permission. Function should return if this failed. Therefore having '?' at the end
+        // is very important.
         check_keystore_permission(KeystorePerm::ChangePassword)
             .context("In on_user_password_changed.")?;
 
+        let mut skm = SUPER_KEY.write().unwrap();
+
         if let Some(pw) = password.as_ref() {
             DB.with(|db| {
-                SUPER_KEY.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
+                skm.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
             })
             .context("In on_user_password_changed: unlock_screen_lock_bound_key failed")?;
         }
 
         match DB
             .with(|db| {
-                UserState::get_with_password_changed(
+                skm.reset_or_init_user_and_get_user_state(
                     &mut db.borrow_mut(),
                     &LEGACY_MIGRATOR,
-                    &SUPER_KEY,
                     user_id as u32,
                     password.as_ref(),
                 )
@@ -110,10 +111,10 @@ impl Maintenance {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
         check_keystore_permission(KeystorePerm::ChangeUser).context("In add_or_remove_user.")?;
+
         DB.with(|db| {
-            UserState::reset_user(
+            SUPER_KEY.write().unwrap().reset_user(
                 &mut db.borrow_mut(),
-                &SUPER_KEY,
                 &LEGACY_MIGRATOR,
                 user_id as u32,
                 false,
@@ -145,7 +146,11 @@ impl Maintenance {
         check_keystore_permission(KeystorePerm::GetState).context("In get_state.")?;
         let state = DB
             .with(|db| {
-                UserState::get(&mut db.borrow_mut(), &LEGACY_MIGRATOR, &SUPER_KEY, user_id as u32)
+                SUPER_KEY.read().unwrap().get_user_state(
+                    &mut db.borrow_mut(),
+                    &LEGACY_MIGRATOR,
+                    user_id as u32,
+                )
             })
             .context("In get_state. Trying to get UserState.")?;
 
@@ -202,7 +207,9 @@ impl Maintenance {
             .context("In early_boot_ended. Checking permission")?;
         log::info!("In early_boot_ended.");
 
-        if let Err(e) = DB.with(|db| SUPER_KEY.set_up_boot_level_cache(&mut db.borrow_mut())) {
+        if let Err(e) =
+            DB.with(|db| SuperKeyManager::set_up_boot_level_cache(&SUPER_KEY, &mut db.borrow_mut()))
+        {
             log::error!("SUPER_KEY.set_up_boot_level_cache failed:\n{:?}\n:(", e);
         }
         Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded())
