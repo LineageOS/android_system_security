@@ -76,15 +76,6 @@ rust_library {
 }
 
 rust_library {
-    name: "libkeystore2_noicu",
-    defaults: ["libkeystore2_defaults"],
-    rustlibs: [
-        "liblibsqlite3_sys_noicu",
-        "librusqlite_noicu",
-    ],
-}
-
-rust_library {
     name: "libkeystore2_test_utils",
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
