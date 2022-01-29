@@ -602,7 +602,7 @@ impl Enforcements {
         }
 
         if let Some(level) = max_boot_level {
-            if !SUPER_KEY.level_accessible(level) {
+            if !SUPER_KEY.read().unwrap().level_accessible(level) {
                 return Err(Error::Km(Ec::BOOT_LEVEL_EXCEEDED))
                     .context("In authorize_create: boot level is too late.");
             }

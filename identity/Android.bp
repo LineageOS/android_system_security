@@ -27,6 +27,7 @@ cc_binary {
     defaults: [
         "identity_defaults",
         "keymint_use_latest_hal_aidl_ndk_shared",
+        "keymint_use_latest_hal_aidl_cpp_static",
     ],
 
     srcs: [

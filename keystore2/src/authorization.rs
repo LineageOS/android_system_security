@@ -154,8 +154,10 @@ impl AuthorizationManager {
                     .context("In on_lock_screen_event: Unlock with password.")?;
                 ENFORCEMENTS.set_device_locked(user_id, false);
 
+                let mut skm = SUPER_KEY.write().unwrap();
+
                 DB.with(|db| {
-                    SUPER_KEY.unlock_screen_lock_bound_key(
+                    skm.unlock_screen_lock_bound_key(
                         &mut db.borrow_mut(),
                         user_id as u32,
                         &password,
@@ -166,10 +168,9 @@ impl AuthorizationManager {
                 // Unlock super key.
                 if let UserState::Uninitialized = DB
                     .with(|db| {
-                        UserState::get_with_password_unlock(
+                        skm.unlock_and_get_user_state(
                             &mut db.borrow_mut(),
                             &LEGACY_MIGRATOR,
-                            &SUPER_KEY,
                             user_id as u32,
                             &password,
                         )
@@ -187,8 +188,9 @@ impl AuthorizationManager {
                 check_keystore_permission(KeystorePerm::Unlock)
                     .context("In on_lock_screen_event: Unlock.")?;
                 ENFORCEMENTS.set_device_locked(user_id, false);
+                let mut skm = SUPER_KEY.write().unwrap();
                 DB.with(|db| {
-                    SUPER_KEY.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32)
+                    skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32)
                 })
                 .context("In on_lock_screen_event: try_unlock_user_with_biometric failed")?;
                 Ok(())
@@ -197,8 +199,9 @@ impl AuthorizationManager {
                 check_keystore_permission(KeystorePerm::Lock)
                     .context("In on_lock_screen_event: Lock")?;
                 ENFORCEMENTS.set_device_locked(user_id, true);
+                let mut skm = SUPER_KEY.write().unwrap();
                 DB.with(|db| {
-                    SUPER_KEY.lock_screen_lock_bound_key(
+                    skm.lock_screen_lock_bound_key(
                         &mut db.borrow_mut(),
                         user_id as u32,
                         unlocking_sids.unwrap_or(&[]),
