@@ -47,15 +47,6 @@ rust_library {
     ],
 }
 
-rust_library {
-    name: "liblegacykeystore-rust_noicu",
-    defaults: ["liblegacykeystore-rust_defaults"],
-    rustlibs: [
-        "libkeystore2_noicu",
-        "librusqlite_noicu",
-    ],
-}
-
 rust_test {
     name: "legacykeystore_test",
     crate_name: "legacykeystore",
