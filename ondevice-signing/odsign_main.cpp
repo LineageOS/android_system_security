@@ -503,7 +503,8 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
                                                      const SigningKey& signing_key,
                                                      bool* digests_verified) {
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
-        return art::odrefresh::ExitCode::kCompilationRequired;
+        // No pending CompOS artifacts, all that matters is the current ones.
+        return checkArtifacts();
     }
 
     // CompOS has generated some artifacts that may, or may not, match the
@@ -654,8 +655,8 @@ int main(int /* argc */, char** argv) {
     if (useCompOs) {
         auto compos_key = addCompOsCertToFsVerityKeyring(*key);
         if (!compos_key.ok()) {
-            odrefresh_status = art::odrefresh::ExitCode::kCompilationRequired;
             LOG(WARNING) << compos_key.error();
+            odrefresh_status = checkArtifacts();
         } else {
             odrefresh_status =
                 checkCompOsPendingArtifacts(compos_key.value(), *key, &digests_verified);
