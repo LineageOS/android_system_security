@@ -21,8 +21,8 @@
 #include <vector>
 
 #include <android/hardware/identity/IIdentityCredentialStore.h>
-
 #include <android/security/identity/BnCredentialStore.h>
+#include <android/security/remoteprovisioning/IRemotelyProvisionedKeyPool.h>
 
 namespace android {
 namespace security {
@@ -38,6 +38,8 @@ using ::std::vector;
 using ::android::hardware::identity::HardwareInformation;
 using ::android::hardware::identity::IIdentityCredentialStore;
 using ::android::hardware::identity::IPresentationSession;
+using ::android::hardware::identity::IWritableIdentityCredential;
+using ::android::security::remoteprovisioning::IRemotelyProvisionedKeyPool;
 
 class CredentialStore : public BnCredentialStore {
   public:
@@ -64,10 +66,14 @@ class CredentialStore : public BnCredentialStore {
     Status createPresentationSession(int32_t cipherSuite, sp<ISession>* _aidl_return) override;
 
   private:
+    Status setRemotelyProvisionedAttestationKey(IWritableIdentityCredential* halWritableCredential);
+
     string dataPath_;
 
     sp<IIdentityCredentialStore> hal_;
     int halApiVersion_;
+
+    sp<IRemotelyProvisionedKeyPool> keyPool_;
 
     HardwareInformation hwInfo_;
 };
