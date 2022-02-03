@@ -31,6 +31,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 use android_security_remoteprovisioning::aidl::android::security::remoteprovisioning::{
     AttestationPoolStatus::AttestationPoolStatus, IRemoteProvisioning::BnRemoteProvisioning,
     IRemoteProvisioning::IRemoteProvisioning,
+    IRemotelyProvisionedKeyPool::BnRemotelyProvisionedKeyPool,
     IRemotelyProvisionedKeyPool::IRemotelyProvisionedKeyPool, ImplInfo::ImplInfo,
     RemotelyProvisionedKey::RemotelyProvisionedKey,
 };
@@ -181,22 +182,6 @@ impl RemoteProvisioningService {
                 " not found."
             ))
         }
-    }
-
-    fn get_dev_by_unique_id(
-        &self,
-        unique_id: &str,
-    ) -> Result<(SecurityLevel, &dyn IRemotelyProvisionedComponent)> {
-        for (sec_level, dev) in &self.device_by_sec_level {
-            if dev.getHardwareInfo()?.uniqueId == Some(unique_id.to_string()) {
-                return Ok((*sec_level, dev.as_ref()));
-            }
-        }
-
-        Err(error::Error::sys()).context(format!(
-            "In get_dev_by_unique_id: Instance for requested unique id '{}' not found",
-            unique_id
-        ))
     }
 
     /// Creates a new instance of the remote provisioning service
@@ -421,35 +406,6 @@ impl RemoteProvisioningService {
             db.delete_all_attestation_keys()
         })
     }
-
-    /// Fetches a remotely provisioned certificate chain and key for the given client uid that
-    /// was provisioned using the IRemotelyProvisionedComponent with the given id. The same key
-    /// will be returned for a given caller_uid on every request. If there are no attestation keys
-    /// available, `OUT_OF_KEYS` is returned.
-    fn get_attestation_key(
-        &self,
-        db: &mut KeystoreDB,
-        caller_uid: i32,
-        irpc_id: &str,
-    ) -> Result<RemotelyProvisionedKey> {
-        log::info!("get_attestation_key(self, {}, {}", caller_uid, irpc_id);
-
-        let (sec_level, _) = self.get_dev_by_unique_id(irpc_id)?;
-        let (_, _, km_uuid) = get_keymint_device(&sec_level)?;
-
-        let cert_chain = get_rem_prov_attest_key(Domain::APP, caller_uid as u32, db, &km_uuid)
-            .context("In get_attestation_key")?;
-        match cert_chain {
-            Some(chain) => Ok(RemotelyProvisionedKey {
-                keyBlob: chain.private_key.to_vec(),
-                encodedCertChain: chain.cert_chain,
-            }),
-            // It should be impossible to get `None`, but handle it just in case as a
-            // precaution against future behavioral changes in `get_rem_prov_attest_key`.
-            None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS))
-                .context("In get_attestation_key: No available attestation keys"),
-        }
-    }
 }
 
 /// Populates the AttestationPoolStatus parcelable with information about how many
@@ -616,9 +572,86 @@ impl IRemoteProvisioning for RemoteProvisioningService {
     }
 }
 
+/// Implementation of the IRemotelyProvisionedKeyPool service.
+#[derive(Default)]
+pub struct RemotelyProvisionedKeyPoolService {
+    unique_id_to_sec_level: HashMap<String, SecurityLevel>,
+}
+
+impl RemotelyProvisionedKeyPoolService {
+    /// Fetches a remotely provisioned certificate chain and key for the given client uid that
+    /// was provisioned using the IRemotelyProvisionedComponent with the given id. The same key
+    /// will be returned for a given caller_uid on every request. If there are no attestation keys
+    /// available, `OUT_OF_KEYS` is returned.
+    fn get_attestation_key(
+        &self,
+        db: &mut KeystoreDB,
+        caller_uid: i32,
+        irpc_id: &str,
+    ) -> Result<RemotelyProvisionedKey> {
+        log::info!("get_attestation_key(self, {}, {}", caller_uid, irpc_id);
+
+        let sec_level = self
+            .unique_id_to_sec_level
+            .get(irpc_id)
+            .ok_or(Error::Rc(ResponseCode::INVALID_ARGUMENT))
+            .context(format!("In get_attestation_key: unknown irpc id '{}'", irpc_id))?;
+        let (_, _, km_uuid) = get_keymint_device(sec_level)?;
+
+        let cert_chain = get_rem_prov_attest_key(Domain::APP, caller_uid as u32, db, &km_uuid)
+            .context("In get_attestation_key")?;
+        match cert_chain {
+            Some(chain) => Ok(RemotelyProvisionedKey {
+                keyBlob: chain.private_key.to_vec(),
+                encodedCertChain: chain.cert_chain,
+            }),
+            // It should be impossible to get `None`, but handle it just in case as a
+            // precaution against future behavioral changes in `get_rem_prov_attest_key`.
+            None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS))
+                .context("In get_attestation_key: No available attestation keys"),
+        }
+    }
+
+    /// Creates a new instance of the remotely provisioned key pool service, used for fetching
+    /// remotely provisioned attestation keys.
+    pub fn new_native_binder() -> Result<Strong<dyn IRemotelyProvisionedKeyPool>> {
+        let mut result: Self = Default::default();
+
+        let dev = get_remotely_provisioned_component(&SecurityLevel::TRUSTED_ENVIRONMENT)
+            .context("In new_native_binder: Failed to get TEE Remote Provisioner instance.")?;
+        if let Some(id) = dev.getHardwareInfo()?.uniqueId {
+            result.unique_id_to_sec_level.insert(id, SecurityLevel::TRUSTED_ENVIRONMENT);
+        }
+
+        if let Ok(dev) = get_remotely_provisioned_component(&SecurityLevel::STRONGBOX) {
+            if let Some(id) = dev.getHardwareInfo()?.uniqueId {
+                if result.unique_id_to_sec_level.contains_key(&id) {
+                    anyhow::bail!("In new_native_binder: duplicate irpc id found: '{}'", id)
+                }
+                result.unique_id_to_sec_level.insert(id, SecurityLevel::STRONGBOX);
+            }
+        }
+
+        // If none of the remotely provisioned components have unique ids, then we shouldn't
+        // bother publishing the service, as it's impossible to match keys with their backends.
+        if result.unique_id_to_sec_level.is_empty() {
+            anyhow::bail!(
+                "In new_native_binder: No remotely provisioned components have unique ids"
+            )
+        }
+
+        Ok(BnRemotelyProvisionedKeyPool::new_binder(
+            result,
+            BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
+        ))
+    }
+}
+
+impl binder::Interface for RemotelyProvisionedKeyPoolService {}
+
 // Implementation of IRemotelyProvisionedKeyPool. See AIDL spec at
 // :aidl/android/security/remoteprovisioning/IRemotelyProvisionedKeyPool.aidl
-impl IRemotelyProvisionedKeyPool for RemoteProvisioningService {
+impl IRemotelyProvisionedKeyPool for RemotelyProvisionedKeyPoolService {
     fn getAttestationKey(
         &self,
         caller_uid: i32,
@@ -842,10 +875,10 @@ mod tests {
         let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
         mock_rpc.0.lock().unwrap().hw_info.uniqueId = Some(String::from("mallory"));
 
-        let mut service: RemoteProvisioningService = Default::default();
+        let mut service: RemotelyProvisionedKeyPoolService = Default::default();
         service
-            .device_by_sec_level
-            .insert(SecurityLevel::TRUSTED_ENVIRONMENT, Strong::new(mock_rpc));
+            .unique_id_to_sec_level
+            .insert(String::from("mallory"), SecurityLevel::TRUSTED_ENVIRONMENT);
 
         assert_eq!(
             service
@@ -867,13 +900,15 @@ mod tests {
 
         let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
         let mock_values = mock_rpc.0.clone();
-        let mut service: RemoteProvisioningService = Default::default();
-        service.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut remote_provisioning: RemoteProvisioningService = Default::default();
+        remote_provisioning.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut key_pool: RemotelyProvisionedKeyPoolService = Default::default();
+        key_pool.unique_id_to_sec_level.insert(String::from(irpc_id), sec_level);
 
         mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
         mock_values.lock().unwrap().private_key = vec![8, 6, 7, 5, 3, 0, 9];
         mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x11);
-        service.generate_key_pair(&mut db, true, sec_level).unwrap();
+        remote_provisioning.generate_key_pair(&mut db, true, sec_level).unwrap();
 
         let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
             mock_values.lock().unwrap().maced_public_key.as_slice(),
@@ -881,7 +916,7 @@ mod tests {
         .unwrap();
         let batch_cert = get_fake_cert();
         let certs = &[5, 6, 7, 8];
-        assert!(service
+        assert!(remote_provisioning
             .provision_cert_chain(
                 &mut db,
                 public_key.as_slice(),
@@ -893,7 +928,7 @@ mod tests {
             .is_ok());
 
         // ensure we got the key we expected
-        let first_key = service
+        let first_key = key_pool
             .get_attestation_key(&mut db, caller_uid, irpc_id)
             .context("get first key")
             .unwrap();
@@ -903,7 +938,7 @@ mod tests {
         // ensure that multiple calls get the same key
         assert_eq!(
             first_key,
-            service
+            key_pool
                 .get_attestation_key(&mut db, caller_uid, irpc_id)
                 .context("get second key")
                 .unwrap()
@@ -911,7 +946,7 @@ mod tests {
 
         // no more keys for new clients
         assert_eq!(
-            service
+            key_pool
                 .get_attestation_key(&mut db, caller_uid + 1, irpc_id)
                 .unwrap_err()
                 .downcast::<error::Error>()
@@ -931,19 +966,21 @@ mod tests {
 
         let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
         let mock_values = mock_rpc.0.clone();
-        let mut service: RemoteProvisioningService = Default::default();
-        service.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut remote_provisioning: RemoteProvisioningService = Default::default();
+        remote_provisioning.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut key_pool: RemotelyProvisionedKeyPoolService = Default::default();
+        key_pool.unique_id_to_sec_level.insert(String::from(irpc_id), sec_level);
 
         // generate two distinct keys and provision them with certs
         mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
         mock_values.lock().unwrap().private_key = vec![3, 1, 4, 1, 5];
         mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x11);
-        assert!(service.generate_key_pair(&mut db, true, sec_level).is_ok());
+        assert!(remote_provisioning.generate_key_pair(&mut db, true, sec_level).is_ok());
         let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
             mock_values.lock().unwrap().maced_public_key.as_slice(),
         )
         .unwrap();
-        assert!(service
+        assert!(remote_provisioning
             .provision_cert_chain(
                 &mut db,
                 public_key.as_slice(),
@@ -957,12 +994,12 @@ mod tests {
         mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
         mock_values.lock().unwrap().private_key = vec![9, 0, 2, 1, 0];
         mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x22);
-        assert!(service.generate_key_pair(&mut db, true, sec_level).is_ok());
+        assert!(remote_provisioning.generate_key_pair(&mut db, true, sec_level).is_ok());
         let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
             mock_values.lock().unwrap().maced_public_key.as_slice(),
         )
         .unwrap();
-        assert!(service
+        assert!(remote_provisioning
             .provision_cert_chain(
                 &mut db,
                 public_key.as_slice(),
@@ -975,11 +1012,11 @@ mod tests {
 
         // make sure each caller gets a distinct key
         assert_ne!(
-            service
+            key_pool
                 .get_attestation_key(&mut db, first_caller, irpc_id)
                 .context("get first key")
                 .unwrap(),
-            service
+            key_pool
                 .get_attestation_key(&mut db, second_caller, irpc_id)
                 .context("get second key")
                 .unwrap()
@@ -987,22 +1024,22 @@ mod tests {
 
         // repeated calls should return the same key for a given caller
         assert_eq!(
-            service
+            key_pool
                 .get_attestation_key(&mut db, first_caller, irpc_id)
                 .context("first caller a")
                 .unwrap(),
-            service
+            key_pool
                 .get_attestation_key(&mut db, first_caller, irpc_id)
                 .context("first caller b")
                 .unwrap(),
         );
 
         assert_eq!(
-            service
+            key_pool
                 .get_attestation_key(&mut db, second_caller, irpc_id)
                 .context("second caller a")
                 .unwrap(),
-            service
+            key_pool
                 .get_attestation_key(&mut db, second_caller, irpc_id)
                 .context("second caller b")
                 .unwrap()
