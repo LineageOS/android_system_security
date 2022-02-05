@@ -54,6 +54,7 @@ cc_binary {
         "libkeymaster4support",
         "libkeystore-attestation-application-id",
         "android.security.authorization-ndk",
+        "android.security.remoteprovisioning-cpp",
         "libutilscallstack",
     ],
     static_libs: [
