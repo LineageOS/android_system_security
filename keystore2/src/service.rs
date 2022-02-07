@@ -26,7 +26,7 @@ use crate::utils::{
 };
 use crate::{
     database::Uuid,
-    globals::{create_thread_local_db, DB, LEGACY_BLOB_LOADER, LEGACY_MIGRATOR},
+    globals::{create_thread_local_db, DB, LEGACY_BLOB_LOADER, LEGACY_IMPORTER},
 };
 use crate::{database::KEYSTORE_UUID, permission};
 use crate::{
@@ -83,12 +83,12 @@ impl KeystoreService {
         }
 
         let uuid_by_sec_level = result.uuid_by_sec_level.clone();
-        LEGACY_MIGRATOR
+        LEGACY_IMPORTER
             .set_init(move || {
                 (create_thread_local_db(), uuid_by_sec_level, LEGACY_BLOB_LOADER.clone())
             })
             .context(
-                "In KeystoreService::new_native_binder: Trying to initialize the legacy migrator.",
+                "In KeystoreService::new_native_binder: Trying to initialize the legacy importer.",
             )?;
 
         Ok(BnKeystoreService::new_binder(
@@ -134,7 +134,7 @@ impl KeystoreService {
         let caller_uid = ThreadState::get_calling_uid();
         let (key_id_guard, mut key_entry) = DB
             .with(|db| {
-                LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+                LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
                     db.borrow_mut().load_key_entry(
                         &key,
                         KeyType::Client,
@@ -185,7 +185,7 @@ impl KeystoreService {
     ) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with::<_, Result<()>>(|db| {
-            let entry = match LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+            let entry = match LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
                 db.borrow_mut().load_key_entry(
                     &key,
                     KeyType::Client,
@@ -288,7 +288,7 @@ impl KeystoreService {
             Ok(()) => {}
         };
 
-        let mut result = LEGACY_MIGRATOR
+        let mut result = LEGACY_IMPORTER
             .list_uid(k.domain, k.nspace)
             .context("In list_entries: Trying to list legacy keys.")?;
 
@@ -309,7 +309,7 @@ impl KeystoreService {
     fn delete_key(&self, key: &KeyDescriptor) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with(|db| {
-            LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+            LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
                 db.borrow_mut().unbind_key(&key, KeyType::Client, caller_uid, |k, av| {
                     check_key_permission(KeyPerm::delete(), k, &av).context("During delete_key.")
                 })
@@ -327,7 +327,7 @@ impl KeystoreService {
     ) -> Result<KeyDescriptor> {
         let caller_uid = ThreadState::get_calling_uid();
         DB.with(|db| {
-            LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+            LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
                 db.borrow_mut().grant(
                     &key,
                     caller_uid,

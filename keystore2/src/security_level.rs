@@ -20,7 +20,7 @@ use crate::audit_log::{
 };
 use crate::database::{CertificateInfo, KeyIdGuard};
 use crate::error::{self, map_km_error, map_or_log_err, Error, ErrorCode};
-use crate::globals::{DB, ENFORCEMENTS, LEGACY_MIGRATOR, SUPER_KEY};
+use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
 use crate::key_parameter::KeyParameter as KsKeyParam;
 use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
 use crate::metrics_store::log_key_creation_event_stats;
@@ -162,7 +162,7 @@ impl KeystoreSecurityLevel {
                     let (key_blob, mut blob_metadata) = SUPER_KEY
                         .handle_super_encryption_on_key_init(
                             &mut db,
-                            &LEGACY_MIGRATOR,
+                            &LEGACY_IMPORTER,
                             &(key.domain),
                             &key_parameters,
                             flags,
@@ -243,7 +243,7 @@ impl KeystoreSecurityLevel {
             _ => {
                 let (key_id_guard, mut key_entry) = DB
                     .with::<_, Result<(KeyIdGuard, KeyEntry)>>(|db| {
-                        LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+                        LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
                             db.borrow_mut().load_key_entry(
                                 &key,
                                 KeyType::Client,
@@ -719,7 +719,7 @@ impl KeystoreSecurityLevel {
 
         let (wrapping_key_id_guard, mut wrapping_key_entry) = DB
             .with(|db| {
-                LEGACY_MIGRATOR.with_try_migrate(&key, caller_uid, || {
+                LEGACY_IMPORTER.with_try_import(&key, caller_uid, || {
                     db.borrow_mut().load_key_entry(
                         &wrapping_key,
                         KeyType::Client,

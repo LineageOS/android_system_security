@@ -18,7 +18,7 @@
 
 use crate::gc::Gc;
 use crate::legacy_blob::LegacyBlobLoader;
-use crate::legacy_migrator::LegacyMigrator;
+use crate::legacy_importer::LegacyImporter;
 use crate::super_key::SuperKeyManager;
 use crate::utils::watchdog as wd;
 use crate::utils::Asp;
@@ -158,8 +158,8 @@ lazy_static! {
     pub static ref LEGACY_BLOB_LOADER: Arc<LegacyBlobLoader> = Arc::new(LegacyBlobLoader::new(
         &DB_PATH.read().expect("Could not get the database path for legacy blob loader.")));
     /// Legacy migrator. Atomically migrates legacy blobs to the database.
-    pub static ref LEGACY_MIGRATOR: Arc<LegacyMigrator> =
-        Arc::new(LegacyMigrator::new(Arc::new(Default::default())));
+    pub static ref LEGACY_IMPORTER: Arc<LegacyImporter> =
+        Arc::new(LegacyImporter::new(Arc::new(Default::default())));
     /// Background thread which handles logging via statsd and logd
     pub static ref LOGS_HANDLER: Arc<AsyncTask> = Default::default();
 

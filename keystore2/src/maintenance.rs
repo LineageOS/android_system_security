@@ -19,7 +19,7 @@ use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
 use crate::globals::get_keymint_device;
-use crate::globals::{DB, LEGACY_MIGRATOR, SUPER_KEY};
+use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::UserState;
 use crate::utils::{check_key_permission, check_keystore_permission, watchdog as wd};
@@ -82,7 +82,7 @@ impl Maintenance {
             .with(|db| {
                 UserState::get_with_password_changed(
                     &mut db.borrow_mut(),
-                    &LEGACY_MIGRATOR,
+                    &LEGACY_IMPORTER,
                     &SUPER_KEY,
                     user_id as u32,
                     password.as_ref(),
@@ -110,7 +110,7 @@ impl Maintenance {
             UserState::reset_user(
                 &mut db.borrow_mut(),
                 &SUPER_KEY,
-                &LEGACY_MIGRATOR,
+                &LEGACY_IMPORTER,
                 user_id as u32,
                 false,
             )
@@ -125,7 +125,7 @@ impl Maintenance {
         // Permission check. Must return on error. Do not touch the '?'.
         check_keystore_permission(KeystorePerm::clear_uid()).context("In clear_namespace.")?;
 
-        LEGACY_MIGRATOR
+        LEGACY_IMPORTER
             .bulk_delete_uid(domain, nspace)
             .context("In clear_namespace: Trying to delete legacy keys.")?;
         DB.with(|db| db.borrow_mut().unbind_keys_for_namespace(domain, nspace))
@@ -141,7 +141,7 @@ impl Maintenance {
         check_keystore_permission(KeystorePerm::get_state()).context("In get_state.")?;
         let state = DB
             .with(|db| {
-                UserState::get(&mut db.borrow_mut(), &LEGACY_MIGRATOR, &SUPER_KEY, user_id as u32)
+                UserState::get(&mut db.borrow_mut(), &LEGACY_IMPORTER, &SUPER_KEY, user_id as u32)
             })
             .context("In get_state. Trying to get UserState.")?;
 
@@ -222,8 +222,8 @@ impl Maintenance {
         DB.with(|db| {
             let key_id_guard = match source.domain {
                 Domain::APP | Domain::SELINUX | Domain::KEY_ID => {
-                    let (key_id_guard, _) = LEGACY_MIGRATOR
-                        .with_try_migrate(&source, caller_uid, || {
+                    let (key_id_guard, _) = LEGACY_IMPORTER
+                        .with_try_import(&source, caller_uid, || {
                             db.borrow_mut().load_key_entry(
                                 &source,
                                 KeyType::Client,
