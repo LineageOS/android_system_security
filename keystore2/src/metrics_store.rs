@@ -649,6 +649,7 @@ pub fn update_keystore_crash_sysprop() {
 pub fn read_keystore_crash_count() -> Result<i32> {
     rustutils::system_properties::read("keystore.crash_count")
         .context("In read_keystore_crash_count: Failed read property.")?
+        .context("In read_keystore_crash_count: Property not set.")?
         .parse::<i32>()
         .map_err(std::convert::Into::into)
 }
