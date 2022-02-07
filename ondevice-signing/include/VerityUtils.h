@@ -36,6 +36,10 @@ verifyAllFilesInVerity(const std::string& path);
 android::base::Result<std::map<std::string, std::string>>
 addFilesToVerityRecursive(const std::string& path, const SigningKey& key);
 
+// Enable verity on the provided file, using the given PKCS7 signature.
+android::base::Result<void> enableFsVerity(const std::string& path,
+                                           const std::string& signature_path);
+
 android::base::Result<void>
 verifyAllFilesUsingCompOs(const std::string& directory_path,
                           const std::map<std::string, std::string>& digests,

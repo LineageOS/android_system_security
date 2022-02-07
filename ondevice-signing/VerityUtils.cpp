@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
 #include <asm/byteorder.h>
@@ -125,6 +126,19 @@ template <typename T> struct DeleteAsPODArray {
         }
     }
 };
+
+static Result<void> measureFsVerity(int fd, const fsverity_digest* digest) {
+    if (ioctl(fd, FS_IOC_MEASURE_VERITY, digest) != 0) {
+        if (errno == ENODATA) {
+            return Error() << "File is not in fs-verity";
+        } else {
+            return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY";
+        }
+    }
+
+    return {};
+}
+
 }  // namespace
 
 template <typename T> using trailing_unique_ptr = std::unique_ptr<T, DeleteAsPODArray<T>>;
@@ -198,14 +212,12 @@ Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
 static Result<std::string> isFileInVerity(int fd) {
     auto d = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
     d->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
-    auto ret = ioctl(fd, FS_IOC_MEASURE_VERITY, d.get());
-    if (ret < 0) {
-        if (errno == ENODATA) {
-            return Error() << "File is not in fs-verity";
-        } else {
-            return ErrnoError() << "Failed to FS_IOC_MEASURE_VERITY";
-        }
+
+    const auto& status = measureFsVerity(fd, d.get());
+    if (!status.ok()) {
+        return status.error();
     }
+
     return toHex({&d->digest[0], &d->digest[d->digest_size]});
 }
 
@@ -254,6 +266,31 @@ Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::
     }
 
     return digests;
+}
+
+Result<void> enableFsVerity(const std::string& path, const std::string& signature_path) {
+    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
+    if (!fd.ok()) {
+        return Error() << "Can't open " << path;
+    }
+
+    std::string signature;
+    android::base::ReadFileToString(signature_path, &signature);
+    std::vector<uint8_t> span = std::vector<uint8_t>(signature.begin(), signature.end());
+
+    const auto& enable = enableFsVerity(fd.get(), span);
+    if (!enable.ok()) {
+        return enable.error();
+    }
+
+    auto digest = makeUniqueWithTrailingData<fsverity_digest>(FS_VERITY_MAX_DIGEST_SIZE);
+    digest->digest_size = FS_VERITY_MAX_DIGEST_SIZE;
+    const auto& measure = measureFsVerity(fd.get(), digest.get());
+    if (!measure.ok()) {
+        return measure.error();
+    }
+
+    return {};
 }
 
 Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::string& path) {
