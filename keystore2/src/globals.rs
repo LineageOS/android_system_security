@@ -27,6 +27,7 @@ use crate::{
     database::Uuid,
     error::{map_binder_status, map_binder_status_code, Error, ErrorCode},
 };
+use crate::km_compat::{KeyMintV1, BacklevelKeyMintWrapper};
 use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
@@ -197,14 +198,15 @@ lazy_static! {
 
 static KEYMINT_SERVICE_NAME: &str = "android.hardware.security.keymint.IKeyMintDevice";
 
-/// Make a new connection to a KeyMint device of the given security level.
-/// If no native KeyMint device can be found this function also brings
-/// up the compatibility service and attempts to connect to the legacy wrapper.
-fn connect_keymint(
+/// Determine the service name for a KeyMint device of the given security level
+/// which implements at least the specified version of the `IKeyMintDevice`
+/// interface.
+fn keymint_service_name_by_version(
     security_level: &SecurityLevel,
-) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
+    version: i32,
+) -> Result<Option<(i32, String)>> {
     let keymint_instances =
-        get_aidl_instances("android.hardware.security.keymint", 1, "IKeyMintDevice");
+        get_aidl_instances("android.hardware.security.keymint", version as usize, "IKeyMintDevice");
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
@@ -222,12 +224,36 @@ fn connect_keymint(
             }
         }
         _ => {
-            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-                .context("In connect_keymint.")
+            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)).context(format!(
+                "In keymint_service_name_by_version: Trying to find keymint V{} for security level: {:?}",
+                version, security_level
+            ));
         }
     };
 
-    let (keymint, hal_version) = if let Some(service_name) = service_name {
+    Ok(service_name.map(|service_name| (version, service_name)))
+}
+
+/// Make a new connection to a KeyMint device of the given security level.
+/// If no native KeyMint device can be found this function also brings
+/// up the compatibility service and attempts to connect to the legacy wrapper.
+fn connect_keymint(
+    security_level: &SecurityLevel,
+) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
+    // Count down from the current interface version back to one in order to
+    // also find out the interface version -- an implementation of V2 will show
+    // up in the list of V1-capable devices, but not vice-versa.
+    let service_name = keymint_service_name_by_version(security_level, 2)
+        .and_then(|sl| {
+            if sl.is_none() {
+                keymint_service_name_by_version(security_level, 1)
+            } else {
+                Ok(sl)
+            }
+        })
+        .context("In connect_keymint.")?;
+
+    let (keymint, hal_version) = if let Some((version, service_name)) = service_name {
         let km: Strong<dyn IKeyMintDevice> =
             map_binder_status_code(binder::get_interface(&service_name))
                 .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?;
@@ -235,11 +261,7 @@ fn connect_keymint(
         // - V1 is 100
         // - V2 is 200
         // etc.
-        let hal_version = km
-            .getInterfaceVersion()
-            .map(|v| v * 100i32)
-            .context("In connect_keymint: Trying to determine KeyMint AIDL version")?;
-        (km, Some(hal_version))
+        (km, Some(version * 100))
     } else {
         // This is a no-op if it was called before.
         keystore2_km_compat::add_keymint_device_service();
@@ -258,6 +280,48 @@ fn connect_keymint(
                 .context("In connect_keymint: Trying to get Legacy wrapper.")?,
             None,
         )
+    };
+
+    // If the KeyMint device is back-level, use a wrapper that intercepts and
+    // emulates things that are not supported by the hardware.
+    let keymint = match hal_version {
+        Some(200) => {
+            // Current KeyMint version: use as-is.
+            log::info!(
+                "KeyMint device is current version ({:?}) for security level: {:?}",
+                hal_version,
+                security_level
+            );
+            keymint
+        }
+        Some(100) => {
+            // KeyMint v1: perform software emulation.
+            log::info!(
+                "Add emulation wrapper around {:?} device for security level: {:?}",
+                hal_version,
+                security_level
+            );
+            BacklevelKeyMintWrapper::wrap(KeyMintV1::new(*security_level), keymint)
+                .context("In connect_keymint: Trying to create V1 compatibility wrapper.")?
+        }
+        None => {
+            // Compatibility wrapper around a KeyMaster device: this roughly
+            // behaves like KeyMint V1 (e.g. it includes AGREE_KEY support,
+            // albeit in software.)
+            log::info!(
+                "Add emulation wrapper around Keymaster device for security level: {:?}",
+                security_level
+            );
+            BacklevelKeyMintWrapper::wrap(KeyMintV1::new(*security_level), keymint).context(
+                "In connect_keymint: Trying to create km_compat V1 compatibility wrapper .",
+            )?
+        }
+        _ => {
+            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)).context(format!(
+                "In connect_keymint: unexpected hal_version {:?} for security level: {:?}",
+                hal_version, security_level
+            ))
+        }
     };
 
     let wp = wd::watch_millis("In connect_keymint: calling getHardwareInfo()", 500);
