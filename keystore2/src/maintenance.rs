@@ -235,7 +235,7 @@ impl Maintenance {
             }
             _ => {
                 return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                    "In migrate_key_namespace:
+                    "In migrate_key_namespace: \
                      Source domain must be one of APP, SELINUX, or KEY_ID.",
                 )
             }
@@ -249,7 +249,7 @@ impl Maintenance {
             }
             _ => {
                 return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                    "In migrate_key_namespace:
+                    "In migrate_key_namespace: \
                      Destination domain must be one of APP or SELINUX.",
                 )
             }
