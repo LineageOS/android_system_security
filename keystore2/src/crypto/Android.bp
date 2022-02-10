@@ -62,6 +62,7 @@ rust_bindgen {
     shared_libs: ["libcrypto"],
     bindgen_flags: [
         "--size_t-is-usize",
+        "--allowlist-function", "hmacSha256",
         "--allowlist-function", "randomBytes",
         "--allowlist-function", "AES_gcm_encrypt",
         "--allowlist-function", "AES_gcm_decrypt",
