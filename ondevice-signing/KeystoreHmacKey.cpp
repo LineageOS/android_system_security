@@ -49,17 +49,14 @@ using android::base::Result;
 
 using android::base::unique_fd;
 
-// Keystore boot level that the odsign key uses
-static const int kOdsignBootLevel = 30;
-
-static KeyDescriptor getHmacKeyDescriptor() {
+static KeyDescriptor getHmacKeyDescriptor(const android::String16& keyAlias, int64_t keyNspace) {
     // AIDL parcelable objects don't have constructor
     static KeyDescriptor descriptor;
     static std::once_flag flag;
     std::call_once(flag, [&]() {
         descriptor.domain = Domain::SELINUX;
-        descriptor.alias = String16("ondevice-signing-hmac");
-        descriptor.nspace = 101;  // odsign_key
+        descriptor.alias = keyAlias + android::String16("-hmac");
+        descriptor.nspace = keyNspace;
     });
 
     return descriptor;
@@ -106,7 +103,7 @@ Result<void> KeystoreHmacKey::createKey() {
 
     KeyParameter boot_level;
     boot_level.tag = Tag::MAX_BOOT_LEVEL;
-    boot_level.value = KeyParameterValue::make<KeyParameterValue::integer>(kOdsignBootLevel);
+    boot_level.value = KeyParameterValue::make<KeyParameterValue::integer>(mKeyBootLevel);
     params.push_back(boot_level);
 
     KeyMetadata metadata;
@@ -133,7 +130,7 @@ Result<void> KeystoreHmacKey::initialize(sp<IKeystoreService> service,
         // Make sure this is an early boot key
         for (const auto& auth : keyEntryResponse.metadata.authorizations) {
             if (auth.keyParameter.tag == Tag::MAX_BOOT_LEVEL) {
-                if (auth.keyParameter.value.get<KeyParameterValue::integer>() == kOdsignBootLevel) {
+                if (auth.keyParameter.value.get<KeyParameterValue::integer>() == mKeyBootLevel) {
                     keyValid = true;
                     break;
                 }
@@ -152,9 +149,9 @@ Result<void> KeystoreHmacKey::initialize(sp<IKeystoreService> service,
     }
 }
 
-KeystoreHmacKey::KeystoreHmacKey() {
-    mDescriptor = getHmacKeyDescriptor();
-}
+KeystoreHmacKey::KeystoreHmacKey(const android::String16& keyAlias, int64_t keyNspace,
+                                 int keyBootLevel)
+    : mDescriptor(getHmacKeyDescriptor(keyAlias, keyNspace)), mKeyBootLevel(keyBootLevel) {}
 
 static std::vector<KeyParameter> getVerifyOpParameters() {
     std::vector<KeyParameter> opParameters;
