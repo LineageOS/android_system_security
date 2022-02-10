@@ -38,8 +38,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-/// Represents LegacyMigrator.
-pub struct LegacyMigrator {
+/// Represents LegacyImporter.
+pub struct LegacyImporter {
     async_task: Arc<AsyncTask>,
     initializer: Mutex<
         Option<
@@ -51,19 +51,19 @@ pub struct LegacyMigrator {
         >,
     >,
     /// This atomic is used for cheap interior mutability. It is intended to prevent
-    /// expensive calls into the legacy migrator when the legacy database is empty.
+    /// expensive calls into the legacy importer when the legacy database is empty.
     /// When transitioning from READY to EMPTY, spurious calls may occur for a brief period
     /// of time. This is tolerable in favor of the common case.
     state: AtomicU8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct RecentMigration {
+struct RecentImport {
     uid: u32,
     alias: String,
 }
 
-impl RecentMigration {
+impl RecentImport {
     fn new(uid: u32, alias: String) -> Self {
         Self { uid, alias }
     }
@@ -74,15 +74,15 @@ enum BulkDeleteRequest {
     User(u32),
 }
 
-struct LegacyMigratorState {
-    recently_migrated: HashSet<RecentMigration>,
-    recently_migrated_super_key: HashSet<u32>,
+struct LegacyImporterState {
+    recently_imported: HashSet<RecentImport>,
+    recently_imported_super_key: HashSet<u32>,
     legacy_loader: Arc<LegacyBlobLoader>,
     sec_level_to_km_uuid: HashMap<SecurityLevel, Uuid>,
     db: KeystoreDB,
 }
 
-impl LegacyMigrator {
+impl LegacyImporter {
     const WIFI_NAMESPACE: i64 = 102;
     const AID_WIFI: u32 = 1010;
 
@@ -90,7 +90,7 @@ impl LegacyMigrator {
     const STATE_READY: u8 = 1;
     const STATE_EMPTY: u8 = 2;
 
-    /// Constructs a new LegacyMigrator using the given AsyncTask object as migration
+    /// Constructs a new LegacyImporter using the given AsyncTask object as import
     /// worker.
     pub fn new(async_task: Arc<AsyncTask>) -> Self {
         Self {
@@ -100,7 +100,7 @@ impl LegacyMigrator {
         }
     }
 
-    /// The legacy migrator must be initialized deferred, because keystore starts very early.
+    /// The legacy importer must be initialized deferred, because keystore starts very early.
     /// At this time the data partition may not be mounted. So we cannot open database connections
     /// until we get actual key load requests. This sets the function that the legacy loader
     /// uses to connect to the database.
@@ -125,11 +125,11 @@ impl LegacyMigrator {
         Ok(())
     }
 
-    /// This function is called by the migration requestor to check if it is worth
-    /// making a migration request. It also transitions the state from UNINITIALIZED
+    /// This function is called by the import requestor to check if it is worth
+    /// making an import request. It also transitions the state from UNINITIALIZED
     /// to READY or EMPTY on first use. The deferred initialization is necessary, because
     /// Keystore 2.0 runs early during boot, where data may not yet be mounted.
-    /// Returns Ok(STATE_READY) if a migration request is worth undertaking and
+    /// Returns Ok(STATE_READY) if an import request is worth undertaking and
     /// Ok(STATE_EMPTY) if the database is empty. An error is returned if the loader
     /// was not initialized and cannot be initialized.
     fn check_state(&self) -> Result<u8> {
@@ -157,9 +157,9 @@ impl LegacyMigrator {
                         }
 
                         self.async_task.queue_hi(move |shelf| {
-                            shelf.get_or_put_with(|| LegacyMigratorState {
-                                recently_migrated: Default::default(),
-                                recently_migrated_super_key: Default::default(),
+                            shelf.get_or_put_with(|| LegacyImporterState {
+                                recently_imported: Default::default(),
+                                recently_imported_super_key: Default::default(),
                                 legacy_loader,
                                 sec_level_to_km_uuid,
                                 db,
@@ -189,14 +189,14 @@ impl LegacyMigrator {
                     );
                 }
                 (Self::STATE_READY, _) => return Ok(Self::STATE_READY),
-                (s, _) => panic!("Unknown legacy migrator state. {} ", s),
+                (s, _) => panic!("Unknown legacy importer state. {} ", s),
             }
         }
     }
 
     /// List all aliases for uid in the legacy database.
     pub fn list_uid(&self, domain: Domain, namespace: i64) -> Result<Vec<KeyDescriptor>> {
-        let _wp = wd::watch_millis("LegacyMigrator::list_uid", 500);
+        let _wp = wd::watch_millis("LegacyImporter::list_uid", 500);
 
         let uid = match (domain, namespace) {
             (Domain::APP, namespace) => namespace as u32,
@@ -217,44 +217,44 @@ impl LegacyMigrator {
         )
     }
 
-    /// Sends the given closure to the migrator thread for execution after calling check_state.
+    /// Sends the given closure to the importer thread for execution after calling check_state.
     /// Returns None if the database was empty and the request was not executed.
-    /// Otherwise returns Some with the result produced by the migration request.
+    /// Otherwise returns Some with the result produced by the import request.
     /// The loader state may transition to STATE_EMPTY during the execution of this function.
     fn do_serialized<F, T: Send + 'static>(&self, f: F) -> Option<Result<T>>
     where
-        F: FnOnce(&mut LegacyMigratorState) -> Result<T> + Send + 'static,
+        F: FnOnce(&mut LegacyImporterState) -> Result<T> + Send + 'static,
     {
         // Short circuit if the database is empty or not initialized (error case).
         match self.check_state().context("In do_serialized: Checking state.") {
-            Ok(LegacyMigrator::STATE_EMPTY) => return None,
-            Ok(LegacyMigrator::STATE_READY) => {}
+            Ok(LegacyImporter::STATE_EMPTY) => return None,
+            Ok(LegacyImporter::STATE_READY) => {}
             Err(e) => return Some(Err(e)),
-            Ok(s) => panic!("Unknown legacy migrator state. {} ", s),
+            Ok(s) => panic!("Unknown legacy importer state. {} ", s),
         }
 
         // We have established that there may be a key in the legacy database.
-        // Now we schedule a migration request.
+        // Now we schedule an import request.
         let (sender, receiver) = channel();
         self.async_task.queue_hi(move |shelf| {
-            // Get the migrator state from the shelf.
-            // There may not be a state. This can happen if this migration request was scheduled
+            // Get the importer state from the shelf.
+            // There may not be a state. This can happen if this import request was scheduled
             // before a previous request established that the legacy database was empty
             // and removed the state from the shelf. Since we know now that the database
             // is empty, we can return None here.
-            let (new_state, result) = if let Some(legacy_migrator_state) =
-                shelf.get_downcast_mut::<LegacyMigratorState>()
+            let (new_state, result) = if let Some(legacy_importer_state) =
+                shelf.get_downcast_mut::<LegacyImporterState>()
             {
-                let result = f(legacy_migrator_state);
-                (legacy_migrator_state.check_empty(), Some(result))
+                let result = f(legacy_importer_state);
+                (legacy_importer_state.check_empty(), Some(result))
             } else {
                 (Self::STATE_EMPTY, None)
             };
 
-            // If the migration request determined that the database is now empty, we discard
+            // If the import request determined that the database is now empty, we discard
             // the state from the shelf to free up the resources we won't need any longer.
             if result.is_some() && new_state == Self::STATE_EMPTY {
-                shelf.remove_downcast_ref::<LegacyMigratorState>();
+                shelf.remove_downcast_ref::<LegacyImporterState>();
             }
 
             // Send the result to the requester.
@@ -271,7 +271,7 @@ impl LegacyMigrator {
         };
 
         // We can only transition to EMPTY but never back.
-        // The migrator never creates any legacy blobs.
+        // The importer never creates any legacy blobs.
         if new_state == Self::STATE_EMPTY {
             self.state.store(Self::STATE_EMPTY, Ordering::Relaxed)
         }
@@ -280,10 +280,10 @@ impl LegacyMigrator {
     }
 
     /// Runs the key_accessor function and returns its result. If it returns an error and the
-    /// root cause was KEY_NOT_FOUND, tries to migrate a key with the given parameters from
+    /// root cause was KEY_NOT_FOUND, tries to import a key with the given parameters from
     /// the legacy database to the new database and runs the key_accessor function again if
-    /// the migration request was successful.
-    pub fn with_try_migrate<F, T>(
+    /// the import request was successful.
+    pub fn with_try_import<F, T>(
         &self,
         key: &KeyDescriptor,
         caller_uid: u32,
@@ -292,7 +292,7 @@ impl LegacyMigrator {
     where
         F: Fn() -> Result<T>,
     {
-        let _wp = wd::watch_millis("LegacyMigrator::with_try_migrate", 500);
+        let _wp = wd::watch_millis("LegacyImporter::with_try_import", 500);
 
         // Access the key and return on success.
         match key_accessor() {
@@ -304,7 +304,7 @@ impl LegacyMigrator {
         }
 
         // Filter inputs. We can only load legacy app domain keys and some special rules due
-        // to which we migrate keys transparently to an SELINUX domain.
+        // to which we import keys transparently to an SELINUX domain.
         let uid = match key {
             KeyDescriptor { domain: Domain::APP, alias: Some(_), .. } => caller_uid,
             KeyDescriptor { domain: Domain::SELINUX, nspace, alias: Some(_), .. } => {
@@ -324,11 +324,11 @@ impl LegacyMigrator {
 
         let key_clone = key.clone();
         let result = self
-            .do_serialized(move |migrator_state| migrator_state.check_and_migrate(uid, key_clone));
+            .do_serialized(move |importer_state| importer_state.check_and_import(uid, key_clone));
 
         if let Some(result) = result {
             result?;
-            // After successful migration try again.
+            // After successful import try again.
             key_accessor()
         } else {
             Err(Error::Rc(ResponseCode::KEY_NOT_FOUND)).context("Legacy database is empty.")
@@ -336,8 +336,8 @@ impl LegacyMigrator {
     }
 
     /// Calls key_accessor and returns the result on success. In the case of a KEY_NOT_FOUND error
-    /// this function makes a migration request and on success retries the key_accessor.
-    pub fn with_try_migrate_super_key<F, T>(
+    /// this function makes an import request and on success retries the key_accessor.
+    pub fn with_try_import_super_key<F, T>(
         &self,
         user_id: u32,
         pw: &Password,
@@ -346,31 +346,31 @@ impl LegacyMigrator {
     where
         F: FnMut() -> Result<Option<T>>,
     {
-        let _wp = wd::watch_millis("LegacyMigrator::with_try_migrate_super_key", 500);
+        let _wp = wd::watch_millis("LegacyImporter::with_try_import_super_key", 500);
 
         match key_accessor() {
             Ok(Some(result)) => return Ok(Some(result)),
             Ok(None) => {}
             Err(e) => return Err(e),
         }
-        let pw = pw.try_clone().context("In with_try_migrate_super_key: Cloning password.")?;
-        let result = self.do_serialized(move |migrator_state| {
-            migrator_state.check_and_migrate_super_key(user_id, &pw)
+        let pw = pw.try_clone().context("In with_try_import_super_key: Cloning password.")?;
+        let result = self.do_serialized(move |importer_state| {
+            importer_state.check_and_import_super_key(user_id, &pw)
         });
 
         if let Some(result) = result {
             result?;
-            // After successful migration try again.
+            // After successful import try again.
             key_accessor()
         } else {
             Ok(None)
         }
     }
 
-    /// Deletes all keys belonging to the given namespace, migrating them into the database
+    /// Deletes all keys belonging to the given namespace, importing them into the database
     /// for subsequent garbage collection if necessary.
     pub fn bulk_delete_uid(&self, domain: Domain, nspace: i64) -> Result<()> {
-        let _wp = wd::watch_millis("LegacyMigrator::bulk_delete_uid", 500);
+        let _wp = wd::watch_millis("LegacyImporter::bulk_delete_uid", 500);
 
         let uid = match (domain, nspace) {
             (Domain::APP, nspace) => nspace as u32,
@@ -379,24 +379,24 @@ impl LegacyMigrator {
             _ => return Ok(()),
         };
 
-        let result = self.do_serialized(move |migrator_state| {
-            migrator_state.bulk_delete(BulkDeleteRequest::Uid(uid), false)
+        let result = self.do_serialized(move |importer_state| {
+            importer_state.bulk_delete(BulkDeleteRequest::Uid(uid), false)
         });
 
         result.unwrap_or(Ok(()))
     }
 
-    /// Deletes all keys belonging to the given android user, migrating them into the database
+    /// Deletes all keys belonging to the given android user, importing them into the database
     /// for subsequent garbage collection if necessary.
     pub fn bulk_delete_user(
         &self,
         user_id: u32,
         keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("LegacyMigrator::bulk_delete_user", 500);
+        let _wp = wd::watch_millis("LegacyImporter::bulk_delete_user", 500);
 
-        let result = self.do_serialized(move |migrator_state| {
-            migrator_state
+        let result = self.do_serialized(move |importer_state| {
+            importer_state
                 .bulk_delete(BulkDeleteRequest::User(user_id), keep_non_super_encrypted_keys)
         });
 
@@ -406,12 +406,12 @@ impl LegacyMigrator {
     /// Queries the legacy database for the presence of a super key for the given user.
     pub fn has_super_key(&self, user_id: u32) -> Result<bool> {
         let result =
-            self.do_serialized(move |migrator_state| migrator_state.has_super_key(user_id));
+            self.do_serialized(move |importer_state| importer_state.has_super_key(user_id));
         result.unwrap_or(Ok(false))
     }
 }
 
-impl LegacyMigratorState {
+impl LegacyImporterState {
     fn get_km_uuid(&self, is_strongbox: bool) -> Result<Uuid> {
         let sec_level = if is_strongbox {
             SecurityLevel::STRONGBOX
@@ -430,17 +430,17 @@ impl LegacyMigratorState {
             .context("In list_uid: Trying to list legacy entries.")
     }
 
-    /// This is a key migration request that must run in the migrator thread. This must
+    /// This is a key import request that must run in the importer thread. This must
     /// be passed to do_serialized.
-    fn check_and_migrate(&mut self, uid: u32, mut key: KeyDescriptor) -> Result<()> {
+    fn check_and_import(&mut self, uid: u32, mut key: KeyDescriptor) -> Result<()> {
         let alias = key.alias.clone().ok_or_else(|| {
-            anyhow::anyhow!(Error::sys()).context(concat!(
-                "In check_and_migrate: Must be Some because ",
-                "our caller must not have called us otherwise."
-            ))
+            anyhow::anyhow!(Error::sys()).context(
+                "In check_and_import: Must be Some because \
+                 our caller must not have called us otherwise.",
+            )
         })?;
 
-        if self.recently_migrated.contains(&RecentMigration::new(uid, alias.clone())) {
+        if self.recently_imported.contains(&RecentImport::new(uid, alias.clone())) {
             return Ok(());
         }
 
@@ -452,7 +452,7 @@ impl LegacyMigratorState {
         let (km_blob_params, user_cert, ca_cert) = self
             .legacy_loader
             .load_by_uid_alias(uid, &alias, None)
-            .context("In check_and_migrate: Trying to load legacy blob.")?;
+            .context("In check_and_import: Trying to load legacy blob.")?;
         let result = match km_blob_params {
             Some((km_blob, params)) => {
                 let is_strongbox = km_blob.is_strongbox();
@@ -464,33 +464,33 @@ impl LegacyMigratorState {
                         let super_key_id = match self
                             .db
                             .load_super_key(&USER_SUPER_KEY, user_id)
-                            .context("In check_and_migrate: Failed to load super key")?
+                            .context("In check_and_import: Failed to load super key")?
                         {
                             Some((_, entry)) => entry.id(),
                             None => {
                                 // This might be the first time we access the super key,
-                                // and it may not have been migrated. We cannot import
+                                // and it may not have been imported. We cannot import
                                 // the legacy super_key key now, because we need to reencrypt
                                 // it which we cannot do if we are not unlocked, which we are
-                                // not because otherwise the key would have been migrated.
+                                // not because otherwise the key would have been imported.
                                 // We can check though if the key exists. If it does,
                                 // we can return Locked. Otherwise, we can delete the
                                 // key and return NotFound, because the key will never
                                 // be unlocked again.
                                 if self.legacy_loader.has_super_key(user_id) {
                                     return Err(Error::Rc(ResponseCode::LOCKED)).context(concat!(
-                                        "In check_and_migrate: Cannot migrate super key of this ",
+                                        "In check_and_import: Cannot import super key of this ",
                                         "key while user is locked."
                                     ));
                                 } else {
                                     self.legacy_loader.remove_keystore_entry(uid, &alias).context(
                                         concat!(
-                                            "In check_and_migrate: ",
+                                            "In check_and_import: ",
                                             "Trying to remove obsolete key."
                                         ),
                                     )?;
                                     return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-                                        .context("In check_and_migrate: Obsolete key.");
+                                        .context("In check_and_import: Obsolete key.");
                                 }
                             }
                         };
@@ -505,18 +505,18 @@ impl LegacyMigratorState {
                     BlobValue::Decrypted(data) => (LegacyBlob::ZVec(data), BlobMetaData::new()),
                     _ => {
                         return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-                            .context("In check_and_migrate: Legacy key has unexpected type.")
+                            .context("In check_and_import: Legacy key has unexpected type.")
                     }
                 };
 
                 let km_uuid = self
                     .get_km_uuid(is_strongbox)
-                    .context("In check_and_migrate: Trying to get KM UUID")?;
+                    .context("In check_and_import: Trying to get KM UUID")?;
                 blob_metadata.add(BlobMetaEntry::KmUuid(km_uuid));
 
                 let mut metadata = KeyMetaData::new();
                 let creation_date = DateTime::now()
-                    .context("In check_and_migrate: Trying to make creation time.")?;
+                    .context("In check_and_import: Trying to make creation time.")?;
                 metadata.add(KeyMetaEntry::CreationDate(creation_date));
 
                 // Store legacy key in the database.
@@ -530,49 +530,49 @@ impl LegacyMigratorState {
                         &metadata,
                         &km_uuid,
                     )
-                    .context("In check_and_migrate.")?;
+                    .context("In check_and_import.")?;
                 Ok(())
             }
             None => {
                 if let Some(ca_cert) = ca_cert {
                     self.db
                         .store_new_certificate(&key, KeyType::Client, &ca_cert, &KEYSTORE_UUID)
-                        .context("In check_and_migrate: Failed to insert new certificate.")?;
+                        .context("In check_and_import: Failed to insert new certificate.")?;
                     Ok(())
                 } else {
                     Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-                        .context("In check_and_migrate: Legacy key not found.")
+                        .context("In check_and_import: Legacy key not found.")
                 }
             }
         };
 
         match result {
             Ok(()) => {
-                // Add the key to the migrated_keys list.
-                self.recently_migrated.insert(RecentMigration::new(uid, alias.clone()));
+                // Add the key to the imported_keys list.
+                self.recently_imported.insert(RecentImport::new(uid, alias.clone()));
                 // Delete legacy key from the file system
                 self.legacy_loader
                     .remove_keystore_entry(uid, &alias)
-                    .context("In check_and_migrate: Trying to remove migrated key.")?;
+                    .context("In check_and_import: Trying to remove imported key.")?;
                 Ok(())
             }
             Err(e) => Err(e),
         }
     }
 
-    fn check_and_migrate_super_key(&mut self, user_id: u32, pw: &Password) -> Result<()> {
-        if self.recently_migrated_super_key.contains(&user_id) {
+    fn check_and_import_super_key(&mut self, user_id: u32, pw: &Password) -> Result<()> {
+        if self.recently_imported_super_key.contains(&user_id) {
             return Ok(());
         }
 
         if let Some(super_key) = self
             .legacy_loader
             .load_super_key(user_id, pw)
-            .context("In check_and_migrate_super_key: Trying to load legacy super key.")?
+            .context("In check_and_import_super_key: Trying to load legacy super key.")?
         {
             let (blob, blob_metadata) =
                 crate::super_key::SuperKeyManager::encrypt_with_password(&super_key, pw)
-                    .context("In check_and_migrate_super_key: Trying to encrypt super key.")?;
+                    .context("In check_and_import_super_key: Trying to encrypt super key.")?;
 
             self.db
                 .store_super_key(
@@ -583,20 +583,20 @@ impl LegacyMigratorState {
                     &KeyMetaData::new(),
                 )
                 .context(concat!(
-                    "In check_and_migrate_super_key: ",
+                    "In check_and_import_super_key: ",
                     "Trying to insert legacy super_key into the database."
                 ))?;
             self.legacy_loader.remove_super_key(user_id);
-            self.recently_migrated_super_key.insert(user_id);
+            self.recently_imported_super_key.insert(user_id);
             Ok(())
         } else {
             Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-                .context("In check_and_migrate_super_key: No key found do migrate.")
+                .context("In check_and_import_super_key: No key found do import.")
         }
     }
 
-    /// Key migrator request to be run by do_serialized.
-    /// See LegacyMigrator::bulk_delete_uid and LegacyMigrator::bulk_delete_user.
+    /// Key importer request to be run by do_serialized.
+    /// See LegacyImporter::bulk_delete_uid and LegacyImporter::bulk_delete_user.
     fn bulk_delete(
         &mut self,
         bulk_delete_request: BulkDeleteRequest,
@@ -695,21 +695,21 @@ impl LegacyMigratorState {
 
             self.legacy_loader
                 .remove_keystore_entry(uid, &alias)
-                .context("In bulk_delete: Trying to remove migrated key.")?;
+                .context("In bulk_delete: Trying to remove imported key.")?;
         }
         Ok(())
     }
 
     fn has_super_key(&mut self, user_id: u32) -> Result<bool> {
-        Ok(self.recently_migrated_super_key.contains(&user_id)
+        Ok(self.recently_imported_super_key.contains(&user_id)
             || self.legacy_loader.has_super_key(user_id))
     }
 
     fn check_empty(&self) -> u8 {
         if self.legacy_loader.is_empty().unwrap_or(false) {
-            LegacyMigrator::STATE_EMPTY
+            LegacyImporter::STATE_EMPTY
         } else {
-            LegacyMigrator::STATE_READY
+            LegacyImporter::STATE_READY
         }
     }
 }
