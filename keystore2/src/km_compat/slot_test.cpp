@@ -73,7 +73,9 @@ static const int NUM_SLOTS = 2;
 
 TEST(SlotTest, TestSlots) {
     static std::shared_ptr<KeyMintDevice> device =
-        KeyMintDevice::createKeyMintDevice(SecurityLevel::TRUSTED_ENVIRONMENT);
+        KeyMintDevice::getWrappedKeymasterDevice(SecurityLevel::TRUSTED_ENVIRONMENT);
+    ASSERT_NE(device.get(), nullptr);
+
     device->setNumFreeSlots(NUM_SLOTS);
 
     // A begin() that returns a failure should not use a slot.

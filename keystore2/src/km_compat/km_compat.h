@@ -84,7 +84,9 @@ class KeyMintDevice : public aidl::android::hardware::security::keymint::BnKeyMi
 
   public:
     explicit KeyMintDevice(::android::sp<Keymaster>, KeyMintSecurityLevel);
-    static std::shared_ptr<KeyMintDevice> createKeyMintDevice(KeyMintSecurityLevel securityLevel);
+    static std::shared_ptr<IKeyMintDevice> createKeyMintDevice(KeyMintSecurityLevel securityLevel);
+    static std::shared_ptr<KeyMintDevice>
+    getWrappedKeymasterDevice(KeyMintSecurityLevel securityLevel);
 
     ScopedAStatus getHardwareInfo(KeyMintHardwareInfo* _aidl_return) override;
     ScopedAStatus addRngEntropy(const std::vector<uint8_t>& in_data) override;
