@@ -20,7 +20,7 @@ use crate::permission;
 use crate::permission::{KeyPerm, KeyPermSet, KeystorePerm};
 use crate::{
     database::{KeyType, KeystoreDB},
-    globals::LEGACY_MIGRATOR,
+    globals::LEGACY_IMPORTER,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     KeyCharacteristics::KeyCharacteristics, Tag::Tag,
@@ -211,7 +211,7 @@ pub fn list_key_entries(
 ) -> Result<Vec<KeyDescriptor>> {
     let mut result = Vec::new();
     result.append(
-        &mut LEGACY_MIGRATOR
+        &mut LEGACY_IMPORTER
             .list_uid(domain, namespace)
             .context("In list_key_entries: Trying to list legacy keys.")?,
     );

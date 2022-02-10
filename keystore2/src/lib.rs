@@ -29,7 +29,7 @@ pub mod id_rotation;
 /// Internal Representation of Key Parameter and convenience functions.
 pub mod key_parameter;
 pub mod legacy_blob;
-pub mod legacy_migrator;
+pub mod legacy_importer;
 pub mod maintenance;
 pub mod metrics;
 pub mod metrics_store;
