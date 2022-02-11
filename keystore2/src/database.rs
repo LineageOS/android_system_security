@@ -2049,6 +2049,41 @@ impl KeystoreDB {
         .context("In get_attestation_pool_status: ")
     }
 
+    fn query_kid_for_attestation_key_and_cert_chain(
+        &self,
+        tx: &Transaction,
+        domain: Domain,
+        namespace: i64,
+        km_uuid: &Uuid,
+    ) -> Result<Option<i64>> {
+        let mut stmt = tx.prepare(
+            "SELECT id
+             FROM persistent.keyentry
+             WHERE key_type = ?
+                   AND domain = ?
+                   AND namespace = ?
+                   AND state = ?
+                   AND km_uuid = ?;",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![
+                    KeyType::Attestation,
+                    domain.0 as u32,
+                    namespace,
+                    KeyLifeCycle::Live,
+                    km_uuid
+                ],
+                |row| row.get(0),
+            )?
+            .collect::<rusqlite::Result<Vec<i64>>>()
+            .context("query failed.")?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(rows[0]))
+    }
+
     /// Fetches the private key and corresponding certificate chain assigned to a
     /// domain/namespace pair. Will either return nothing if the domain/namespace is
     /// not assigned, or one CertificateChain.
@@ -2057,7 +2092,7 @@ impl KeystoreDB {
         domain: Domain,
         namespace: i64,
         km_uuid: &Uuid,
-    ) -> Result<Option<CertificateChain>> {
+    ) -> Result<Option<(KeyIdGuard, CertificateChain)>> {
         let _wp = wd::watch_millis("KeystoreDB::retrieve_attestation_key_and_cert_chain", 500);
 
         match domain {
@@ -2067,69 +2102,67 @@ impl KeystoreDB {
                     .context(format!("Domain {:?} must be either App or SELinux.", domain));
             }
         }
-        self.with_transaction(TransactionBehavior::Deferred, |tx| {
-            let mut stmt = tx.prepare(
-                "SELECT subcomponent_type, blob
-             FROM persistent.blobentry
-             WHERE keyentryid IN
-                (SELECT id
-                 FROM persistent.keyentry
-                 WHERE key_type = ?
-                       AND domain = ?
-                       AND namespace = ?
-                       AND state = ?
-                       AND km_uuid = ?);",
-            )?;
-            let rows = stmt
-                .query_map(
-                    params![
-                        KeyType::Attestation,
-                        domain.0 as u32,
-                        namespace,
-                        KeyLifeCycle::Live,
-                        km_uuid
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?
-                .collect::<rusqlite::Result<Vec<(SubComponentType, Vec<u8>)>>>()
-                .context("query failed.")?;
-            if rows.is_empty() {
-                return Ok(None).no_gc();
-            } else if rows.len() != 3 {
-                return Err(KsError::sys()).context(format!(
-                    concat!(
-                        "Expected to get a single attestation",
-                        "key, cert, and cert chain for a total of 3 entries, but instead got {}."
-                    ),
-                    rows.len()
-                ));
-            }
-            let mut km_blob: Vec<u8> = Vec::new();
-            let mut cert_chain_blob: Vec<u8> = Vec::new();
-            let mut batch_cert_blob: Vec<u8> = Vec::new();
-            for row in rows {
-                let sub_type: SubComponentType = row.0;
-                match sub_type {
-                    SubComponentType::KEY_BLOB => {
-                        km_blob = row.1;
-                    }
-                    SubComponentType::CERT_CHAIN => {
-                        cert_chain_blob = row.1;
-                    }
-                    SubComponentType::CERT => {
-                        batch_cert_blob = row.1;
-                    }
-                    _ => Err(KsError::sys()).context("Unknown or incorrect subcomponent type.")?,
+
+        let tx = self.conn.unchecked_transaction().context(
+            "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
+        )?;
+        let key_id: i64;
+        match self.query_kid_for_attestation_key_and_cert_chain(&tx, domain, namespace, km_uuid)? {
+            None => return Ok(None),
+            Some(kid) => key_id = kid,
+        }
+        tx.commit()
+            .context("In retrieve_attestation_key_and_cert_chain: Failed to commit keyid query")?;
+        let key_id_guard = KEY_ID_LOCK.get(key_id);
+        let tx = self.conn.unchecked_transaction().context(
+            "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
+        )?;
+        let mut stmt = tx.prepare(
+            "SELECT subcomponent_type, blob
+            FROM persistent.blobentry
+            WHERE keyentryid = ?;",
+        )?;
+        let rows = stmt
+            .query_map(params![key_id_guard.id()], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<(SubComponentType, Vec<u8>)>>>()
+            .context("query failed.")?;
+        if rows.is_empty() {
+            return Ok(None);
+        } else if rows.len() != 3 {
+            return Err(KsError::sys()).context(format!(
+                concat!(
+                    "Expected to get a single attestation",
+                    "key, cert, and cert chain for a total of 3 entries, but instead got {}."
+                ),
+                rows.len()
+            ));
+        }
+        let mut km_blob: Vec<u8> = Vec::new();
+        let mut cert_chain_blob: Vec<u8> = Vec::new();
+        let mut batch_cert_blob: Vec<u8> = Vec::new();
+        for row in rows {
+            let sub_type: SubComponentType = row.0;
+            match sub_type {
+                SubComponentType::KEY_BLOB => {
+                    km_blob = row.1;
                 }
+                SubComponentType::CERT_CHAIN => {
+                    cert_chain_blob = row.1;
+                }
+                SubComponentType::CERT => {
+                    batch_cert_blob = row.1;
+                }
+                _ => Err(KsError::sys()).context("Unknown or incorrect subcomponent type.")?,
             }
-            Ok(Some(CertificateChain {
+        }
+        Ok(Some((
+            key_id_guard,
+            CertificateChain {
                 private_key: ZVec::try_from(km_blob)?,
                 batch_cert: batch_cert_blob,
                 cert_chain: cert_chain_blob,
-            }))
-            .no_gc()
-        })
-        .context("In retrieve_attestation_key_and_cert_chain:")
+            },
+        )))
     }
 
     /// Updates the alias column of the given key id `newid` with the given alias,
@@ -3517,7 +3550,7 @@ mod tests {
         let chain =
             db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace, &KEYSTORE_UUID)?;
         assert_eq!(true, chain.is_some());
-        let cert_chain = chain.unwrap();
+        let (_, cert_chain) = chain.unwrap();
         assert_eq!(cert_chain.private_key.to_vec(), loaded_values.priv_key);
         assert_eq!(cert_chain.batch_cert, loaded_values.batch_cert);
         assert_eq!(cert_chain.cert_chain, loaded_values.cert_chain);
@@ -3612,7 +3645,7 @@ mod tests {
         let mut cert_chain =
             db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace, &KEYSTORE_UUID)?;
         assert!(cert_chain.is_some());
-        let value = cert_chain.unwrap();
+        let (_, value) = cert_chain.unwrap();
         assert_eq!(entry_values.batch_cert, value.batch_cert);
         assert_eq!(entry_values.cert_chain, value.cert_chain);
         assert_eq!(entry_values.priv_key, value.private_key.to_vec());
