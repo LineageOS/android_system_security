@@ -1391,12 +1391,31 @@ sp<Keymaster> getDevice(KeyMintSecurityLevel securityLevel) {
     }
 }
 
+std::shared_ptr<IKeyMintDevice> getSoftwareKeymintDevice() {
+    static std::mutex mutex;
+    static std::shared_ptr<IKeyMintDevice> swDevice;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!swDevice) {
+        swDevice.reset(CreateKeyMintDevice(KeyMintSecurityLevel::SOFTWARE));
+    }
+    return swDevice;
+}
+
 std::shared_ptr<KeyMintDevice>
-KeyMintDevice::createKeyMintDevice(KeyMintSecurityLevel securityLevel) {
+KeyMintDevice::getWrappedKeymasterDevice(KeyMintSecurityLevel securityLevel) {
     if (auto dev = getDevice(securityLevel)) {
         return ndk::SharedRefBase::make<KeyMintDevice>(std::move(dev), securityLevel);
     }
     return {};
+}
+
+std::shared_ptr<IKeyMintDevice>
+KeyMintDevice::createKeyMintDevice(KeyMintSecurityLevel securityLevel) {
+    if (securityLevel == KeyMintSecurityLevel::SOFTWARE) {
+        return getSoftwareKeymintDevice();
+    } else {
+        return getWrappedKeymasterDevice(securityLevel);
+    }
 }
 
 std::shared_ptr<SharedSecret> SharedSecret::createSharedSecret(KeyMintSecurityLevel securityLevel) {

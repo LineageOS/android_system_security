@@ -450,7 +450,7 @@ impl Enforcements {
                         KeyParameterValue::Algorithm(Algorithm::RSA)
                         | KeyParameterValue::Algorithm(Algorithm::EC) => {
                             return Err(Error::Km(Ec::UNSUPPORTED_PURPOSE)).context(
-                                "In authorize_create: public operations on asymmetric keys are not
+                                "In authorize_create: public operations on asymmetric keys are not \
                                  supported.",
                             );
                         }
@@ -566,8 +566,7 @@ impl Enforcements {
         // if both NO_AUTH_REQUIRED and USER_SECURE_ID tags are present, return error
         if !user_secure_ids.is_empty() && no_auth_required {
             return Err(Error::Km(Ec::INVALID_KEY_BLOB)).context(
-                "In authorize_create: key has both NO_AUTH_REQUIRED
-                and USER_SECURE_ID tags.",
+                "In authorize_create: key has both NO_AUTH_REQUIRED and USER_SECURE_ID tags.",
             );
         }
 
@@ -576,8 +575,8 @@ impl Enforcements {
             || (user_auth_type.is_none() && !user_secure_ids.is_empty())
         {
             return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED)).context(
-                "In authorize_create: Auth required, but either auth type or secure ids
-                are not present.",
+                "In authorize_create: Auth required, but either auth type or secure ids \
+                 are not present.",
             );
         }
 
@@ -587,8 +586,7 @@ impl Enforcements {
             && op_params.iter().any(|kp| kp.tag == Tag::NONCE)
         {
             return Err(Error::Km(Ec::CALLER_NONCE_PROHIBITED)).context(
-                "In authorize_create, NONCE is present,
-                    although CALLER_NONCE is not present",
+                "In authorize_create, NONCE is present, although CALLER_NONCE is not present",
             );
         }
 

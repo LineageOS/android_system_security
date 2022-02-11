@@ -19,7 +19,7 @@ use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
 use crate::globals::get_keymint_device;
-use crate::globals::{DB, LEGACY_MIGRATOR, SUPER_KEY};
+use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::{SuperKeyManager, UserState};
 use crate::utils::{
@@ -88,7 +88,7 @@ impl Maintenance {
             .with(|db| {
                 skm.reset_or_init_user_and_get_user_state(
                     &mut db.borrow_mut(),
-                    &LEGACY_MIGRATOR,
+                    &LEGACY_IMPORTER,
                     user_id as u32,
                     password.as_ref(),
                 )
@@ -115,7 +115,7 @@ impl Maintenance {
         DB.with(|db| {
             SUPER_KEY.write().unwrap().reset_user(
                 &mut db.borrow_mut(),
-                &LEGACY_MIGRATOR,
+                &LEGACY_IMPORTER,
                 user_id as u32,
                 false,
             )
@@ -130,7 +130,7 @@ impl Maintenance {
         // Permission check. Must return on error. Do not touch the '?'.
         check_keystore_permission(KeystorePerm::ClearUID).context("In clear_namespace.")?;
 
-        LEGACY_MIGRATOR
+        LEGACY_IMPORTER
             .bulk_delete_uid(domain, nspace)
             .context("In clear_namespace: Trying to delete legacy keys.")?;
         DB.with(|db| db.borrow_mut().unbind_keys_for_namespace(domain, nspace))
@@ -148,7 +148,7 @@ impl Maintenance {
             .with(|db| {
                 SUPER_KEY.read().unwrap().get_user_state(
                     &mut db.borrow_mut(),
-                    &LEGACY_MIGRATOR,
+                    &LEGACY_IMPORTER,
                     user_id as u32,
                 )
             })
@@ -235,7 +235,7 @@ impl Maintenance {
             }
             _ => {
                 return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                    "In migrate_key_namespace:
+                    "In migrate_key_namespace: \
                      Source domain must be one of APP, SELINUX, or KEY_ID.",
                 )
             }
@@ -249,15 +249,15 @@ impl Maintenance {
             }
             _ => {
                 return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                    "In migrate_key_namespace:
+                    "In migrate_key_namespace: \
                      Destination domain must be one of APP or SELINUX.",
                 )
             }
         };
 
         DB.with(|db| {
-            let (key_id_guard, _) = LEGACY_MIGRATOR
-                .with_try_migrate(source, src_uid, || {
+            let (key_id_guard, _) = LEGACY_IMPORTER
+                .with_try_import(source, src_uid, || {
                     db.borrow_mut().load_key_entry(
                         source,
                         KeyType::Client,
