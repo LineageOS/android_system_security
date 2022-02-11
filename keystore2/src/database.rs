@@ -323,6 +323,8 @@ pub static KEYSTORE_UUID: Uuid = Uuid([
     0x41, 0xe3, 0xb9, 0xce, 0x27, 0x58, 0x4e, 0x91, 0xbc, 0xfd, 0xa5, 0x5d, 0x91, 0x85, 0xab, 0x11,
 ]);
 
+static EXPIRATION_BUFFER_MS: i64 = 20000;
+
 /// Indicates how the sensitive part of this key blob is encrypted.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum EncryptedBy {
@@ -1939,8 +1941,11 @@ impl KeystoreDB {
                 )?
                 .collect::<rusqlite::Result<Vec<(i64, DateTime)>>>()
                 .context("Failed to get date metadata")?;
+            // Calculate curr_time with a discount factor to avoid a key that's milliseconds away
+            // from expiration dodging this delete call.
             let curr_time = DateTime::from_millis_epoch(
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64,
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                    + EXPIRATION_BUFFER_MS,
             );
             let mut num_deleted = 0;
             for id in key_ids_to_check.iter().filter(|kt| kt.1 < curr_time).map(|kt| kt.0) {
@@ -2103,6 +2108,9 @@ impl KeystoreDB {
             }
         }
 
+        self.delete_expired_attestation_keys().context(
+            "In retrieve_attestation_key_and_cert_chain: failed to prune expired attestation keys",
+        )?;
         let tx = self.conn.unchecked_transaction().context(
             "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
         )?;
@@ -3542,7 +3550,10 @@ mod tests {
     #[test]
     fn test_store_signed_attestation_certificate_chain() -> Result<()> {
         let mut db = new_test_db()?;
-        let expiration_date: i64 = 20;
+        let expiration_date: i64 =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
         let namespace: i64 = 30;
         let base_byte: u8 = 1;
         let loaded_values =
@@ -3619,7 +3630,9 @@ mod tests {
             TempDir::new("test_remove_expired_certs_").expect("Failed to create temp dir.");
         let mut db = new_test_db_with_gc(temp_dir.path(), |_, _| Ok(()))?;
         let expiration_date: i64 =
-            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64 + 10000;
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
         let namespace: i64 = 30;
         let namespace_del1: i64 = 45;
         let namespace_del2: i64 = 60;
@@ -3630,7 +3643,7 @@ mod tests {
             0x01, /* base_byte */
         )?;
         load_attestation_key_pool(&mut db, 45, namespace_del1, 0x02)?;
-        load_attestation_key_pool(&mut db, 60, namespace_del2, 0x03)?;
+        load_attestation_key_pool(&mut db, expiration_date - 10001, namespace_del2, 0x03)?;
 
         let blob_entry_row_count: u32 = db
             .conn
@@ -3677,6 +3690,73 @@ mod tests {
         Ok(())
     }
 
+    fn compare_rem_prov_values(
+        expected: &RemoteProvValues,
+        actual: Option<(KeyIdGuard, CertificateChain)>,
+    ) {
+        assert!(actual.is_some());
+        let (_, value) = actual.unwrap();
+        assert_eq!(expected.batch_cert, value.batch_cert);
+        assert_eq!(expected.cert_chain, value.cert_chain);
+        assert_eq!(expected.priv_key, value.private_key.to_vec());
+    }
+
+    #[test]
+    fn test_dont_remove_valid_certs() -> Result<()> {
+        let temp_dir =
+            TempDir::new("test_remove_expired_certs_").expect("Failed to create temp dir.");
+        let mut db = new_test_db_with_gc(temp_dir.path(), |_, _| Ok(()))?;
+        let expiration_date: i64 =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
+        let namespace1: i64 = 30;
+        let namespace2: i64 = 45;
+        let namespace3: i64 = 60;
+        let entry_values1 = load_attestation_key_pool(
+            &mut db,
+            expiration_date,
+            namespace1,
+            0x01, /* base_byte */
+        )?;
+        let entry_values2 =
+            load_attestation_key_pool(&mut db, expiration_date + 40000, namespace2, 0x02)?;
+        let entry_values3 =
+            load_attestation_key_pool(&mut db, expiration_date - 9000, namespace3, 0x03)?;
+
+        let blob_entry_row_count: u32 = db
+            .conn
+            .query_row("SELECT COUNT(id) FROM persistent.blobentry;", NO_PARAMS, |row| row.get(0))
+            .expect("Failed to get blob entry row count.");
+        // We expect 9 rows here because there are three blobs per attestation key, i.e.,
+        // one key, one certificate chain, and one certificate.
+        assert_eq!(blob_entry_row_count, 9);
+
+        let mut cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace1, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values1, cert_chain);
+
+        cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace2, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values2, cert_chain);
+
+        cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace3, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values3, cert_chain);
+
+        // Give the garbage collector half a second to catch up.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let blob_entry_row_count: u32 = db
+            .conn
+            .query_row("SELECT COUNT(id) FROM persistent.blobentry;", NO_PARAMS, |row| row.get(0))
+            .expect("Failed to get blob entry row count.");
+        // There shound be 9 blob entries left, because all three keys are valid with
+        // three blobs each.
+        assert_eq!(blob_entry_row_count, 9);
+
+        Ok(())
+    }
     #[test]
     fn test_delete_all_attestation_keys() -> Result<()> {
         let mut db = new_test_db()?;
