@@ -23,7 +23,8 @@ use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::{SuperKeyManager, UserState};
 use crate::utils::{
-    check_key_permission, check_keystore_permission, list_key_entries, watchdog as wd,
+    check_key_permission, check_keystore_permission, list_key_entries, uid_to_android_user,
+    watchdog as wd,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
@@ -255,34 +256,55 @@ impl Maintenance {
             }
         };
 
-        DB.with(|db| {
-            let (key_id_guard, _) = LEGACY_IMPORTER
-                .with_try_import(source, src_uid, || {
-                    db.borrow_mut().load_key_entry(
-                        source,
-                        KeyType::Client,
-                        KeyEntryLoadBits::NONE,
-                        src_uid,
-                        |k, av| {
-                            if migrate_any_key_permission {
-                                Ok(())
-                            } else {
-                                check_key_permission(KeyPerm::Use, k, &av)?;
-                                check_key_permission(KeyPerm::Delete, k, &av)?;
-                                check_key_permission(KeyPerm::Grant, k, &av)
-                            }
-                        },
-                    )
-                })
-                .context("In migrate_key_namespace: Failed to load key blob.")?;
+        let user_id = uid_to_android_user(dest_uid);
 
-            db.borrow_mut().migrate_key_namespace(key_id_guard, destination, dest_uid, |k| {
-                if migrate_any_key_permission {
-                    Ok(())
-                } else {
-                    check_key_permission(KeyPerm::Rebind, k, &None)
-                }
-            })
+        if user_id != uid_to_android_user(src_uid)
+            && (source.domain == Domain::APP || destination.domain == Domain::APP)
+        {
+            return Err(Error::sys()).context(
+                "In migrate_key_namespace: Keys cannot be migrated across android users.",
+            );
+        }
+
+        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+
+        DB.with(|db| {
+            if let Some((key_id_guard, _)) = LEGACY_IMPORTER
+                .with_try_import_or_migrate_namespaces(
+                    (src_uid, source),
+                    (dest_uid, destination),
+                    super_key,
+                    migrate_any_key_permission,
+                    || {
+                        db.borrow_mut().load_key_entry(
+                            source,
+                            KeyType::Client,
+                            KeyEntryLoadBits::NONE,
+                            src_uid,
+                            |k, av| {
+                                if migrate_any_key_permission {
+                                    Ok(())
+                                } else {
+                                    check_key_permission(KeyPerm::Use, k, &av)?;
+                                    check_key_permission(KeyPerm::Delete, k, &av)?;
+                                    check_key_permission(KeyPerm::Grant, k, &av)
+                                }
+                            },
+                        )
+                    },
+                )
+                .context("In migrate_key_namespace: Failed to load key blob.")?
+            {
+                db.borrow_mut().migrate_key_namespace(key_id_guard, destination, dest_uid, |k| {
+                    if migrate_any_key_permission {
+                        Ok(())
+                    } else {
+                        check_key_permission(KeyPerm::Rebind, k, &None)
+                    }
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 
