@@ -14,18 +14,19 @@
 
 //! This module acts as a bridge between the legacy key database and the keystore2 database.
 
-use crate::key_parameter::KeyParameterValue;
-use crate::legacy_blob::BlobValue;
-use crate::utils::{uid_to_android_user, watchdog as wd};
-use crate::{async_task::AsyncTask, legacy_blob::LegacyBlobLoader};
-use crate::{database::KeyType, error::Error};
-use crate::{
-    database::{
-        BlobMetaData, BlobMetaEntry, CertificateInfo, DateTime, EncryptedBy, KeyMetaData,
-        KeyMetaEntry, KeystoreDB, Uuid, KEYSTORE_UUID,
-    },
-    super_key::USER_SUPER_KEY,
+use crate::database::{
+    BlobInfo, BlobMetaData, BlobMetaEntry, CertificateInfo, DateTime, EncryptedBy, KeyMetaData,
+    KeyMetaEntry, KeyType, KeystoreDB, Uuid, KEYSTORE_UUID,
 };
+use crate::error::{map_km_error, Error};
+use crate::key_parameter::{KeyParameter, KeyParameterValue};
+use crate::legacy_blob::{self, Blob, BlobValue, LegacyKeyCharacteristics};
+use crate::super_key::USER_SUPER_KEY;
+use crate::utils::{
+    key_characteristics_to_internal, uid_to_android_user, upgrade_keyblob_if_required_with,
+    watchdog as wd, AesGcm,
+};
+use crate::{async_task::AsyncTask, legacy_blob::LegacyBlobLoader};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor, ResponseCode::ResponseCode,
@@ -279,6 +280,116 @@ impl LegacyImporter {
         result
     }
 
+    /// This function behaves exactly like with_try_import unless the src_key has an encrypted
+    /// component (other than the key blob itself [1]) and super_key is None.
+    /// In that case the files belonging to the src_key will be renamed to be moved to the
+    /// namespace indicated by dst_key. The destination domain must be in Domain::APP.
+    ///
+    /// [1] Components that cannot be encrypted with the super key in keystore2 include the
+    /// characteristics file, which was encrypted before Android Q, and certificate entries
+    /// added by KeyChain before Android Q.
+    pub fn with_try_import_or_migrate_namespaces<F, T>(
+        &self,
+        src: (u32, &KeyDescriptor),
+        dest: (u32, &KeyDescriptor),
+        super_key: Option<Arc<dyn AesGcm + Send + Sync>>,
+        has_migrate_any_permission: bool,
+        key_accessor: F,
+    ) -> Result<Option<T>>
+    where
+        F: Fn() -> Result<T>,
+    {
+        let _wp = wd::watch_millis("LegacyImporter::with_try_import_or_migrate_namespaces", 500);
+
+        let (src_uid, src_key) = src;
+        let (dest_uid, dest_key) = dest;
+
+        // Access the key and return on success.
+        match key_accessor() {
+            Ok(result) => return Ok(Some(result)),
+            Err(e) => {
+                if e.root_cause().downcast_ref::<Error>()
+                    != Some(&Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                {
+                    return Err(e);
+                }
+            }
+        }
+
+        // Filter inputs. We can only load legacy app domain keys as well
+        // as the SELINUX WIFI_NAMESPACE, which will be populated from AID_WIFI.
+        let src_uid = match src_key {
+            KeyDescriptor { domain: Domain::APP, alias: Some(_), .. } => src_uid,
+            KeyDescriptor { domain: Domain::SELINUX, nspace, alias: Some(_), .. } => {
+                match *nspace {
+                    Self::WIFI_NAMESPACE => Self::AID_WIFI,
+                    _ => {
+                        return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                            .context(format!("No legacy keys for namespace {}", nspace))
+                    }
+                }
+            }
+            _ => {
+                return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                    .context("No legacy keys for key descriptor.")
+            }
+        };
+
+        let dest_uid = match dest_key {
+            KeyDescriptor { domain: Domain::APP, alias: Some(_), .. } => Some(dest_uid),
+            KeyDescriptor { domain: Domain::SELINUX, alias: Some(_), .. } => {
+                // Domain::SELINUX cannot be migrated in place, but we cannot fail at this point
+                // because the import may succeed at which point the actual migration will
+                // be performed by the caller.
+                None
+            }
+            _ => {
+                return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                    .context("No legacy keys for key descriptor.")
+            }
+        };
+
+        let src_key_clone = src_key.clone();
+        let dest_key_clone = dest_key.clone();
+        let result = self.do_serialized(move |importer_state| {
+            let super_key = super_key.map(|sk| -> Arc<dyn AesGcm> { sk });
+            match (
+                importer_state.check_and_import(src_uid, src_key_clone.clone(), super_key),
+                dest_uid,
+            ) {
+                // The import into the database was successful. Return Ok(true)
+                (Ok(()), _) => Ok(true),
+                // The import failed because a certificate and/or characteristics
+                // file was encrypted and no super_key was available. Migration within the
+                // legacy database is attempted and Ok(false) is returned on success.
+                (Err(e), Some(dest_uid))
+                    if has_migrate_any_permission
+                        && e.root_cause().downcast_ref::<Error>()
+                            == Some(&Error::Rc(ResponseCode::LOCKED)) =>
+                {
+                    importer_state
+                        .migrate_namespaces(src_uid, dest_uid, src_key_clone, dest_key_clone)
+                        .map(|_| false)
+                }
+                (Err(e), _) => Err(e),
+            }
+        });
+
+        match result {
+            None => {
+                Err(Error::Rc(ResponseCode::KEY_NOT_FOUND)).context("Legacy database is empty.")
+            }
+
+            Some(Ok(true)) => {
+                // After successful import try again.
+                key_accessor().map(|v| Some(v))
+            }
+            // The entry was successfully migrated within the legacy database.
+            Some(Ok(false)) => Ok(None),
+            Some(Err(e)) => Err(e),
+        }
+    }
+
     /// Runs the key_accessor function and returns its result. If it returns an error and the
     /// root cause was KEY_NOT_FOUND, tries to import a key with the given parameters from
     /// the legacy database to the new database and runs the key_accessor function again if
@@ -287,6 +398,7 @@ impl LegacyImporter {
         &self,
         key: &KeyDescriptor,
         caller_uid: u32,
+        super_key: Option<Arc<dyn AesGcm + Send + Sync>>,
         key_accessor: F,
     ) -> Result<T>
     where
@@ -323,8 +435,10 @@ impl LegacyImporter {
         };
 
         let key_clone = key.clone();
-        let result = self
-            .do_serialized(move |importer_state| importer_state.check_and_import(uid, key_clone));
+        let result = self.do_serialized(move |importer_state| {
+            let super_key = super_key.map(|sk| -> Arc<dyn AesGcm> { sk });
+            importer_state.check_and_import(uid, key_clone, super_key)
+        });
 
         if let Some(result) = result {
             result?;
@@ -430,9 +544,199 @@ impl LegacyImporterState {
             .context("In list_uid: Trying to list legacy entries.")
     }
 
+    fn migrate_namespaces(
+        &mut self,
+        src_uid: u32,
+        dest_uid: u32,
+        src_key: KeyDescriptor,
+        dest_key: KeyDescriptor,
+    ) -> Result<()> {
+        let src_alias = src_key.alias.ok_or_else(|| {
+            anyhow::anyhow!(Error::sys()).context(
+                "In legacy_migrator::migrate_namespace: src_key.alias must be Some because \
+                 our caller must not have called us otherwise.",
+            )
+        })?;
+
+        if dest_key.domain != Domain::APP {
+            return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
+                "In legacy_migrator::migrate_namespace: \
+                 Legacy in-place migration to SELinux namespace is not supported.",
+            );
+        }
+
+        let dest_alias = dest_key.alias.ok_or_else(|| {
+            anyhow::anyhow!(Error::sys()).context(concat!(
+                "In legacy_migrator::migrate_namespace: dest_key.alias must be Some because ",
+                "our caller must not have called us otherwise."
+            ))
+        })?;
+
+        self.legacy_loader
+            .move_keystore_entry(src_uid, dest_uid, &src_alias, &dest_alias)
+            .context("In legacy_migrator::migrate_namespace: Moving key entry files.")
+    }
+
+    /// Checks if the key can potentially be unlocked. And deletes the key entry otherwise.
+    /// If the super_key has already been imported, the super key database id is returned.
+    fn get_super_key_id_check_unlockable_or_delete(
+        &mut self,
+        uid: u32,
+        alias: &str,
+    ) -> Result<i64> {
+        let user_id = uid_to_android_user(uid);
+
+        match self
+            .db
+            .load_super_key(&USER_SUPER_KEY, user_id)
+            .context("In get_super_key_id_check_unlockable_or_delete: Failed to load super key")?
+        {
+            Some((_, entry)) => Ok(entry.id()),
+            None => {
+                // This might be the first time we access the super key,
+                // and it may not have been imported. We cannot import
+                // the legacy super_key key now, because we need to reencrypt
+                // it which we cannot do if we are not unlocked, which we are
+                // not because otherwise the key would have been imported.
+                // We can check though if the key exists. If it does,
+                // we can return Locked. Otherwise, we can delete the
+                // key and return NotFound, because the key will never
+                // be unlocked again.
+                if self.legacy_loader.has_super_key(user_id) {
+                    Err(Error::Rc(ResponseCode::LOCKED)).context(
+                        "In get_super_key_id_check_unlockable_or_delete: \
+                         Cannot import super key of this key while user is locked.",
+                    )
+                } else {
+                    self.legacy_loader.remove_keystore_entry(uid, alias).context(
+                        "In get_super_key_id_check_unlockable_or_delete: \
+                         Trying to remove obsolete key.",
+                    )?;
+                    Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                        .context("In get_super_key_id_check_unlockable_or_delete: Obsolete key.")
+                }
+            }
+        }
+    }
+
+    fn characteristics_file_to_cache(
+        &mut self,
+        km_blob_params: Option<(Blob, LegacyKeyCharacteristics)>,
+        super_key: &Option<Arc<dyn AesGcm>>,
+        uid: u32,
+        alias: &str,
+    ) -> Result<(Option<(Blob, Vec<KeyParameter>)>, Option<(LegacyBlob<'static>, BlobMetaData)>)>
+    {
+        let (km_blob, params) = match km_blob_params {
+            Some((km_blob, LegacyKeyCharacteristics::File(params))) => (km_blob, params),
+            Some((km_blob, LegacyKeyCharacteristics::Cache(params))) => {
+                return Ok((Some((km_blob, params)), None))
+            }
+            None => return Ok((None, None)),
+        };
+
+        let km_uuid = self
+            .get_km_uuid(km_blob.is_strongbox())
+            .context("In characteristics_file_to_cache: Trying to get KM UUID")?;
+
+        let blob = match (&km_blob.value(), super_key.as_ref()) {
+            (BlobValue::Encrypted { iv, tag, data }, Some(super_key)) => {
+                let blob = super_key
+                    .decrypt(data, iv, tag)
+                    .context("In characteristics_file_to_cache: Decryption failed.")?;
+                LegacyBlob::ZVec(blob)
+            }
+            (BlobValue::Encrypted { .. }, None) => {
+                return Err(Error::Rc(ResponseCode::LOCKED)).context(
+                    "In characteristics_file_to_cache: Oh uh, so close. \
+                     This ancient key cannot be imported unless the user is unlocked.",
+                );
+            }
+            (BlobValue::Decrypted(data), _) => LegacyBlob::Ref(data),
+            _ => {
+                return Err(Error::sys())
+                    .context("In characteristics_file_to_cache: Unexpected blob type.")
+            }
+        };
+
+        let (km_params, upgraded_blob) = get_key_characteristics_without_app_data(&km_uuid, &*blob)
+            .context(
+                "In characteristics_file_to_cache: Failed to get key characteristics from device.",
+            )?;
+
+        let flags = km_blob.get_flags();
+
+        let (current_blob, superseded_blob) = if let Some(upgraded_blob) = upgraded_blob {
+            match (km_blob.take_value(), super_key.as_ref()) {
+                (BlobValue::Encrypted { iv, tag, data }, Some(super_key)) => {
+                    let super_key_id =
+                        self.get_super_key_id_check_unlockable_or_delete(uid, alias).context(
+                            "In characteristics_file_to_cache: \
+                             How is there a super key but no super key id?",
+                        )?;
+
+                    let mut superseded_metadata = BlobMetaData::new();
+                    superseded_metadata.add(BlobMetaEntry::Iv(iv.to_vec()));
+                    superseded_metadata.add(BlobMetaEntry::AeadTag(tag.to_vec()));
+                    superseded_metadata
+                        .add(BlobMetaEntry::EncryptedBy(EncryptedBy::KeyId(super_key_id)));
+                    superseded_metadata.add(BlobMetaEntry::KmUuid(km_uuid));
+                    let superseded_blob = (LegacyBlob::Vec(data), superseded_metadata);
+
+                    let (data, iv, tag) = super_key.encrypt(&upgraded_blob).context(
+                        "In characteristics_file_to_cache: \
+                         Failed to encrypt upgraded key blob.",
+                    )?;
+                    (
+                        Blob::new(flags, BlobValue::Encrypted { data, iv, tag }),
+                        Some(superseded_blob),
+                    )
+                }
+                (BlobValue::Encrypted { .. }, None) => {
+                    return Err(Error::sys()).context(
+                        "In characteristics_file_to_cache: This should not be reachable. \
+                         The blob could not have been decrypted above.",
+                    );
+                }
+                (BlobValue::Decrypted(data), _) => {
+                    let mut superseded_metadata = BlobMetaData::new();
+                    superseded_metadata.add(BlobMetaEntry::KmUuid(km_uuid));
+                    let superseded_blob = (LegacyBlob::ZVec(data), superseded_metadata);
+                    (
+                        Blob::new(
+                            flags,
+                            BlobValue::Decrypted(upgraded_blob.try_into().context(
+                                "In characteristics_file_to_cache: \
+                             Failed to convert upgraded blob to ZVec.",
+                            )?),
+                        ),
+                        Some(superseded_blob),
+                    )
+                }
+                _ => {
+                    return Err(Error::sys()).context(
+                        "In characteristics_file_to_cache: This should not be reachable. \
+                         Any other variant should have resulted in a different error.",
+                    )
+                }
+            }
+        } else {
+            (km_blob, None)
+        };
+
+        let params =
+            augment_legacy_characteristics_file_with_key_characteristics(km_params, params);
+        Ok((Some((current_blob, params)), superseded_blob))
+    }
+
     /// This is a key import request that must run in the importer thread. This must
     /// be passed to do_serialized.
-    fn check_and_import(&mut self, uid: u32, mut key: KeyDescriptor) -> Result<()> {
+    fn check_and_import(
+        &mut self,
+        uid: u32,
+        mut key: KeyDescriptor,
+        super_key: Option<Arc<dyn AesGcm>>,
+    ) -> Result<()> {
         let alias = key.alias.clone().ok_or_else(|| {
             anyhow::anyhow!(Error::sys()).context(
                 "In check_and_import: Must be Some because \
@@ -451,49 +755,42 @@ impl LegacyImporterState {
         // If the key is not found in the cache, try to load from the legacy database.
         let (km_blob_params, user_cert, ca_cert) = self
             .legacy_loader
-            .load_by_uid_alias(uid, &alias, None)
+            .load_by_uid_alias(uid, &alias, &super_key)
+            .map_err(|e| {
+                if e.root_cause().downcast_ref::<legacy_blob::Error>()
+                    == Some(&legacy_blob::Error::LockedComponent)
+                {
+                    // There is no chance to succeed at this point. We just check if there is
+                    // a super key so that this entry might be unlockable in the future.
+                    // If not the entry will be deleted and KEY_NOT_FOUND is returned.
+                    // If a super key id was returned we still have to return LOCKED but the key
+                    // may be imported when the user unlocks the device.
+                    self.get_super_key_id_check_unlockable_or_delete(uid, &alias)
+                        .and_then::<i64, _>(|_| {
+                            Err(Error::Rc(ResponseCode::LOCKED))
+                                .context("Super key present but locked.")
+                        })
+                        .unwrap_err()
+                } else {
+                    e
+                }
+            })
             .context("In check_and_import: Trying to load legacy blob.")?;
+
+        let (km_blob_params, superseded_blob) = self
+            .characteristics_file_to_cache(km_blob_params, &super_key, uid, &alias)
+            .context("In check_and_import: Trying to update legacy charateristics.")?;
+
         let result = match km_blob_params {
             Some((km_blob, params)) => {
                 let is_strongbox = km_blob.is_strongbox();
+
                 let (blob, mut blob_metadata) = match km_blob.take_value() {
                     BlobValue::Encrypted { iv, tag, data } => {
                         // Get super key id for user id.
-                        let user_id = uid_to_android_user(uid as u32);
-
-                        let super_key_id = match self
-                            .db
-                            .load_super_key(&USER_SUPER_KEY, user_id)
-                            .context("In check_and_import: Failed to load super key")?
-                        {
-                            Some((_, entry)) => entry.id(),
-                            None => {
-                                // This might be the first time we access the super key,
-                                // and it may not have been imported. We cannot import
-                                // the legacy super_key key now, because we need to reencrypt
-                                // it which we cannot do if we are not unlocked, which we are
-                                // not because otherwise the key would have been imported.
-                                // We can check though if the key exists. If it does,
-                                // we can return Locked. Otherwise, we can delete the
-                                // key and return NotFound, because the key will never
-                                // be unlocked again.
-                                if self.legacy_loader.has_super_key(user_id) {
-                                    return Err(Error::Rc(ResponseCode::LOCKED)).context(concat!(
-                                        "In check_and_import: Cannot import super key of this ",
-                                        "key while user is locked."
-                                    ));
-                                } else {
-                                    self.legacy_loader.remove_keystore_entry(uid, &alias).context(
-                                        concat!(
-                                            "In check_and_import: ",
-                                            "Trying to remove obsolete key."
-                                        ),
-                                    )?;
-                                    return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-                                        .context("In check_and_import: Obsolete key.");
-                                }
-                            }
-                        };
+                        let super_key_id = self
+                            .get_super_key_id_check_unlockable_or_delete(uid, &alias)
+                            .context("In check_and_import: Failed to get super key id.")?;
 
                         let mut blob_metadata = BlobMetaData::new();
                         blob_metadata.add(BlobMetaEntry::Iv(iv.to_vec()));
@@ -519,13 +816,18 @@ impl LegacyImporterState {
                     .context("In check_and_import: Trying to make creation time.")?;
                 metadata.add(KeyMetaEntry::CreationDate(creation_date));
 
+                let blob_info = BlobInfo::new_with_superseded(
+                    &blob,
+                    &blob_metadata,
+                    superseded_blob.as_ref().map(|(b, m)| (&**b, m)),
+                );
                 // Store legacy key in the database.
                 self.db
                     .store_new_key(
                         &key,
                         KeyType::Client,
                         &params,
-                        &(&blob, &blob_metadata),
+                        &blob_info,
                         &CertificateInfo::new(user_cert, ca_cert),
                         &metadata,
                         &km_uuid,
@@ -635,13 +937,17 @@ impl LegacyImporterState {
         {
             let (km_blob_params, _, _) = self
                 .legacy_loader
-                .load_by_uid_alias(uid, &alias, None)
+                .load_by_uid_alias(uid, &alias, &None)
                 .context("In bulk_delete: Trying to load legacy blob.")?;
 
             // Determine if the key needs special handling to be deleted.
             let (need_gc, is_super_encrypted) = km_blob_params
                 .as_ref()
                 .map(|(blob, params)| {
+                    let params = match params {
+                        LegacyKeyCharacteristics::Cache(params)
+                        | LegacyKeyCharacteristics::File(params) => params,
+                    };
                     (
                         params.iter().any(|kp| {
                             KeyParameterValue::RollbackResistance == *kp.key_parameter_value()
@@ -714,18 +1020,68 @@ impl LegacyImporterState {
     }
 }
 
-enum LegacyBlob {
+enum LegacyBlob<'a> {
     Vec(Vec<u8>),
     ZVec(ZVec),
+    Ref(&'a [u8]),
 }
 
-impl Deref for LegacyBlob {
+impl Deref for LegacyBlob<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Vec(v) => v,
             Self::ZVec(v) => v,
+            Self::Ref(v) => v,
         }
     }
+}
+
+/// This function takes two KeyParameter lists. The first is assumed to have been retrieved from the
+/// KM back end using km_dev.getKeyCharacteristics. The second is assumed to have been retrieved
+/// from a legacy key characteristics file (not cache) as used in Android P and older. The function
+/// augments the former with entries from the latter only if no equivalent entry is present ignoring.
+/// the security level of enforcement. All entries in the latter are assumed to have security level
+/// KEYSTORE.
+fn augment_legacy_characteristics_file_with_key_characteristics<T>(
+    mut from_km: Vec<KeyParameter>,
+    legacy: T,
+) -> Vec<KeyParameter>
+where
+    T: IntoIterator<Item = KeyParameter>,
+{
+    for legacy_kp in legacy.into_iter() {
+        if !from_km
+            .iter()
+            .any(|km_kp| km_kp.key_parameter_value() == legacy_kp.key_parameter_value())
+        {
+            from_km.push(legacy_kp);
+        }
+    }
+    from_km
+}
+
+/// Attempts to retrieve the key characteristics for the given blob from the KM back end with the
+/// given UUID. It may upgrade the key blob in the process. In that case the upgraded blob is
+/// returned as the second tuple member.
+fn get_key_characteristics_without_app_data(
+    uuid: &Uuid,
+    blob: &[u8],
+) -> Result<(Vec<KeyParameter>, Option<Vec<u8>>)> {
+    let (km_dev, _) = crate::globals::get_keymint_dev_by_uuid(uuid)
+        .with_context(|| format!("In foo: Trying to get km device for id {:?}", uuid))?;
+
+    let (characteristics, upgraded_blob) = upgrade_keyblob_if_required_with(
+        &*km_dev,
+        blob,
+        &[],
+        |blob| {
+            let _wd = wd::watch_millis("In foo: Calling GetKeyCharacteristics.", 500);
+            map_km_error(km_dev.getKeyCharacteristics(blob, &[], &[]))
+        },
+        |_| Ok(()),
+    )
+    .context("In foo.")?;
+    Ok((key_characteristics_to_internal(characteristics), upgraded_blob))
 }
