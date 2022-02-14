@@ -22,11 +22,11 @@ use crate::permission::{KeyPerm, KeystorePerm};
 use crate::security_level::KeystoreSecurityLevel;
 use crate::utils::{
     check_grant_permission, check_key_permission, check_keystore_permission,
-    key_parameters_to_authorizations, list_key_entries, watchdog as wd,
+    key_parameters_to_authorizations, list_key_entries, uid_to_android_user, watchdog as wd,
 };
 use crate::{
     database::Uuid,
-    globals::{create_thread_local_db, DB, LEGACY_BLOB_LOADER, LEGACY_IMPORTER},
+    globals::{create_thread_local_db, DB, LEGACY_BLOB_LOADER, LEGACY_IMPORTER, SUPER_KEY},
 };
 use crate::{database::KEYSTORE_UUID, permission};
 use crate::{
@@ -130,9 +130,13 @@ impl KeystoreService {
 
     fn get_key_entry(&self, key: &KeyDescriptor) -> Result<KeyEntryResponse> {
         let caller_uid = ThreadState::get_calling_uid();
+
+        let super_key =
+            SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+
         let (key_id_guard, mut key_entry) = DB
             .with(|db| {
-                LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
+                LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                     db.borrow_mut().load_key_entry(
                         key,
                         KeyType::Client,
@@ -182,8 +186,11 @@ impl KeystoreService {
         certificate_chain: Option<&[u8]>,
     ) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
+        let super_key =
+            SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+
         DB.with::<_, Result<()>>(|db| {
-            let entry = match LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
+            let entry = match LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                 db.borrow_mut().load_key_entry(
                     key,
                     KeyType::Client,
@@ -291,8 +298,11 @@ impl KeystoreService {
 
     fn delete_key(&self, key: &KeyDescriptor) -> Result<()> {
         let caller_uid = ThreadState::get_calling_uid();
+        let super_key =
+            SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+
         DB.with(|db| {
-            LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
+            LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                 db.borrow_mut().unbind_key(key, KeyType::Client, caller_uid, |k, av| {
                     check_key_permission(KeyPerm::Delete, k, &av).context("During delete_key.")
                 })
@@ -309,8 +319,11 @@ impl KeystoreService {
         access_vector: permission::KeyPermSet,
     ) -> Result<KeyDescriptor> {
         let caller_uid = ThreadState::get_calling_uid();
+        let super_key =
+            SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+
         DB.with(|db| {
-            LEGACY_IMPORTER.with_try_import(key, caller_uid, || {
+            LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                 db.borrow_mut().grant(
                     key,
                     caller_uid,

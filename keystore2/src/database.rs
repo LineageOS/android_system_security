@@ -578,6 +578,36 @@ pub struct CertificateInfo {
     cert_chain: Option<Vec<u8>>,
 }
 
+/// This type represents a Blob with its metadata and an optional superseded blob.
+#[derive(Debug)]
+pub struct BlobInfo<'a> {
+    blob: &'a [u8],
+    metadata: &'a BlobMetaData,
+    /// Superseded blobs are an artifact of legacy import. In some rare occasions
+    /// the key blob needs to be upgraded during import. In that case two
+    /// blob are imported, the superseded one will have to be imported first,
+    /// so that the garbage collector can reap it.
+    superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+}
+
+impl<'a> BlobInfo<'a> {
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// and no superseded blob info.
+    pub fn new(blob: &'a [u8], metadata: &'a BlobMetaData) -> Self {
+        Self { blob, metadata, superseded_blob: None }
+    }
+
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// as well as superseded blob info.
+    pub fn new_with_superseded(
+        blob: &'a [u8],
+        metadata: &'a BlobMetaData,
+        superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+    ) -> Self {
+        Self { blob, metadata, superseded_blob }
+    }
+}
+
 impl CertificateInfo {
     /// Constructs a new CertificateInfo object from `cert` and `cert_chain`
     pub fn new(cert: Option<Vec<u8>>, cert_chain: Option<Vec<u8>>) -> Self {
@@ -2233,7 +2263,7 @@ impl KeystoreDB {
         key: &KeyDescriptor,
         key_type: KeyType,
         params: &[KeyParameter],
-        blob_info: &(&[u8], &BlobMetaData),
+        blob_info: &BlobInfo,
         cert_info: &CertificateInfo,
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
@@ -2253,7 +2283,27 @@ impl KeystoreDB {
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
-            let (blob, blob_metadata) = *blob_info;
+            let BlobInfo { blob, metadata: blob_metadata, superseded_blob } = *blob_info;
+
+            // In some occasions the key blob is already upgraded during the import.
+            // In order to make sure it gets properly deleted it is inserted into the
+            // database here and then immediately replaced by the superseding blob.
+            // The garbage collector will then subject the blob to deleteKey of the
+            // KM back end to permanently invalidate the key.
+            let need_gc = if let Some((blob, blob_metadata)) = superseded_blob {
+                Self::set_blob_internal(
+                    tx,
+                    key_id.id(),
+                    SubComponentType::KEY_BLOB,
+                    Some(blob),
+                    Some(blob_metadata),
+                )
+                .context("Trying to insert superseded key blob.")?;
+                true
+            } else {
+                false
+            };
+
             Self::set_blob_internal(
                 tx,
                 key_id.id(),
@@ -2280,7 +2330,8 @@ impl KeystoreDB {
                 .context("Trying to insert key parameters.")?;
             metadata.store_in_db(key_id.id(), tx).context("Trying to insert key metadata.")?;
             let need_gc = Self::rebind_alias(tx, &key_id, alias, &domain, namespace, key_type)
-                .context("Trying to rebind alias.")?;
+                .context("Trying to rebind alias.")?
+                || need_gc;
             Ok(key_id).do_gc(need_gc)
         })
         .context("In store_new_key.")
@@ -3234,6 +3285,7 @@ pub mod tests {
     use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::{Duration, SystemTime};
+    use crate::utils::AesGcm;
     #[cfg(disabled)]
     use std::time::Instant;
 
@@ -5557,8 +5609,7 @@ pub mod tests {
             None,
         )?;
 
-        let decrypted_secret_bytes =
-            loaded_super_key.aes_gcm_decrypt(&encrypted_secret, &iv, &tag)?;
+        let decrypted_secret_bytes = loaded_super_key.decrypt(&encrypted_secret, &iv, &tag)?;
         assert_eq!(secret_bytes, &*decrypted_secret_bytes);
 
         Ok(())
