@@ -28,8 +28,7 @@ use crate::{
     legacy_blob::LegacyBlobLoader,
     legacy_importer::LegacyImporter,
     raw_device::KeyMintDevice,
-    utils::watchdog as wd,
-    utils::AID_KEYSTORE,
+    utils::{watchdog as wd, AesGcm, AID_KEYSTORE},
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, HardwareAuthToken::HardwareAuthToken,
@@ -154,15 +153,22 @@ pub struct SuperKey {
     reencrypt_with: Option<Arc<SuperKey>>,
 }
 
-impl SuperKey {
-    /// For most purposes `unwrap_key` handles decryption,
-    /// but legacy handling and some tests need to assume AES and decrypt directly.
-    pub fn aes_gcm_decrypt(&self, data: &[u8], iv: &[u8], tag: &[u8]) -> Result<ZVec> {
+impl AesGcm for SuperKey {
+    fn decrypt(&self, data: &[u8], iv: &[u8], tag: &[u8]) -> Result<ZVec> {
         if self.algorithm == SuperEncryptionAlgorithm::Aes256Gcm {
             aes_gcm_decrypt(data, iv, tag, &self.key)
-                .context("In aes_gcm_decrypt: decryption failed")
+                .context("In SuperKey::decrypt: Decryption failed.")
         } else {
-            Err(Error::sys()).context("In aes_gcm_decrypt: Key is not an AES key")
+            Err(Error::sys()).context("In SuperKey::decrypt: Key is not an AES key.")
+        }
+    }
+
+    fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if self.algorithm == SuperEncryptionAlgorithm::Aes256Gcm {
+            aes_gcm_encrypt(plaintext, &self.key)
+                .context("In SuperKey::encrypt: Encryption failed.")
+        } else {
+            Err(Error::sys()).context("In SuperKey::encrypt: Key is not an AES key.")
         }
     }
 }
@@ -386,7 +392,15 @@ impl SuperKeyManager {
         })
     }
 
-    pub fn get_per_boot_key_by_user_id(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
+    pub fn get_per_boot_key_by_user_id(
+        &self,
+        user_id: UserId,
+    ) -> Option<Arc<dyn AesGcm + Send + Sync>> {
+        self.get_per_boot_key_by_user_id_internal(user_id)
+            .map(|sk| -> Arc<dyn AesGcm + Send + Sync> { sk })
+    }
+
+    fn get_per_boot_key_by_user_id_internal(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
         self.data.user_keys.get(&user_id).and_then(|e| e.per_boot.as_ref().cloned())
     }
 
@@ -464,7 +478,7 @@ impl SuperKeyManager {
         match key.algorithm {
             SuperEncryptionAlgorithm::Aes256Gcm => match (metadata.iv(), metadata.aead_tag()) {
                 (Some(iv), Some(tag)) => key
-                    .aes_gcm_decrypt(blob, iv, tag)
+                    .decrypt(blob, iv, tag)
                     .context("In unwrap_key_with_key: Failed to decrypt the key blob."),
                 (iv, tag) => Err(Error::Rc(ResponseCode::VALUE_CORRUPTED)).context(format!(
                     concat!(
@@ -1093,7 +1107,7 @@ impl SuperKeyManager {
         legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id(user_id) {
+        match self.get_per_boot_key_by_user_id_internal(user_id) {
             Some(super_key) => Ok(UserState::LskfUnlocked(super_key)),
             None => {
                 // Check if a super key exists in the database or legacy database.
@@ -1127,7 +1141,7 @@ impl SuperKeyManager {
         user_id: UserId,
         password: Option<&Password>,
     ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id(user_id) {
+        match self.get_per_boot_key_by_user_id_internal(user_id) {
             Some(_) if password.is_none() => {
                 // Transitioning to swiping, delete only the super key in database and cache,
                 // and super-encrypted keys in database (and in KM).
@@ -1162,7 +1176,7 @@ impl SuperKeyManager {
         user_id: UserId,
         password: &Password,
     ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id(user_id) {
+        match self.get_per_boot_key_by_user_id_internal(user_id) {
             Some(super_key) => {
                 log::info!("In unlock_and_get_user_state. Trying to unlock when already unlocked.");
                 Ok(UserState::LskfUnlocked(super_key))
