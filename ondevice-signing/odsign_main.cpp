@@ -39,7 +39,6 @@
 
 using android::base::ErrnoError;
 using android::base::Error;
-using android::base::GetProperty;
 using android::base::Result;
 using android::base::SetProperty;
 
@@ -54,7 +53,6 @@ const std::string kArtArtifactsDir = "/data/misc/apexdata/com.android.art/dalvik
 constexpr const char* kOdrefreshPath = "/apex/com.android.art/bin/odrefresh";
 constexpr const char* kCompOsVerifyPath = "/apex/com.android.compos/bin/compos_verify_key";
 constexpr const char* kFsVerityProcPath = "/proc/sys/fs/verity";
-constexpr const char* kKvmDevicePath = "/dev/kvm";
 
 constexpr bool kForceCompilation = false;
 constexpr bool kUseCompOs = true;
@@ -85,13 +83,15 @@ constexpr const char* kStopServiceProp = "ctl.stop";
 
 enum class CompOsInstance { kCurrent, kPending };
 
-static std::vector<uint8_t> readBytesFromFile(const std::string& path) {
+namespace {
+
+std::vector<uint8_t> readBytesFromFile(const std::string& path) {
     std::string str;
     android::base::ReadFileToString(path, &str);
     return std::vector<uint8_t>(str.begin(), str.end());
 }
 
-static bool rename(const std::string& from, const std::string& to) {
+bool rename(const std::string& from, const std::string& to) {
     std::error_code ec;
     std::filesystem::rename(from, to, ec);
     if (ec) {
@@ -101,7 +101,7 @@ static bool rename(const std::string& from, const std::string& to) {
     return true;
 }
 
-static int removeDirectory(const std::string& directory) {
+int removeDirectory(const std::string& directory) {
     std::error_code ec;
     auto num_removed = std::filesystem::remove_all(directory, ec);
     if (ec) {
@@ -115,7 +115,7 @@ static int removeDirectory(const std::string& directory) {
     }
 }
 
-static bool directoryHasContent(const std::string& directory) {
+bool directoryHasContent(const std::string& directory) {
     std::error_code ec;
     return std::filesystem::is_directory(directory, ec) &&
            !std::filesystem::is_empty(directory, ec);
@@ -135,7 +135,7 @@ art::odrefresh::ExitCode checkArtifacts() {
     return static_cast<art::odrefresh::ExitCode>(exit_code);
 }
 
-static std::string toHex(const std::vector<uint8_t>& digest) {
+std::string toHex(const std::vector<uint8_t>& digest) {
     std::stringstream ss;
     for (auto it = digest.begin(); it != digest.end(); ++it) {
         ss << std::setfill('0') << std::setw(2) << std::hex << static_cast<unsigned>(*it);
@@ -144,12 +144,8 @@ static std::string toHex(const std::vector<uint8_t>& digest) {
 }
 
 bool compOsPresent() {
-    return access(kCompOsVerifyPath, X_OK) == 0 && access(kKvmDevicePath, F_OK) == 0;
-}
-
-bool isDebugBuild() {
-    std::string build_type = GetProperty("ro.build.type", "");
-    return build_type == "userdebug" || build_type == "eng";
+    // We must have the CompOS APEX
+    return access(kCompOsVerifyPath, X_OK) == 0;
 }
 
 Result<void> verifyExistingRootCert(const SigningKey& key) {
@@ -434,9 +430,8 @@ Result<void> persistDigests(const std::map<std::string, std::string>& digests,
     return {};
 }
 
-static Result<void>
-verifyArtifactsIntegrity(const std::map<std::string, std::string>& trusted_digests,
-                         bool supportsFsVerity) {
+Result<void> verifyArtifactsIntegrity(const std::map<std::string, std::string>& trusted_digests,
+                                      bool supportsFsVerity) {
     Result<void> integrityStatus;
 
     if (supportsFsVerity) {
@@ -507,7 +502,8 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
                                                      const SigningKey& signing_key,
                                                      bool* digests_verified) {
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
-        return art::odrefresh::ExitCode::kCompilationRequired;
+        // No pending CompOS artifacts, all that matters is the current ones.
+        return checkArtifacts();
     }
 
     // CompOS has generated some artifacts that may, or may not, match the
@@ -537,15 +533,8 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
         return art::odrefresh::ExitCode::kCompilationRequired;
     }
 
-    odrefresh_status = checkArtifacts();
-    if (odrefresh_status != art::odrefresh::ExitCode::kOkay) {
-        LOG(WARNING) << "Pending artifacts are not OK";
-        return odrefresh_status;
-    }
-
-    // The artifacts appear to be up to date - but we haven't
-    // verified that they are genuine yet.
-
+    // Make sure the artifacts we have are genuinely produced by the current
+    // instance of CompOS.
     auto compos_info = getComposInfo(compos_key);
     if (!compos_info.ok()) {
         LOG(WARNING) << compos_info.error();
@@ -555,25 +544,49 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
 
         auto status = verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_digests, signing_key);
         if (!status.ok()) {
-            LOG(WARNING) << status.error();
+            LOG(WARNING) << "Faild to verify CompOS artifacts: " << status.error();
         } else {
-            auto persisted = persistDigests(compos_digests, signing_key);
-
-            if (!persisted.ok()) {
-                LOG(WARNING) << persisted.error();
-            } else {
-                LOG(INFO) << "Pending artifacts successfully verified.";
+            LOG(INFO) << "CompOS artifacts successfully verified.";
+            odrefresh_status = checkArtifacts();
+            switch (odrefresh_status) {
+            case art::odrefresh::ExitCode::kCompilationRequired:
+                // We have verified all the files, and we need to make sure
+                // we don't check them against odsign.info which will be out
+                // of date.
                 *digests_verified = true;
-                return art::odrefresh::ExitCode::kOkay;
+                return odrefresh_status;
+            case art::odrefresh::ExitCode::kOkay: {
+                // We have digests of all the files, so we can just sign them & save them now.
+                // We need to make sure we don't check them against odsign.info which will
+                // be out of date.
+                auto persisted = persistDigests(compos_digests, signing_key);
+                if (!persisted.ok()) {
+                    LOG(ERROR) << persisted.error();
+                    // Don't try to compile again - if we can't write the digests, things
+                    // are pretty bad.
+                    return art::odrefresh::ExitCode::kCleanupFailed;
+                }
+                LOG(INFO) << "Persisted CompOS digests.";
+                *digests_verified = true;
+                return odrefresh_status;
+            }
+            default:
+                return odrefresh_status;
             }
         }
     }
 
     // We can't use the existing artifacts, so we will need to generate new
     // ones.
-    removeDirectory(kArtArtifactsDir);
+    if (removeDirectory(kArtArtifactsDir) == 0) {
+        // We have unsigned artifacts that we can't delete, so it's not safe to continue.
+        LOG(ERROR) << "Unable to delete invalid CompOS artifacts";
+        return art::odrefresh::ExitCode::kCleanupFailed;
+    }
+
     return art::odrefresh::ExitCode::kCompilationRequired;
 }
+}  // namespace
 
 int main(int /* argc */, char** argv) {
     android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));
@@ -610,7 +623,7 @@ int main(int /* argc */, char** argv) {
         LOG(INFO) << "Device doesn't support fsverity. Falling back to full verification.";
     }
 
-    bool useCompOs = kUseCompOs && supportsFsVerity && compOsPresent() && isDebugBuild();
+    bool useCompOs = kUseCompOs && supportsFsVerity && compOsPresent();
 
     if (supportsFsVerity) {
         auto existing_cert = verifyExistingRootCert(*key);
@@ -641,8 +654,8 @@ int main(int /* argc */, char** argv) {
     if (useCompOs) {
         auto compos_key = addCompOsCertToFsVerityKeyring(*key);
         if (!compos_key.ok()) {
-            odrefresh_status = art::odrefresh::ExitCode::kCompilationRequired;
             LOG(WARNING) << compos_key.error();
+            odrefresh_status = checkArtifacts();
         } else {
             odrefresh_status =
                 checkCompOsPendingArtifacts(compos_key.value(), *key, &digests_verified);

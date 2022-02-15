@@ -45,6 +45,7 @@ mod perboot;
 pub(crate) mod utils;
 mod versioning;
 
+use crate::gc::Gc;
 use crate::impl_metadata; // This is in db_utils.rs
 use crate::key_parameter::{KeyParameter, Tag};
 use crate::metrics_store::log_rkp_error_stats;
@@ -54,7 +55,6 @@ use crate::{
     error::{Error as KsError, ErrorCode, ResponseCode},
     super_key::SuperKeyType,
 };
-use crate::{gc::Gc, super_key::USER_SUPER_KEY};
 use anyhow::{anyhow, Context, Result};
 use std::{convert::TryFrom, convert::TryInto, ops::Deref, time::SystemTimeError};
 use utils as db_utils;
@@ -576,6 +576,36 @@ impl Drop for KeyIdGuard {
 pub struct CertificateInfo {
     cert: Option<Vec<u8>>,
     cert_chain: Option<Vec<u8>>,
+}
+
+/// This type represents a Blob with its metadata and an optional superseded blob.
+#[derive(Debug)]
+pub struct BlobInfo<'a> {
+    blob: &'a [u8],
+    metadata: &'a BlobMetaData,
+    /// Superseded blobs are an artifact of legacy import. In some rare occasions
+    /// the key blob needs to be upgraded during import. In that case two
+    /// blob are imported, the superseded one will have to be imported first,
+    /// so that the garbage collector can reap it.
+    superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+}
+
+impl<'a> BlobInfo<'a> {
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// and no superseded blob info.
+    pub fn new(blob: &'a [u8], metadata: &'a BlobMetaData) -> Self {
+        Self { blob, metadata, superseded_blob: None }
+    }
+
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// as well as superseded blob info.
+    pub fn new_with_superseded(
+        blob: &'a [u8],
+        metadata: &'a BlobMetaData,
+        superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+    ) -> Self {
+        Self { blob, metadata, superseded_blob }
+    }
 }
 
 impl CertificateInfo {
@@ -2233,7 +2263,7 @@ impl KeystoreDB {
         key: &KeyDescriptor,
         key_type: KeyType,
         params: &[KeyParameter],
-        blob_info: &(&[u8], &BlobMetaData),
+        blob_info: &BlobInfo,
         cert_info: &CertificateInfo,
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
@@ -2253,7 +2283,27 @@ impl KeystoreDB {
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
-            let (blob, blob_metadata) = *blob_info;
+            let BlobInfo { blob, metadata: blob_metadata, superseded_blob } = *blob_info;
+
+            // In some occasions the key blob is already upgraded during the import.
+            // In order to make sure it gets properly deleted it is inserted into the
+            // database here and then immediately replaced by the superseding blob.
+            // The garbage collector will then subject the blob to deleteKey of the
+            // KM back end to permanently invalidate the key.
+            let need_gc = if let Some((blob, blob_metadata)) = superseded_blob {
+                Self::set_blob_internal(
+                    tx,
+                    key_id.id(),
+                    SubComponentType::KEY_BLOB,
+                    Some(blob),
+                    Some(blob_metadata),
+                )
+                .context("Trying to insert superseded key blob.")?;
+                true
+            } else {
+                false
+            };
+
             Self::set_blob_internal(
                 tx,
                 key_id.id(),
@@ -2280,7 +2330,8 @@ impl KeystoreDB {
                 .context("Trying to insert key parameters.")?;
             metadata.store_in_db(key_id.id(), tx).context("Trying to insert key metadata.")?;
             let need_gc = Self::rebind_alias(tx, &key_id, alias, &domain, namespace, key_type)
-                .context("Trying to rebind alias.")?;
+                .context("Trying to rebind alias.")?
+                || need_gc;
             Ok(key_id).do_gc(need_gc)
         })
         .context("In store_new_key.")
@@ -2895,7 +2946,6 @@ impl KeystoreDB {
                      ) OR (
                          key_type = ?
                          AND namespace = ?
-                         AND alias = ?
                          AND state = ?
                      );",
                     aid_user_offset = AID_USER_OFFSET
@@ -2915,7 +2965,6 @@ impl KeystoreDB {
                     // OR super key:
                     KeyType::Super,
                     user_id,
-                    USER_SUPER_KEY.alias,
                     KeyLifeCycle::Live
                 ])
                 .context("In unbind_keys_for_user. Failed to query the keys created by apps.")?;
@@ -3209,7 +3258,7 @@ impl KeystoreDB {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use super::*;
     use crate::key_parameter::{
@@ -3218,7 +3267,7 @@ mod tests {
     };
     use crate::key_perm_set;
     use crate::permission::{KeyPerm, KeyPermSet};
-    use crate::super_key::SuperKeyManager;
+    use crate::super_key::{SuperKeyManager, USER_SUPER_KEY, SuperEncryptionAlgorithm, SuperKeyType};
     use keystore2_test_utils::TempDir;
     use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
         HardwareAuthToken::HardwareAuthToken,
@@ -3233,13 +3282,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fmt::Write;
     use std::sync::atomic::{AtomicU8, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
     use std::thread;
     use std::time::{Duration, SystemTime};
+    use crate::utils::AesGcm;
     #[cfg(disabled)]
     use std::time::Instant;
 
-    fn new_test_db() -> Result<KeystoreDB> {
+    pub fn new_test_db() -> Result<KeystoreDB> {
         let conn = KeystoreDB::make_connection("file::memory:")?;
 
         let mut db = KeystoreDB { conn, gc: None, perboot: Arc::new(perboot::PerbootDB::new()) };
@@ -3253,7 +3303,7 @@ mod tests {
     where
         F: Fn(&Uuid, &[u8]) -> Result<()> + Send + 'static,
     {
-        let super_key: Arc<SuperKeyManager> = Default::default();
+        let super_key: Arc<RwLock<SuperKeyManager>> = Default::default();
 
         let gc_db = KeystoreDB::new(path, None).expect("Failed to open test gc db_connection.");
         let gc = Gc::new_init_with(Default::default(), move || (Box::new(cb), gc_db, super_key));
@@ -5456,6 +5506,80 @@ mod tests {
     }
 
     #[test]
+    fn test_unbind_keys_for_user_removes_superkeys() -> Result<()> {
+        let mut db = new_test_db()?;
+        let super_key = keystore2_crypto::generate_aes256_key()?;
+        let pw: keystore2_crypto::Password = (&b"xyzabc"[..]).into();
+        let (encrypted_super_key, metadata) =
+            SuperKeyManager::encrypt_with_password(&super_key, &pw)?;
+
+        let key_name_enc = SuperKeyType {
+            alias: "test_super_key_1",
+            algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+        };
+
+        let key_name_nonenc = SuperKeyType {
+            alias: "test_super_key_2",
+            algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+        };
+
+        // Install two super keys.
+        db.store_super_key(
+            1,
+            &key_name_nonenc,
+            &super_key,
+            &BlobMetaData::new(),
+            &KeyMetaData::new(),
+        )?;
+        db.store_super_key(1, &key_name_enc, &encrypted_super_key, &metadata, &KeyMetaData::new())?;
+
+        // Check that both can be found in the database.
+        assert!(db.load_super_key(&key_name_enc, 1)?.is_some());
+        assert!(db.load_super_key(&key_name_nonenc, 1)?.is_some());
+
+        // Install the same keys for a different user.
+        db.store_super_key(
+            2,
+            &key_name_nonenc,
+            &super_key,
+            &BlobMetaData::new(),
+            &KeyMetaData::new(),
+        )?;
+        db.store_super_key(2, &key_name_enc, &encrypted_super_key, &metadata, &KeyMetaData::new())?;
+
+        // Check that the second pair of keys can be found in the database.
+        assert!(db.load_super_key(&key_name_enc, 2)?.is_some());
+        assert!(db.load_super_key(&key_name_nonenc, 2)?.is_some());
+
+        // Delete only encrypted keys.
+        db.unbind_keys_for_user(1, true)?;
+
+        // The encrypted superkey should be gone now.
+        assert!(db.load_super_key(&key_name_enc, 1)?.is_none());
+        assert!(db.load_super_key(&key_name_nonenc, 1)?.is_some());
+
+        // Reinsert the encrypted key.
+        db.store_super_key(1, &key_name_enc, &encrypted_super_key, &metadata, &KeyMetaData::new())?;
+
+        // Check that both can be found in the database, again..
+        assert!(db.load_super_key(&key_name_enc, 1)?.is_some());
+        assert!(db.load_super_key(&key_name_nonenc, 1)?.is_some());
+
+        // Delete all even unencrypted keys.
+        db.unbind_keys_for_user(1, false)?;
+
+        // Both should be gone now.
+        assert!(db.load_super_key(&key_name_enc, 1)?.is_none());
+        assert!(db.load_super_key(&key_name_nonenc, 1)?.is_none());
+
+        // Check that the second pair of keys was untouched.
+        assert!(db.load_super_key(&key_name_enc, 2)?.is_some());
+        assert!(db.load_super_key(&key_name_nonenc, 2)?.is_some());
+
+        Ok(())
+    }
+
+    #[test]
     fn test_store_super_key() -> Result<()> {
         let mut db = new_test_db()?;
         let pw: keystore2_crypto::Password = (&b"xyzabc"[..]).into();
@@ -5474,7 +5598,7 @@ mod tests {
             &KeyMetaData::new(),
         )?;
 
-        //check if super key exists
+        // Check if super key exists.
         assert!(db.key_exists(Domain::APP, 1, USER_SUPER_KEY.alias, KeyType::Super)?);
 
         let (_, key_entry) = db.load_super_key(&USER_SUPER_KEY, 1)?.unwrap();
@@ -5485,9 +5609,9 @@ mod tests {
             None,
         )?;
 
-        let decrypted_secret_bytes =
-            loaded_super_key.aes_gcm_decrypt(&encrypted_secret, &iv, &tag)?;
+        let decrypted_secret_bytes = loaded_super_key.decrypt(&encrypted_secret, &iv, &tag)?;
         assert_eq!(secret_bytes, &*decrypted_secret_bytes);
+
         Ok(())
     }
 

@@ -41,3 +41,26 @@ python_library_host {
         },
     },
 }
+
+rust_protobuf {
+    name: "libfsverity_digests_proto_rust",
+    crate_name: "fsverity_digests_proto",
+    source_stem: "fsverity_digests_proto",
+    protos: [
+        "fsverity_digests.proto",
+    ],
+    apex_available: [
+        "com.android.compos",
+    ],
+}
+
+cc_library_static {
+    name: "libfsverity_digests_proto_cc",
+    proto: {
+        type: "lite",
+        static: true,
+        canonical_path_from_root: false,
+        export_proto_headers: true,
+    },
+    srcs: ["fsverity_digests.proto"],
+}

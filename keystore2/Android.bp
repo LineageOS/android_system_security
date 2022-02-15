@@ -76,15 +76,6 @@ rust_library {
 }
 
 rust_library {
-    name: "libkeystore2_noicu",
-    defaults: ["libkeystore2_defaults"],
-    rustlibs: [
-        "liblibsqlite3_sys_noicu",
-        "librusqlite_noicu",
-    ],
-}
-
-rust_library {
     name: "libkeystore2_test_utils",
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
@@ -166,19 +157,4 @@ rust_binary {
         "liblegacykeystore-rust",
         "librusqlite",
     ],
-}
-
-// Variant of keystore2 for use in microdroid. It doesn't depend on the ICU-enabled sqlite.
-// This can be used also in Android, but we choose not to because it will bring two
-// variants of sqlite to the system causing more RAM usage and CPU cycles when loading.
-rust_binary {
-    name: "keystore2_microdroid",
-    stem: "keystore2",
-    defaults: ["keystore2_defaults"],
-    rustlibs: [
-        "libkeystore2_noicu",
-        "liblegacykeystore-rust_noicu",
-        "librusqlite_noicu",
-    ],
-    installable: false, // don't install this to Android
 }

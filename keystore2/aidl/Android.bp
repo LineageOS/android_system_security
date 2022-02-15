@@ -29,7 +29,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -52,7 +51,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -71,7 +69,6 @@ aidl_interface {
     backend: {
         java: {
             enabled: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -94,7 +91,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -116,7 +112,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         ndk: {
             enabled: true,
@@ -138,7 +133,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -157,7 +151,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,
@@ -179,7 +172,6 @@ aidl_interface {
     backend: {
         java: {
             platform_apis: true,
-            srcs_available: true,
         },
         rust: {
             enabled: true,

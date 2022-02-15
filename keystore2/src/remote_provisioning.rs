@@ -30,11 +30,14 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 };
 use android_security_remoteprovisioning::aidl::android::security::remoteprovisioning::{
     AttestationPoolStatus::AttestationPoolStatus, IRemoteProvisioning::BnRemoteProvisioning,
-    IRemoteProvisioning::IRemoteProvisioning, ImplInfo::ImplInfo,
+    IRemoteProvisioning::IRemoteProvisioning,
+    IRemotelyProvisionedKeyPool::BnRemotelyProvisionedKeyPool,
+    IRemotelyProvisionedKeyPool::IRemotelyProvisionedKeyPool, ImplInfo::ImplInfo,
+    RemotelyProvisionedKey::RemotelyProvisionedKey,
 };
 use android_security_remoteprovisioning::binder::{BinderFeatures, Strong};
 use android_system_keystore2::aidl::android::system::keystore2::{
-    Domain::Domain, KeyDescriptor::KeyDescriptor,
+    Domain::Domain, KeyDescriptor::KeyDescriptor, ResponseCode::ResponseCode,
 };
 use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
@@ -46,7 +49,8 @@ use crate::database::{CertificateChain, KeystoreDB, Uuid};
 use crate::error::{self, map_or_log_err, map_rem_prov_error, Error};
 use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB};
 use crate::metrics_store::log_rkp_error_stats;
-use crate::utils::watchdog as wd;
+use crate::permission::KeystorePerm;
+use crate::utils::{check_keystore_permission, watchdog as wd};
 use android_security_metrics::aidl::android::security::metrics::RkpError::RkpError as MetricsRkpError;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
@@ -90,70 +94,6 @@ impl RemProvState {
         Ok(pool_status.total != 0)
     }
 
-    /// Fetches a remote provisioning attestation key and certificate chain inside of the
-    /// returned `CertificateChain` struct if one exists for the given caller_uid. If one has not
-    /// been assigned, this function will assign it. If there are no signed attestation keys
-    /// available to be assigned, it will return the ResponseCode `OUT_OF_KEYS`
-    fn get_rem_prov_attest_key(
-        &self,
-        key: &KeyDescriptor,
-        caller_uid: u32,
-        db: &mut KeystoreDB,
-    ) -> Result<Option<CertificateChain>> {
-        match key.domain {
-            Domain::APP => {
-                // Attempt to get an Attestation Key once. If it fails, then the app doesn't
-                // have a valid chain assigned to it. The helper function will return None after
-                // attempting to assign a key. An error will be thrown if the pool is simply out
-                // of usable keys. Then another attempt to fetch the just-assigned key will be
-                // made. If this fails too, something is very wrong.
-                self.get_rem_prov_attest_key_helper(key, caller_uid, db)
-                    .context("In get_rem_prov_attest_key: Failed to get a key")?
-                    .map_or_else(
-                        || self.get_rem_prov_attest_key_helper(key, caller_uid, db),
-                        |v| Ok(Some(v)),
-                    )
-                    .context(concat!(
-                        "In get_rem_prov_attest_key: Failed to get a key after",
-                        "attempting to assign one."
-                    ))?
-                    .map_or_else(
-                        || {
-                            Err(Error::sys()).context(concat!(
-                                "In get_rem_prov_attest_key: Attempted to assign a ",
-                                "key and failed silently. Something is very wrong."
-                            ))
-                        },
-                        |cert_chain| Ok(Some(cert_chain)),
-                    )
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// Returns None if an AttestationKey fails to be assigned. Errors if no keys are available.
-    fn get_rem_prov_attest_key_helper(
-        &self,
-        key: &KeyDescriptor,
-        caller_uid: u32,
-        db: &mut KeystoreDB,
-    ) -> Result<Option<CertificateChain>> {
-        let cert_chain = db
-            .retrieve_attestation_key_and_cert_chain(key.domain, caller_uid as i64, &self.km_uuid)
-            .context("In get_rem_prov_attest_key_helper: Failed to retrieve a key + cert chain")?;
-        match cert_chain {
-            Some(cert_chain) => Ok(Some(cert_chain)),
-            // Either this app needs to be assigned a key, or the pool is empty. An error will
-            // be thrown if there is no key available to assign. This will indicate that the app
-            // should be nudged to provision more keys so keystore can retry.
-            None => {
-                db.assign_attestation_key(key.domain, caller_uid as i64, &self.km_uuid)
-                    .context("In get_rem_prov_attest_key_helper: Failed to assign a key")?;
-                Ok(None)
-            }
-        }
-    }
-
     fn is_asymmetric_key(&self, params: &[KeyParameter]) -> bool {
         params.iter().any(|kp| {
             matches!(
@@ -189,7 +129,7 @@ impl RemProvState {
             // and therefore will not be attested.
             Ok(None)
         } else {
-            match self.get_rem_prov_attest_key(key, caller_uid, db) {
+            match get_rem_prov_attest_key(key.domain, caller_uid, db, &self.km_uuid) {
                 Err(e) => {
                     log::error!(
                         concat!(
@@ -233,9 +173,9 @@ impl RemoteProvisioningService {
     fn get_dev_by_sec_level(
         &self,
         sec_level: &SecurityLevel,
-    ) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
+    ) -> Result<&dyn IRemotelyProvisionedComponent> {
         if let Some(dev) = self.device_by_sec_level.get(sec_level) {
-            Ok(dev.clone())
+            Ok(dev.as_ref())
         } else {
             Err(error::Error::sys()).context(concat!(
                 "In get_dev_by_sec_level: Remote instance for requested security level",
@@ -346,23 +286,21 @@ impl RemoteProvisioningService {
     /// here.
     pub fn provision_cert_chain(
         &self,
+        db: &mut KeystoreDB,
         public_key: &[u8],
         batch_cert: &[u8],
         certs: &[u8],
         expiration_date: i64,
         sec_level: SecurityLevel,
     ) -> Result<()> {
-        DB.with::<_, Result<()>>(|db| {
-            let mut db = db.borrow_mut();
-            let (_, _, uuid) = get_keymint_device(&sec_level)?;
-            db.store_signed_attestation_certificate_chain(
-                public_key,
-                batch_cert,
-                certs, /* DER encoded certificate chain */
-                expiration_date,
-                &uuid,
-            )
-        })
+        let (_, _, uuid) = get_keymint_device(&sec_level)?;
+        db.store_signed_attestation_certificate_chain(
+            public_key,
+            batch_cert,
+            certs, /* DER encoded certificate chain */
+            expiration_date,
+            &uuid,
+        )
     }
 
     fn parse_cose_mac0_for_coords(data: &[u8]) -> Result<Vec<u8>> {
@@ -429,19 +367,25 @@ impl RemoteProvisioningService {
     /// `is_test_mode` indicates whether or not the returned public key should be marked as being
     /// for testing in order to differentiate them from private keys. If the call is successful,
     /// the key pair is then added to the database.
-    pub fn generate_key_pair(&self, is_test_mode: bool, sec_level: SecurityLevel) -> Result<()> {
+    pub fn generate_key_pair(
+        &self,
+        db: &mut KeystoreDB,
+        is_test_mode: bool,
+        sec_level: SecurityLevel,
+    ) -> Result<()> {
         let (_, _, uuid) = get_keymint_device(&sec_level)?;
-        let dev = self.get_dev_by_sec_level(&sec_level)?;
+        let dev = self.get_dev_by_sec_level(&sec_level).context(format!(
+            "In generate_key_pair: Failed to get device for security level {:?}",
+            sec_level
+        ))?;
         let mut maced_key = MacedPublicKey { macedKey: Vec::new() };
         let priv_key =
             map_rem_prov_error(dev.generateEcdsaP256KeyPair(is_test_mode, &mut maced_key))
                 .context("In generate_key_pair: Failed to generated ECDSA keypair.")?;
         let raw_key = Self::parse_cose_mac0_for_coords(&maced_key.macedKey)
             .context("In generate_key_pair: Failed to parse raw key")?;
-        DB.with::<_, Result<()>>(|db| {
-            let mut db = db.borrow_mut();
-            db.create_attestation_key_entry(&maced_key.macedKey, &raw_key, &priv_key, &uuid)
-        })
+        db.create_attestation_key_entry(&maced_key.macedKey, &raw_key, &priv_key, &uuid)
+            .context("In generate_key_pair: Failed to insert attestation key entry")
     }
 
     /// Checks the security level of each available IRemotelyProvisionedComponent hal and returns
@@ -480,6 +424,70 @@ pub fn get_pool_status(expired_by: i64, sec_level: SecurityLevel) -> Result<Atte
     })
 }
 
+/// Fetches a remote provisioning attestation key and certificate chain inside of the
+/// returned `CertificateChain` struct if one exists for the given caller_uid. If one has not
+/// been assigned, this function will assign it. If there are no signed attestation keys
+/// available to be assigned, it will return the ResponseCode `OUT_OF_KEYS`
+fn get_rem_prov_attest_key(
+    domain: Domain,
+    caller_uid: u32,
+    db: &mut KeystoreDB,
+    km_uuid: &Uuid,
+) -> Result<Option<CertificateChain>> {
+    match domain {
+        Domain::APP => {
+            // Attempt to get an Attestation Key once. If it fails, then the app doesn't
+            // have a valid chain assigned to it. The helper function will return None after
+            // attempting to assign a key. An error will be thrown if the pool is simply out
+            // of usable keys. Then another attempt to fetch the just-assigned key will be
+            // made. If this fails too, something is very wrong.
+            get_rem_prov_attest_key_helper(domain, caller_uid, db, km_uuid)
+                .context("In get_rem_prov_attest_key: Failed to get a key")?
+                .map_or_else(
+                    || get_rem_prov_attest_key_helper(domain, caller_uid, db, km_uuid),
+                    |v| Ok(Some(v)),
+                )
+                .context(concat!(
+                    "In get_rem_prov_attest_key: Failed to get a key after",
+                    "attempting to assign one."
+                ))?
+                .map_or_else(
+                    || {
+                        Err(Error::sys()).context(concat!(
+                            "In get_rem_prov_attest_key: Attempted to assign a ",
+                            "key and failed silently. Something is very wrong."
+                        ))
+                    },
+                    |cert_chain| Ok(Some(cert_chain)),
+                )
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Returns None if an AttestationKey fails to be assigned. Errors if no keys are available.
+fn get_rem_prov_attest_key_helper(
+    domain: Domain,
+    caller_uid: u32,
+    db: &mut KeystoreDB,
+    km_uuid: &Uuid,
+) -> Result<Option<CertificateChain>> {
+    let cert_chain = db
+        .retrieve_attestation_key_and_cert_chain(domain, caller_uid as i64, km_uuid)
+        .context("In get_rem_prov_attest_key_helper: Failed to retrieve a key + cert chain")?;
+    match cert_chain {
+        Some(cert_chain) => Ok(Some(cert_chain)),
+        // Either this app needs to be assigned a key, or the pool is empty. An error will
+        // be thrown if there is no key available to assign. This will indicate that the app
+        // should be nudged to provision more keys so keystore can retry.
+        None => {
+            db.assign_attestation_key(domain, caller_uid as i64, km_uuid)
+                .context("In get_rem_prov_attest_key_helper: Failed to assign a key")?;
+            Ok(None)
+        }
+    }
+}
+
 impl binder::Interface for RemoteProvisioningService {}
 
 // Implementation of IRemoteProvisioning. See AIDL spec at
@@ -489,7 +497,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         &self,
         expired_by: i64,
         sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<AttestationPoolStatus> {
+    ) -> binder::Result<AttestationPoolStatus> {
         let _wp = wd::watch_millis("IRemoteProvisioning::getPoolStatus", 500);
         map_or_log_err(get_pool_status(expired_by, sec_level), Ok)
     }
@@ -503,7 +511,7 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         sec_level: SecurityLevel,
         protected_data: &mut ProtectedData,
         device_info: &mut DeviceInfo,
-    ) -> binder::public_api::Result<Vec<u8>> {
+    ) -> binder::Result<Vec<u8>> {
         let _wp = wd::watch_millis("IRemoteProvisioning::generateCsr", 500);
         map_or_log_err(
             self.generate_csr(
@@ -526,31 +534,134 @@ impl IRemoteProvisioning for RemoteProvisioningService {
         certs: &[u8],
         expiration_date: i64,
         sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<()> {
+    ) -> binder::Result<()> {
         let _wp = wd::watch_millis("IRemoteProvisioning::provisionCertChain", 500);
-        map_or_log_err(
-            self.provision_cert_chain(public_key, batch_cert, certs, expiration_date, sec_level),
-            Ok,
-        )
+        DB.with::<_, binder::Result<()>>(|db| {
+            map_or_log_err(
+                self.provision_cert_chain(
+                    &mut db.borrow_mut(),
+                    public_key,
+                    batch_cert,
+                    certs,
+                    expiration_date,
+                    sec_level,
+                ),
+                Ok,
+            )
+        })
     }
 
-    fn generateKeyPair(
-        &self,
-        is_test_mode: bool,
-        sec_level: SecurityLevel,
-    ) -> binder::public_api::Result<()> {
+    fn generateKeyPair(&self, is_test_mode: bool, sec_level: SecurityLevel) -> binder::Result<()> {
         let _wp = wd::watch_millis("IRemoteProvisioning::generateKeyPair", 500);
-        map_or_log_err(self.generate_key_pair(is_test_mode, sec_level), Ok)
+        DB.with::<_, binder::Result<()>>(|db| {
+            map_or_log_err(
+                self.generate_key_pair(&mut db.borrow_mut(), is_test_mode, sec_level),
+                Ok,
+            )
+        })
     }
 
-    fn getImplementationInfo(&self) -> binder::public_api::Result<Vec<ImplInfo>> {
+    fn getImplementationInfo(&self) -> binder::Result<Vec<ImplInfo>> {
         let _wp = wd::watch_millis("IRemoteProvisioning::getSecurityLevels", 500);
         map_or_log_err(self.get_implementation_info(), Ok)
     }
 
-    fn deleteAllKeys(&self) -> binder::public_api::Result<i64> {
+    fn deleteAllKeys(&self) -> binder::Result<i64> {
         let _wp = wd::watch_millis("IRemoteProvisioning::deleteAllKeys", 500);
         map_or_log_err(self.delete_all_keys(), Ok)
+    }
+}
+
+/// Implementation of the IRemotelyProvisionedKeyPool service.
+#[derive(Default)]
+pub struct RemotelyProvisionedKeyPoolService {
+    unique_id_to_sec_level: HashMap<String, SecurityLevel>,
+}
+
+impl RemotelyProvisionedKeyPoolService {
+    /// Fetches a remotely provisioned certificate chain and key for the given client uid that
+    /// was provisioned using the IRemotelyProvisionedComponent with the given id. The same key
+    /// will be returned for a given caller_uid on every request. If there are no attestation keys
+    /// available, `OUT_OF_KEYS` is returned.
+    fn get_attestation_key(
+        &self,
+        db: &mut KeystoreDB,
+        caller_uid: i32,
+        irpc_id: &str,
+    ) -> Result<RemotelyProvisionedKey> {
+        log::info!("get_attestation_key(self, {}, {}", caller_uid, irpc_id);
+
+        let sec_level = self
+            .unique_id_to_sec_level
+            .get(irpc_id)
+            .ok_or(Error::Rc(ResponseCode::INVALID_ARGUMENT))
+            .context(format!("In get_attestation_key: unknown irpc id '{}'", irpc_id))?;
+        let (_, _, km_uuid) = get_keymint_device(sec_level)?;
+
+        let cert_chain = get_rem_prov_attest_key(Domain::APP, caller_uid as u32, db, &km_uuid)
+            .context("In get_attestation_key")?;
+        match cert_chain {
+            Some(chain) => Ok(RemotelyProvisionedKey {
+                keyBlob: chain.private_key.to_vec(),
+                encodedCertChain: chain.cert_chain,
+            }),
+            // It should be impossible to get `None`, but handle it just in case as a
+            // precaution against future behavioral changes in `get_rem_prov_attest_key`.
+            None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS))
+                .context("In get_attestation_key: No available attestation keys"),
+        }
+    }
+
+    /// Creates a new instance of the remotely provisioned key pool service, used for fetching
+    /// remotely provisioned attestation keys.
+    pub fn new_native_binder() -> Result<Strong<dyn IRemotelyProvisionedKeyPool>> {
+        let mut result: Self = Default::default();
+
+        let dev = get_remotely_provisioned_component(&SecurityLevel::TRUSTED_ENVIRONMENT)
+            .context("In new_native_binder: Failed to get TEE Remote Provisioner instance.")?;
+        if let Some(id) = dev.getHardwareInfo()?.uniqueId {
+            result.unique_id_to_sec_level.insert(id, SecurityLevel::TRUSTED_ENVIRONMENT);
+        }
+
+        if let Ok(dev) = get_remotely_provisioned_component(&SecurityLevel::STRONGBOX) {
+            if let Some(id) = dev.getHardwareInfo()?.uniqueId {
+                if result.unique_id_to_sec_level.contains_key(&id) {
+                    anyhow::bail!("In new_native_binder: duplicate irpc id found: '{}'", id)
+                }
+                result.unique_id_to_sec_level.insert(id, SecurityLevel::STRONGBOX);
+            }
+        }
+
+        // If none of the remotely provisioned components have unique ids, then we shouldn't
+        // bother publishing the service, as it's impossible to match keys with their backends.
+        if result.unique_id_to_sec_level.is_empty() {
+            anyhow::bail!(
+                "In new_native_binder: No remotely provisioned components have unique ids"
+            )
+        }
+
+        Ok(BnRemotelyProvisionedKeyPool::new_binder(
+            result,
+            BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
+        ))
+    }
+}
+
+impl binder::Interface for RemotelyProvisionedKeyPoolService {}
+
+// Implementation of IRemotelyProvisionedKeyPool. See AIDL spec at
+// :aidl/android/security/remoteprovisioning/IRemotelyProvisionedKeyPool.aidl
+impl IRemotelyProvisionedKeyPool for RemotelyProvisionedKeyPoolService {
+    fn getAttestationKey(
+        &self,
+        caller_uid: i32,
+        irpc_id: &str,
+    ) -> binder::Result<RemotelyProvisionedKey> {
+        let _wp = wd::watch_millis("IRemotelyProvisionedKeyPool::getAttestationKey", 500);
+        map_or_log_err(check_keystore_permission(KeystorePerm::GetAttestationKey), Ok)?;
+        DB.with::<_, binder::Result<RemotelyProvisionedKey>>(|db| {
+            map_or_log_err(self.get_attestation_key(&mut db.borrow_mut(), caller_uid, irpc_id), Ok)
+        })
     }
 }
 
@@ -559,6 +670,105 @@ mod tests {
     use super::*;
     use serde_cbor::Value;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+        RpcHardwareInfo::RpcHardwareInfo,
+    };
+
+    #[derive(Default)]
+    struct MockRemotelyProvisionedComponentValues {
+        hw_info: RpcHardwareInfo,
+        private_key: Vec<u8>,
+        maced_public_key: Vec<u8>,
+    }
+
+    // binder::Interface requires the Send trait, so we have to use a Mutex even though the test
+    // is single threaded.
+    #[derive(Default)]
+    struct MockRemotelyProvisionedComponent(Arc<Mutex<MockRemotelyProvisionedComponentValues>>);
+
+    impl binder::Interface for MockRemotelyProvisionedComponent {}
+
+    impl IRemotelyProvisionedComponent for MockRemotelyProvisionedComponent {
+        fn getHardwareInfo(&self) -> binder::Result<RpcHardwareInfo> {
+            Ok(self.0.lock().unwrap().hw_info.clone())
+        }
+
+        fn generateEcdsaP256KeyPair(
+            &self,
+            test_mode: bool,
+            maced_public_key: &mut MacedPublicKey,
+        ) -> binder::Result<Vec<u8>> {
+            assert!(test_mode);
+            maced_public_key.macedKey = self.0.lock().unwrap().maced_public_key.clone();
+            Ok(self.0.lock().unwrap().private_key.clone())
+        }
+
+        fn generateCertificateRequest(
+            &self,
+            _test_mode: bool,
+            _keys_to_sign: &[MacedPublicKey],
+            _eek: &[u8],
+            _challenge: &[u8],
+            _device_info: &mut DeviceInfo,
+            _protected_data: &mut ProtectedData,
+        ) -> binder::Result<Vec<u8>> {
+            Err(binder::StatusCode::INVALID_OPERATION.into())
+        }
+    }
+
+    // Hard coded cert that can be parsed -- the content doesn't matter for testing, only that it's valid.
+    fn get_fake_cert() -> Vec<u8> {
+        vec![
+            0x30, 0x82, 0x01, 0xbb, 0x30, 0x82, 0x01, 0x61, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02,
+            0x14, 0x3a, 0xd5, 0x67, 0xce, 0xfe, 0x93, 0xe1, 0xea, 0xb7, 0xe4, 0xbf, 0x64, 0x19,
+            0xa4, 0x11, 0xe1, 0x87, 0x40, 0x20, 0x37, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x33, 0x31, 0x0b, 0x30, 0x09, 0x06, 0x03, 0x55,
+            0x04, 0x06, 0x13, 0x02, 0x55, 0x54, 0x31, 0x13, 0x30, 0x11, 0x06, 0x03, 0x55, 0x04,
+            0x08, 0x0c, 0x0a, 0x53, 0x6f, 0x6d, 0x65, 0x2d, 0x53, 0x74, 0x61, 0x74, 0x65, 0x31,
+            0x0f, 0x30, 0x0d, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x06, 0x47, 0x6f, 0x6f, 0x67,
+            0x6c, 0x65, 0x30, 0x1e, 0x17, 0x0d, 0x32, 0x31, 0x31, 0x32, 0x31, 0x30, 0x32, 0x32,
+            0x30, 0x38, 0x35, 0x32, 0x5a, 0x17, 0x0d, 0x34, 0x39, 0x30, 0x34, 0x32, 0x36, 0x32,
+            0x32, 0x30, 0x38, 0x35, 0x32, 0x5a, 0x30, 0x33, 0x31, 0x0b, 0x30, 0x09, 0x06, 0x03,
+            0x55, 0x04, 0x06, 0x13, 0x02, 0x55, 0x54, 0x31, 0x13, 0x30, 0x11, 0x06, 0x03, 0x55,
+            0x04, 0x08, 0x0c, 0x0a, 0x53, 0x6f, 0x6d, 0x65, 0x2d, 0x53, 0x74, 0x61, 0x74, 0x65,
+            0x31, 0x0f, 0x30, 0x0d, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x06, 0x47, 0x6f, 0x6f,
+            0x67, 0x6c, 0x65, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42,
+            0x00, 0x04, 0x1e, 0xac, 0x0c, 0xe0, 0x0d, 0xc5, 0x25, 0x84, 0x1b, 0xd2, 0x77, 0x2d,
+            0xe7, 0xba, 0xf1, 0xde, 0xa7, 0xf6, 0x39, 0x7f, 0x38, 0x91, 0xbf, 0xa4, 0x58, 0xf5,
+            0x62, 0x6b, 0xce, 0x06, 0xcf, 0xb9, 0x73, 0x91, 0x0d, 0x8a, 0x60, 0xa0, 0xc6, 0xa2,
+            0x22, 0xe6, 0x51, 0x2e, 0x58, 0xd6, 0x43, 0x02, 0x80, 0x43, 0x44, 0x29, 0x38, 0x9a,
+            0x99, 0xf3, 0xa4, 0xdd, 0xd0, 0xb4, 0x6f, 0x8b, 0x44, 0x2d, 0xa3, 0x53, 0x30, 0x51,
+            0x30, 0x1d, 0x06, 0x03, 0x55, 0x1d, 0x0e, 0x04, 0x16, 0x04, 0x14, 0xdb, 0x13, 0x68,
+            0xe0, 0x0e, 0x47, 0x10, 0xf8, 0xcb, 0x88, 0x83, 0xfe, 0x42, 0x3c, 0xd9, 0x3f, 0x1a,
+            0x33, 0xe9, 0xaa, 0x30, 0x1f, 0x06, 0x03, 0x55, 0x1d, 0x23, 0x04, 0x18, 0x30, 0x16,
+            0x80, 0x14, 0xdb, 0x13, 0x68, 0xe0, 0x0e, 0x47, 0x10, 0xf8, 0xcb, 0x88, 0x83, 0xfe,
+            0x42, 0x3c, 0xd9, 0x3f, 0x1a, 0x33, 0xe9, 0xaa, 0x30, 0x0f, 0x06, 0x03, 0x55, 0x1d,
+            0x13, 0x01, 0x01, 0xff, 0x04, 0x05, 0x30, 0x03, 0x01, 0x01, 0xff, 0x30, 0x0a, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x03, 0x48, 0x00, 0x30, 0x45,
+            0x02, 0x20, 0x10, 0xdf, 0x40, 0xc3, 0x20, 0x54, 0x36, 0xb5, 0xc9, 0x3c, 0x70, 0xe3,
+            0x55, 0x37, 0xd2, 0x04, 0x51, 0xeb, 0x0f, 0x18, 0x83, 0xd0, 0x58, 0xa1, 0x08, 0x77,
+            0x8d, 0x4d, 0xa4, 0x20, 0xee, 0x33, 0x02, 0x21, 0x00, 0x8d, 0xe3, 0xa6, 0x6c, 0x0d,
+            0x86, 0x25, 0xdc, 0x59, 0x0d, 0x21, 0x43, 0x22, 0x3a, 0xb9, 0xa1, 0x73, 0x28, 0xc9,
+            0x16, 0x9e, 0x91, 0x15, 0xc4, 0xc3, 0xd7, 0xeb, 0xe5, 0xce, 0xdc, 0x1c, 0x1b,
+        ]
+    }
+
+    // Generate a fake COSE_Mac0 with a key that's just `byte` repeated
+    fn generate_maced_pubkey(byte: u8) -> Vec<u8> {
+        vec![
+            0x84, 0x43, 0xA1, 0x01, 0x05, 0xA0, 0x58, 0x4D, 0xA5, 0x01, 0x02, 0x03, 0x26, 0x20,
+            0x01, 0x21, 0x58, 0x20, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte, byte, 0x22, 0x58, 0x20, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, 0x58, 0x20, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte, byte,
+            byte, byte, byte, byte, byte, byte, byte,
+        ]
+    }
 
     #[test]
     fn test_parse_cose_mac0_for_coords_raw_bytes() -> Result<()> {
@@ -656,5 +866,183 @@ mod tests {
         );
         assert!(extracted_payload.is_err());
         Ok(())
+    }
+
+    #[test]
+    #[ignore] // b/215746308
+    fn test_get_attestation_key_no_keys_provisioned() {
+        let mut db = crate::database::tests::new_test_db().unwrap();
+        let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
+        mock_rpc.0.lock().unwrap().hw_info.uniqueId = Some(String::from("mallory"));
+
+        let mut service: RemotelyProvisionedKeyPoolService = Default::default();
+        service
+            .unique_id_to_sec_level
+            .insert(String::from("mallory"), SecurityLevel::TRUSTED_ENVIRONMENT);
+
+        assert_eq!(
+            service
+                .get_attestation_key(&mut db, 0, "mallory")
+                .unwrap_err()
+                .downcast::<error::Error>()
+                .unwrap(),
+            error::Error::Rc(ResponseCode::OUT_OF_KEYS)
+        );
+    }
+
+    #[test]
+    #[ignore] // b/215746308
+    fn test_get_attestation_key() {
+        let mut db = crate::database::tests::new_test_db().unwrap();
+        let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
+        let irpc_id = "paul";
+        let caller_uid = 0;
+
+        let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
+        let mock_values = mock_rpc.0.clone();
+        let mut remote_provisioning: RemoteProvisioningService = Default::default();
+        remote_provisioning.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut key_pool: RemotelyProvisionedKeyPoolService = Default::default();
+        key_pool.unique_id_to_sec_level.insert(String::from(irpc_id), sec_level);
+
+        mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
+        mock_values.lock().unwrap().private_key = vec![8, 6, 7, 5, 3, 0, 9];
+        mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x11);
+        remote_provisioning.generate_key_pair(&mut db, true, sec_level).unwrap();
+
+        let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
+            mock_values.lock().unwrap().maced_public_key.as_slice(),
+        )
+        .unwrap();
+        let batch_cert = get_fake_cert();
+        let certs = &[5, 6, 7, 8];
+        assert!(remote_provisioning
+            .provision_cert_chain(
+                &mut db,
+                public_key.as_slice(),
+                batch_cert.as_slice(),
+                certs,
+                0,
+                sec_level
+            )
+            .is_ok());
+
+        // ensure we got the key we expected
+        let first_key = key_pool
+            .get_attestation_key(&mut db, caller_uid, irpc_id)
+            .context("get first key")
+            .unwrap();
+        assert_eq!(first_key.keyBlob, mock_values.lock().unwrap().private_key);
+        assert_eq!(first_key.encodedCertChain, certs);
+
+        // ensure that multiple calls get the same key
+        assert_eq!(
+            first_key,
+            key_pool
+                .get_attestation_key(&mut db, caller_uid, irpc_id)
+                .context("get second key")
+                .unwrap()
+        );
+
+        // no more keys for new clients
+        assert_eq!(
+            key_pool
+                .get_attestation_key(&mut db, caller_uid + 1, irpc_id)
+                .unwrap_err()
+                .downcast::<error::Error>()
+                .unwrap(),
+            error::Error::Rc(ResponseCode::OUT_OF_KEYS)
+        );
+    }
+
+    #[test]
+    #[ignore] // b/215746308
+    fn test_get_attestation_key_gets_different_key_for_different_client() {
+        let mut db = crate::database::tests::new_test_db().unwrap();
+        let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
+        let irpc_id = "ringo";
+        let first_caller = 0;
+        let second_caller = first_caller + 1;
+
+        let mock_rpc = Box::<MockRemotelyProvisionedComponent>::default();
+        let mock_values = mock_rpc.0.clone();
+        let mut remote_provisioning: RemoteProvisioningService = Default::default();
+        remote_provisioning.device_by_sec_level.insert(sec_level, Strong::new(mock_rpc));
+        let mut key_pool: RemotelyProvisionedKeyPoolService = Default::default();
+        key_pool.unique_id_to_sec_level.insert(String::from(irpc_id), sec_level);
+
+        // generate two distinct keys and provision them with certs
+        mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
+        mock_values.lock().unwrap().private_key = vec![3, 1, 4, 1, 5];
+        mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x11);
+        assert!(remote_provisioning.generate_key_pair(&mut db, true, sec_level).is_ok());
+        let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
+            mock_values.lock().unwrap().maced_public_key.as_slice(),
+        )
+        .unwrap();
+        assert!(remote_provisioning
+            .provision_cert_chain(
+                &mut db,
+                public_key.as_slice(),
+                get_fake_cert().as_slice(),
+                &[1],
+                0,
+                sec_level
+            )
+            .is_ok());
+
+        mock_values.lock().unwrap().hw_info.uniqueId = Some(String::from(irpc_id));
+        mock_values.lock().unwrap().private_key = vec![9, 0, 2, 1, 0];
+        mock_values.lock().unwrap().maced_public_key = generate_maced_pubkey(0x22);
+        assert!(remote_provisioning.generate_key_pair(&mut db, true, sec_level).is_ok());
+        let public_key = RemoteProvisioningService::parse_cose_mac0_for_coords(
+            mock_values.lock().unwrap().maced_public_key.as_slice(),
+        )
+        .unwrap();
+        assert!(remote_provisioning
+            .provision_cert_chain(
+                &mut db,
+                public_key.as_slice(),
+                get_fake_cert().as_slice(),
+                &[2],
+                0,
+                sec_level
+            )
+            .is_ok());
+
+        // make sure each caller gets a distinct key
+        assert_ne!(
+            key_pool
+                .get_attestation_key(&mut db, first_caller, irpc_id)
+                .context("get first key")
+                .unwrap(),
+            key_pool
+                .get_attestation_key(&mut db, second_caller, irpc_id)
+                .context("get second key")
+                .unwrap()
+        );
+
+        // repeated calls should return the same key for a given caller
+        assert_eq!(
+            key_pool
+                .get_attestation_key(&mut db, first_caller, irpc_id)
+                .context("first caller a")
+                .unwrap(),
+            key_pool
+                .get_attestation_key(&mut db, first_caller, irpc_id)
+                .context("first caller b")
+                .unwrap(),
+        );
+
+        assert_eq!(
+            key_pool
+                .get_attestation_key(&mut db, second_caller, irpc_id)
+                .context("second caller a")
+                .unwrap(),
+            key_pool
+                .get_attestation_key(&mut db, second_caller, irpc_id)
+                .context("second caller b")
+                .unwrap()
+        );
     }
 }

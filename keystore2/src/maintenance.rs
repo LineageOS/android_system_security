@@ -19,15 +19,18 @@ use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
 use crate::globals::get_keymint_device;
-use crate::globals::{DB, LEGACY_MIGRATOR, SUPER_KEY};
+use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY};
 use crate::permission::{KeyPerm, KeystorePerm};
-use crate::super_key::UserState;
-use crate::utils::{check_key_permission, check_keystore_permission, watchdog as wd};
+use crate::super_key::{SuperKeyManager, UserState};
+use crate::utils::{
+    check_key_permission, check_keystore_permission, list_key_entries, uid_to_android_user,
+    watchdog as wd,
+};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
 };
 use android_security_maintenance::aidl::android::security::maintenance::{
-    IKeystoreMaintenance::{BnKeystoreMaintenance, IKeystoreMaintenance},
+    IKeystoreMaintenance::{BnKeystoreMaintenance, IKeystoreMaintenance, UID_SELF},
     UserState::UserState as AidlUserState,
 };
 use android_security_maintenance::binder::{
@@ -37,6 +40,7 @@ use android_system_keystore2::aidl::android::system::keystore2::KeyDescriptor::K
 use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
 use anyhow::{Context, Result};
 use keystore2_crypto::Password;
+use keystore2_selinux as selinux;
 
 /// Reexport Domain for the benefit of DeleteListener
 pub use android_system_keystore2::aidl::android::system::keystore2::Domain::Domain;
@@ -67,24 +71,25 @@ impl Maintenance {
     }
 
     fn on_user_password_changed(user_id: i32, password: Option<Password>) -> Result<()> {
-        //Check permission. Function should return if this failed. Therefore having '?' at the end
-        //is very important.
+        // Check permission. Function should return if this failed. Therefore having '?' at the end
+        // is very important.
         check_keystore_permission(KeystorePerm::ChangePassword)
             .context("In on_user_password_changed.")?;
 
+        let mut skm = SUPER_KEY.write().unwrap();
+
         if let Some(pw) = password.as_ref() {
             DB.with(|db| {
-                SUPER_KEY.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
+                skm.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
             })
             .context("In on_user_password_changed: unlock_screen_lock_bound_key failed")?;
         }
 
         match DB
             .with(|db| {
-                UserState::get_with_password_changed(
+                skm.reset_or_init_user_and_get_user_state(
                     &mut db.borrow_mut(),
-                    &LEGACY_MIGRATOR,
-                    &SUPER_KEY,
+                    &LEGACY_IMPORTER,
                     user_id as u32,
                     password.as_ref(),
                 )
@@ -107,11 +112,11 @@ impl Maintenance {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
         check_keystore_permission(KeystorePerm::ChangeUser).context("In add_or_remove_user.")?;
+
         DB.with(|db| {
-            UserState::reset_user(
+            SUPER_KEY.write().unwrap().reset_user(
                 &mut db.borrow_mut(),
-                &SUPER_KEY,
-                &LEGACY_MIGRATOR,
+                &LEGACY_IMPORTER,
                 user_id as u32,
                 false,
             )
@@ -126,7 +131,7 @@ impl Maintenance {
         // Permission check. Must return on error. Do not touch the '?'.
         check_keystore_permission(KeystorePerm::ClearUID).context("In clear_namespace.")?;
 
-        LEGACY_MIGRATOR
+        LEGACY_IMPORTER
             .bulk_delete_uid(domain, nspace)
             .context("In clear_namespace: Trying to delete legacy keys.")?;
         DB.with(|db| db.borrow_mut().unbind_keys_for_namespace(domain, nspace))
@@ -142,7 +147,11 @@ impl Maintenance {
         check_keystore_permission(KeystorePerm::GetState).context("In get_state.")?;
         let state = DB
             .with(|db| {
-                UserState::get(&mut db.borrow_mut(), &LEGACY_MIGRATOR, &SUPER_KEY, user_id as u32)
+                SUPER_KEY.read().unwrap().get_user_state(
+                    &mut db.borrow_mut(),
+                    &LEGACY_IMPORTER,
+                    user_id as u32,
+                )
             })
             .context("In get_state. Trying to get UserState.")?;
 
@@ -155,7 +164,7 @@ impl Maintenance {
 
     fn call_with_watchdog<F>(sec_level: SecurityLevel, name: &'static str, op: &F) -> Result<()>
     where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
+        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::Result<()>,
     {
         let (km_dev, _, _) = get_keymint_device(&sec_level)
             .context("In call_with_watchdog: getting keymint device")?;
@@ -169,7 +178,7 @@ impl Maintenance {
 
     fn call_on_all_security_levels<F>(name: &'static str, op: F) -> Result<()>
     where
-        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::public_api::Result<()>,
+        F: Fn(Strong<dyn IKeyMintDevice>) -> binder::Result<()>,
     {
         let sec_levels = [
             (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
@@ -199,7 +208,9 @@ impl Maintenance {
             .context("In early_boot_ended. Checking permission")?;
         log::info!("In early_boot_ended.");
 
-        if let Err(e) = DB.with(|db| SUPER_KEY.set_up_boot_level_cache(&mut db.borrow_mut())) {
+        if let Err(e) =
+            DB.with(|db| SuperKeyManager::set_up_boot_level_cache(&SUPER_KEY, &mut db.borrow_mut()))
+        {
             log::error!("SUPER_KEY.set_up_boot_level_cache failed:\n{:?}\n:(", e);
         }
         Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded())
@@ -214,47 +225,86 @@ impl Maintenance {
     }
 
     fn migrate_key_namespace(source: &KeyDescriptor, destination: &KeyDescriptor) -> Result<()> {
-        let caller_uid = ThreadState::get_calling_uid();
         let migrate_any_key_permission =
             check_keystore_permission(KeystorePerm::MigrateAnyKey).is_ok();
 
-        DB.with(|db| {
-            let key_id_guard = match source.domain {
-                Domain::APP | Domain::SELINUX | Domain::KEY_ID => {
-                    let (key_id_guard, _) = LEGACY_MIGRATOR
-                        .with_try_migrate(source, caller_uid, || {
-                            db.borrow_mut().load_key_entry(
-                                source,
-                                KeyType::Client,
-                                KeyEntryLoadBits::NONE,
-                                caller_uid,
-                                |k, av| {
-                                    if !migrate_any_key_permission {
-                                        check_key_permission(KeyPerm::Use, k, &av)?;
-                                        check_key_permission(KeyPerm::Delete, k, &av)?;
-                                        check_key_permission(KeyPerm::Grant, k, &av)?;
-                                    }
-                                    Ok(())
-                                },
-                            )
-                        })
-                        .context("In migrate_key_namespace: Failed to load key blob.")?;
-                    key_id_guard
-                }
-                _ => {
-                    return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(concat!(
-                        "In migrate_key_namespace: ",
-                        "Source domain must be one of APP, SELINUX, or KEY_ID."
-                    ))
-                }
-            };
+        let src_uid = match source.domain {
+            Domain::SELINUX | Domain::KEY_ID => ThreadState::get_calling_uid(),
+            Domain::APP if source.nspace == UID_SELF.into() => ThreadState::get_calling_uid(),
+            Domain::APP if source.nspace != UID_SELF.into() && migrate_any_key_permission => {
+                source.nspace as u32
+            }
+            _ => {
+                return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
+                    "In migrate_key_namespace: \
+                     Source domain must be one of APP, SELINUX, or KEY_ID.",
+                )
+            }
+        };
 
-            db.borrow_mut().migrate_key_namespace(key_id_guard, destination, caller_uid, |k| {
-                if !migrate_any_key_permission {
-                    check_key_permission(KeyPerm::Rebind, k, &None)?;
-                }
+        let dest_uid = match destination.domain {
+            Domain::SELINUX => ThreadState::get_calling_uid(),
+            Domain::APP if destination.nspace == UID_SELF.into() => ThreadState::get_calling_uid(),
+            Domain::APP if destination.nspace != UID_SELF.into() && migrate_any_key_permission => {
+                destination.nspace as u32
+            }
+            _ => {
+                return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
+                    "In migrate_key_namespace: \
+                     Destination domain must be one of APP or SELINUX.",
+                )
+            }
+        };
+
+        let user_id = uid_to_android_user(dest_uid);
+
+        if user_id != uid_to_android_user(src_uid)
+            && (source.domain == Domain::APP || destination.domain == Domain::APP)
+        {
+            return Err(Error::sys()).context(
+                "In migrate_key_namespace: Keys cannot be migrated across android users.",
+            );
+        }
+
+        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+
+        DB.with(|db| {
+            if let Some((key_id_guard, _)) = LEGACY_IMPORTER
+                .with_try_import_or_migrate_namespaces(
+                    (src_uid, source),
+                    (dest_uid, destination),
+                    super_key,
+                    migrate_any_key_permission,
+                    || {
+                        db.borrow_mut().load_key_entry(
+                            source,
+                            KeyType::Client,
+                            KeyEntryLoadBits::NONE,
+                            src_uid,
+                            |k, av| {
+                                if migrate_any_key_permission {
+                                    Ok(())
+                                } else {
+                                    check_key_permission(KeyPerm::Use, k, &av)?;
+                                    check_key_permission(KeyPerm::Delete, k, &av)?;
+                                    check_key_permission(KeyPerm::Grant, k, &av)
+                                }
+                            },
+                        )
+                    },
+                )
+                .context("In migrate_key_namespace: Failed to load key blob.")?
+            {
+                db.borrow_mut().migrate_key_namespace(key_id_guard, destination, dest_uid, |k| {
+                    if migrate_any_key_permission {
+                        Ok(())
+                    } else {
+                        check_key_permission(KeyPerm::Rebind, k, &None)
+                    }
+                })
+            } else {
                 Ok(())
-            })
+            }
         })
     }
 
@@ -265,6 +315,30 @@ impl Maintenance {
         log::info!("In delete_all_keys.");
 
         Maintenance::call_on_all_security_levels("deleteAllKeys", |dev| dev.deleteAllKeys())
+    }
+
+    fn list_entries(domain: Domain, nspace: i64) -> Result<Vec<KeyDescriptor>> {
+        let k = match domain {
+            Domain::APP | Domain::SELINUX => KeyDescriptor{domain, nspace, ..Default::default()},
+            _ => return Err(Error::perm()).context(
+                "In list_entries: List entries is only supported for Domain::APP and Domain::SELINUX."
+            ),
+        };
+
+        // The caller has to have either GetInfo for the namespace or List permission
+        check_key_permission(KeyPerm::GetInfo, &k, &None)
+            .or_else(|e| {
+                if Some(&selinux::Error::PermissionDenied)
+                    == e.root_cause().downcast_ref::<selinux::Error>()
+                {
+                    check_keystore_permission(KeystorePerm::List)
+                } else {
+                    Err(e)
+                }
+            })
+            .context("In list_entries: While checking key and keystore permission.")?;
+
+        DB.with(|db| list_key_entries(&mut db.borrow_mut(), domain, nspace))
     }
 }
 
@@ -313,6 +387,11 @@ impl IKeystoreMaintenance for Maintenance {
     ) -> BinderResult<()> {
         let _wp = wd::watch_millis("IKeystoreMaintenance::migrateKeyNamespace", 500);
         map_or_log_err(Self::migrate_key_namespace(source, destination), Ok)
+    }
+
+    fn listEntries(&self, domain: Domain, namespace: i64) -> BinderResult<Vec<KeyDescriptor>> {
+        let _wp = wd::watch_millis("IKeystoreMaintenance::listEntries", 500);
+        map_or_log_err(Self::list_entries(domain, namespace), Ok)
     }
 
     fn deleteAllKeys(&self) -> BinderResult<()> {

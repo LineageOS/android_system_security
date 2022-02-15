@@ -18,7 +18,7 @@
 
 use crate::gc::Gc;
 use crate::legacy_blob::LegacyBlobLoader;
-use crate::legacy_migrator::LegacyMigrator;
+use crate::legacy_importer::LegacyImporter;
 use crate::super_key::SuperKeyManager;
 use crate::utils::watchdog as wd;
 use crate::{async_task::AsyncTask, database::MonotonicRawTime};
@@ -27,6 +27,7 @@ use crate::{
     database::Uuid,
     error::{map_binder_status, map_binder_status_code, Error, ErrorCode},
 };
+use crate::km_compat::{KeyMintV1, BacklevelKeyMintWrapper};
 use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
@@ -156,7 +157,7 @@ lazy_static! {
     pub static ref DB_PATH: RwLock<PathBuf> = RwLock::new(
         Path::new("/data/misc/keystore").to_path_buf());
     /// Runtime database of unwrapped super keys.
-    pub static ref SUPER_KEY: Arc<SuperKeyManager> = Default::default();
+    pub static ref SUPER_KEY: Arc<RwLock<SuperKeyManager>> = Default::default();
     /// Map of KeyMint devices.
     static ref KEY_MINT_DEVICES: Mutex<DevicesMap<dyn IKeyMintDevice>> = Default::default();
     /// Timestamp service.
@@ -175,8 +176,8 @@ lazy_static! {
     pub static ref LEGACY_BLOB_LOADER: Arc<LegacyBlobLoader> = Arc::new(LegacyBlobLoader::new(
         &DB_PATH.read().expect("Could not get the database path for legacy blob loader.")));
     /// Legacy migrator. Atomically migrates legacy blobs to the database.
-    pub static ref LEGACY_MIGRATOR: Arc<LegacyMigrator> =
-        Arc::new(LegacyMigrator::new(Arc::new(Default::default())));
+    pub static ref LEGACY_IMPORTER: Arc<LegacyImporter> =
+        Arc::new(LegacyImporter::new(Arc::new(Default::default())));
     /// Background thread which handles logging via statsd and logd
     pub static ref LOGS_HANDLER: Arc<AsyncTask> = Default::default();
 
@@ -197,14 +198,15 @@ lazy_static! {
 
 static KEYMINT_SERVICE_NAME: &str = "android.hardware.security.keymint.IKeyMintDevice";
 
-/// Make a new connection to a KeyMint device of the given security level.
-/// If no native KeyMint device can be found this function also brings
-/// up the compatibility service and attempts to connect to the legacy wrapper.
-fn connect_keymint(
+/// Determine the service name for a KeyMint device of the given security level
+/// which implements at least the specified version of the `IKeyMintDevice`
+/// interface.
+fn keymint_service_name_by_version(
     security_level: &SecurityLevel,
-) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
+    version: i32,
+) -> Result<Option<(i32, String)>> {
     let keymint_instances =
-        get_aidl_instances("android.hardware.security.keymint", 1, "IKeyMintDevice");
+        get_aidl_instances("android.hardware.security.keymint", version as usize, "IKeyMintDevice");
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
@@ -222,17 +224,44 @@ fn connect_keymint(
             }
         }
         _ => {
-            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-                .context("In connect_keymint.")
+            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)).context(format!(
+                "In keymint_service_name_by_version: Trying to find keymint V{} for security level: {:?}",
+                version, security_level
+            ));
         }
     };
 
-    let (keymint, hal_version) = if let Some(service_name) = service_name {
-        (
+    Ok(service_name.map(|service_name| (version, service_name)))
+}
+
+/// Make a new connection to a KeyMint device of the given security level.
+/// If no native KeyMint device can be found this function also brings
+/// up the compatibility service and attempts to connect to the legacy wrapper.
+fn connect_keymint(
+    security_level: &SecurityLevel,
+) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
+    // Count down from the current interface version back to one in order to
+    // also find out the interface version -- an implementation of V2 will show
+    // up in the list of V1-capable devices, but not vice-versa.
+    let service_name = keymint_service_name_by_version(security_level, 2)
+        .and_then(|sl| {
+            if sl.is_none() {
+                keymint_service_name_by_version(security_level, 1)
+            } else {
+                Ok(sl)
+            }
+        })
+        .context("In connect_keymint.")?;
+
+    let (keymint, hal_version) = if let Some((version, service_name)) = service_name {
+        let km: Strong<dyn IKeyMintDevice> =
             map_binder_status_code(binder::get_interface(&service_name))
-                .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?,
-            Some(100i32), // The HAL version code for KeyMint V1 is 100.
-        )
+                .context("In connect_keymint: Trying to connect to genuine KeyMint service.")?;
+        // Map the HAL version code for KeyMint to be <AIDL version> * 100, so
+        // - V1 is 100
+        // - V2 is 200
+        // etc.
+        (km, Some(version * 100))
     } else {
         // This is a no-op if it was called before.
         keystore2_km_compat::add_keymint_device_service();
@@ -253,6 +282,48 @@ fn connect_keymint(
         )
     };
 
+    // If the KeyMint device is back-level, use a wrapper that intercepts and
+    // emulates things that are not supported by the hardware.
+    let keymint = match hal_version {
+        Some(200) => {
+            // Current KeyMint version: use as-is.
+            log::info!(
+                "KeyMint device is current version ({:?}) for security level: {:?}",
+                hal_version,
+                security_level
+            );
+            keymint
+        }
+        Some(100) => {
+            // KeyMint v1: perform software emulation.
+            log::info!(
+                "Add emulation wrapper around {:?} device for security level: {:?}",
+                hal_version,
+                security_level
+            );
+            BacklevelKeyMintWrapper::wrap(KeyMintV1::new(*security_level), keymint)
+                .context("In connect_keymint: Trying to create V1 compatibility wrapper.")?
+        }
+        None => {
+            // Compatibility wrapper around a KeyMaster device: this roughly
+            // behaves like KeyMint V1 (e.g. it includes AGREE_KEY support,
+            // albeit in software.)
+            log::info!(
+                "Add emulation wrapper around Keymaster device for security level: {:?}",
+                security_level
+            );
+            BacklevelKeyMintWrapper::wrap(KeyMintV1::new(*security_level), keymint).context(
+                "In connect_keymint: Trying to create km_compat V1 compatibility wrapper .",
+            )?
+        }
+        _ => {
+            return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)).context(format!(
+                "In connect_keymint: unexpected hal_version {:?} for security level: {:?}",
+                hal_version, security_level
+            ))
+        }
+    };
+
     let wp = wd::watch_millis("In connect_keymint: calling getHardwareInfo()", 500);
     let mut hw_info = map_km_error(keymint.getHardwareInfo())
         .context("In connect_keymint: Failed to get hardware info.")?;
@@ -260,11 +331,14 @@ fn connect_keymint(
 
     // The legacy wrapper sets hw_info.versionNumber to the underlying HAL version like so:
     // 10 * <major> + <minor>, e.g., KM 3.0 = 30. So 30, 40, and 41 are the only viable values.
-    // For KeyMint the versionNumber is implementation defined and thus completely meaningless
-    // to Keystore 2.0. So at this point the versionNumber field is set to the HAL version, so
-    // that higher levels have a meaningful guide as to which feature set to expect from the
-    // implementation. As of this writing the only meaningful version number is 100 for KeyMint V1,
-    // and future AIDL versions should follow the pattern <AIDL version> * 100.
+    //
+    // For KeyMint the returned versionNumber is implementation defined and thus completely
+    // meaningless to Keystore 2.0.  So set the versionNumber field that is returned to
+    // the rest of the code to be the <AIDL version> * 100, so KeyMint V1 is 100, KeyMint V2 is 200
+    // and so on.
+    //
+    // This ensures that versionNumber value across KeyMaster and KeyMint is monotonically
+    // increasing (and so comparisons like `versionNumber >= KEY_MINT_1` are valid).
     if let Some(hal_version) = hal_version {
         hw_info.versionNumber = hal_version;
     }

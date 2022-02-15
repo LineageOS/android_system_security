@@ -149,6 +149,9 @@ implement_class!(
         /// introduced for migrating keys when an app leaves a sharedUserId.
         #[selinux(name = migrate_any_key)]
         MigrateAnyKey,
+        /// Checked on calls to IRemotelyProvisionedKeyPool::getAttestationKey
+        #[selinux(name = get_attestation_key)]
+        GetAttestationKey,
     }
 );
 

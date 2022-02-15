@@ -1,11 +1,11 @@
 /*
- * Copyright (C) 2021 The Android Open Source Project
+ * Copyright (c) 2019, The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,17 +14,21 @@
  * limitations under the License.
  */
 
-syntax = "proto3";
+package android.security.identity;
 
-package compos.proto;
+import android.security.identity.ICredential;
 
-// Data provided by CompOS to allow validation of a file it generated.
-message Signature {
-    // The fs-verity digest (which is derived from the root hash of
-    // the Merkle tree) of the file contents.
-    bytes digest = 1;
+/**
+ * @hide
+ */
+interface ISession {
+    byte[] getEphemeralKeyPair();
 
-    // Signature of a fsverity_formatted_digest structure containing
-    // the digest, signed using CompOS's private key.
-    bytes signature = 2;
+    long getAuthChallenge();
+
+    void setReaderEphemeralPublicKey(in byte[] publicKey);
+
+    void setSessionTranscript(in byte[] sessionTranscript);
+
+    ICredential getCredentialForPresentation(in @utf8InCpp String credentialName);
 }
