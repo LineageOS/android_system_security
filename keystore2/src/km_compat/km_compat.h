@@ -142,6 +142,11 @@ class KeyMintDevice : public aidl::android::hardware::security::keymint::BnKeyMi
                           const std::vector<uint8_t>& appId, const std::vector<uint8_t>& appData,
                           std::vector<KeyCharacteristics>* keyCharacteristics) override;
 
+    ScopedAStatus getRootOfTrustChallenge(std::array<uint8_t, 16>* challenge);
+    ScopedAStatus getRootOfTrust(const std::array<uint8_t, 16>& challenge,
+                                 std::vector<uint8_t>* rootOfTrust);
+    ScopedAStatus sendRootOfTrust(const std::vector<uint8_t>& rootOfTrust);
+
     // These are public to allow testing code to use them directly.
     // This class should not be used publicly anyway.
     std::variant<std::vector<Certificate>, KMV1_ErrorCode>
