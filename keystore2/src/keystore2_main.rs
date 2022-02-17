@@ -44,7 +44,10 @@ static LEGACY_KEYSTORE_SERVICE_NAME: &str = "android.security.legacykeystore";
 fn main() {
     // Initialize android logging.
     android_logger::init_once(
-        android_logger::Config::default().with_tag("keystore2").with_min_level(log::Level::Debug),
+        android_logger::Config::default()
+            .with_tag("keystore2")
+            .with_min_level(log::Level::Debug)
+            .with_log_id(android_logger::LogId::System),
     );
     // Redirect panic messages to logcat.
     panic::set_hook(Box::new(|panic_info| {
