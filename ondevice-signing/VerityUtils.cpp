@@ -43,6 +43,11 @@ using android::base::Result;
 using android::base::unique_fd;
 
 static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
+static const char* kFsVerityProcPath = "/proc/sys/fs/verity";
+
+bool SupportsFsVerity() {
+    return access(kFsVerityProcPath, F_OK) == 0;
+}
 
 static std::string toHex(std::span<const uint8_t> data) {
     std::stringstream ss;
@@ -165,7 +170,7 @@ static Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
     return {};
 }
 
-static Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
+Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
     auto digest = createDigest(fd);
     if (!digest.ok()) {
         return Error() << digest.error();
