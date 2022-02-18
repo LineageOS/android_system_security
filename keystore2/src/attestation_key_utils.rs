@@ -35,6 +35,7 @@ use keystore2_crypto::parse_subject_from_certificate;
 /// handled quite differently, thus the different representations.
 pub enum AttestationKeyInfo {
     RemoteProvisioned {
+        key_id_guard: KeyIdGuard,
         attestation_key: AttestationKey,
         attestation_certs: Certificate,
     },
@@ -66,8 +67,12 @@ pub fn get_attest_key_info(
                 "Trying to get remotely provisioned attestation key."
             ))
             .map(|result| {
-                result.map(|(attestation_key, attestation_certs)| {
-                    AttestationKeyInfo::RemoteProvisioned { attestation_key, attestation_certs }
+                result.map(|(key_id_guard, attestation_key, attestation_certs)| {
+                    AttestationKeyInfo::RemoteProvisioned {
+                        key_id_guard,
+                        attestation_key,
+                        attestation_certs,
+                    }
                 })
             }),
         None => Ok(None),
