@@ -319,7 +319,7 @@ impl KeystoreSecurityLevel {
                 &*self.keymint,
                 key_id_guard,
                 &km_blob,
-                &blob_metadata,
+                blob_metadata.km_uuid().copied(),
                 operation_parameters,
                 |blob| loop {
                     match map_km_error({
@@ -557,7 +557,7 @@ impl KeystoreSecurityLevel {
                     &*self.keymint,
                     Some(key_id_guard),
                     &KeyBlob::Ref(&blob),
-                    &blob_metadata,
+                    blob_metadata.km_uuid().copied(),
                     &params,
                     |blob| {
                         let attest_key = Some(AttestationKey {
@@ -579,23 +579,40 @@ impl KeystoreSecurityLevel {
                 )
                 .context("In generate_key: Using user generated attestation key.")
                 .map(|(result, _)| result),
-            Some(AttestationKeyInfo::RemoteProvisioned { attestation_key, attestation_certs }) => {
-                map_km_error({
-                    let _wp = self.watch_millis(
-                        concat!(
-                            "In KeystoreSecurityLevel::generate_key (RemoteProvisioned): ",
-                            "calling generate_key.",
-                        ),
-                        5000, // Generate can take a little longer.
-                    );
-                    self.keymint.generateKey(&params, Some(&attestation_key))
-                })
+            Some(AttestationKeyInfo::RemoteProvisioned {
+                key_id_guard,
+                attestation_key,
+                attestation_certs,
+            }) => self
+                .upgrade_keyblob_if_required_with(
+                    &*self.keymint,
+                    Some(key_id_guard),
+                    &KeyBlob::Ref(&attestation_key.keyBlob),
+                    Some(self.rem_prov_state.get_uuid()),
+                    &[],
+                    |blob| {
+                        map_km_error({
+                            let _wp = self.watch_millis(
+                                concat!(
+                                    "In KeystoreSecurityLevel::generate_key (RemoteProvisioned): ",
+                                    "calling generate_key.",
+                                ),
+                                5000, // Generate can take a little longer.
+                            );
+                            let dynamic_attest_key = Some(AttestationKey {
+                                keyBlob: blob.to_vec(),
+                                attestKeyParams: vec![],
+                                issuerSubjectName: attestation_key.issuerSubjectName.clone(),
+                            });
+                            self.keymint.generateKey(&params, dynamic_attest_key.as_ref())
+                        })
+                    },
+                )
                 .context("While generating Key with remote provisioned attestation key.")
-                .map(|mut creation_result| {
-                    creation_result.certificateChain.push(attestation_certs);
-                    creation_result
-                })
-            }
+                .map(|(mut result, _)| {
+                    result.certificateChain.push(attestation_certs);
+                    result
+                }),
             None => map_km_error({
                 let _wp = self.watch_millis(
                     concat!(
@@ -781,7 +798,7 @@ impl KeystoreSecurityLevel {
                 &*self.keymint,
                 Some(wrapping_key_id_guard),
                 &wrapping_key_blob,
-                &wrapping_blob_metadata,
+                wrapping_blob_metadata.km_uuid().copied(),
                 &[],
                 |wrapping_blob| {
                     let _wp = self.watch_millis(
@@ -807,7 +824,7 @@ impl KeystoreSecurityLevel {
 
     fn store_upgraded_keyblob(
         key_id_guard: KeyIdGuard,
-        km_uuid: Option<&Uuid>,
+        km_uuid: Option<Uuid>,
         key_blob: &KeyBlob,
         upgraded_blob: &[u8],
     ) -> Result<()> {
@@ -817,7 +834,7 @@ impl KeystoreSecurityLevel {
 
         let mut new_blob_metadata = new_blob_metadata.unwrap_or_default();
         if let Some(uuid) = km_uuid {
-            new_blob_metadata.add(BlobMetaEntry::KmUuid(*uuid));
+            new_blob_metadata.add(BlobMetaEntry::KmUuid(uuid));
         }
 
         DB.with(|db| {
@@ -837,7 +854,7 @@ impl KeystoreSecurityLevel {
         km_dev: &dyn IKeyMintDevice,
         mut key_id_guard: Option<KeyIdGuard>,
         key_blob: &KeyBlob,
-        blob_metadata: &BlobMetaData,
+        km_uuid: Option<Uuid>,
         params: &[KeyParameter],
         f: F,
     ) -> Result<(T, Option<Vec<u8>>)>
@@ -853,13 +870,9 @@ impl KeystoreSecurityLevel {
                 if key_id_guard.is_some() {
                     // Unwrap cannot panic, because the is_some was true.
                     let kid = key_id_guard.take().unwrap();
-                    Self::store_upgraded_keyblob(
-                        kid,
-                        blob_metadata.km_uuid(),
-                        key_blob,
-                        upgraded_blob,
+                    Self::store_upgraded_keyblob(kid, km_uuid, key_blob, upgraded_blob).context(
+                        "In upgrade_keyblob_if_required_with: store_upgraded_keyblob failed",
                     )
-                    .context("In upgrade_keyblob_if_required_with: store_upgraded_keyblob failed")
                 } else {
                     Ok(())
                 }
@@ -872,11 +885,10 @@ impl KeystoreSecurityLevel {
         // upgrade was performed above and if one was given in the first place.
         if key_blob.force_reencrypt() {
             if let Some(kid) = key_id_guard {
-                Self::store_upgraded_keyblob(kid, blob_metadata.km_uuid(), key_blob, key_blob)
-                    .context(concat!(
-                        "In upgrade_keyblob_if_required_with: ",
-                        "store_upgraded_keyblob failed in forced reencrypt"
-                    ))?;
+                Self::store_upgraded_keyblob(kid, km_uuid, key_blob, key_blob).context(concat!(
+                    "In upgrade_keyblob_if_required_with: ",
+                    "store_upgraded_keyblob failed in forced reencrypt"
+                ))?;
             }
         }
         Ok((v, upgraded_blob))
