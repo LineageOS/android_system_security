@@ -299,6 +299,15 @@ where
             KeyBlob::Wrapped(keyblob) => self.soft.getKeyCharacteristics(keyblob, app_id, app_data),
         }
     }
+    fn getRootOfTrustChallenge(&self) -> binder::Result<[u8; 16]> {
+        self.real.getRootOfTrustChallenge()
+    }
+    fn getRootOfTrust(&self, challenge: &[u8; 16]) -> binder::Result<Vec<u8>> {
+        self.real.getRootOfTrust(challenge)
+    }
+    fn sendRootOfTrust(&self, root_of_trust: &[u8]) -> binder::Result<()> {
+        self.real.sendRootOfTrust(root_of_trust)
+    }
     fn convertStorageKeyToEphemeral(&self, storage_keyblob: &[u8]) -> binder::Result<Vec<u8>> {
         // Storage keys should never be associated with a software emulated device.
         self.real.convertStorageKeyToEphemeral(storage_keyblob)
