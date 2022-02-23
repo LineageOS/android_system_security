@@ -44,6 +44,12 @@ using android::base::SetProperty;
 
 using OdsignInfo = ::odsign::proto::OdsignInfo;
 
+// Keystore boot level that the odsign key uses
+const int kKeyBootLevel = 30;
+const std::string kPublicKeySignature = "/data/misc/odsign/publickey.signature";
+const android::String16 kKeyAlias{"ondevice-signing"};
+constexpr int kKeyNspace = 101;  // odsign_key
+
 const std::string kSigningKeyCert = "/data/misc/odsign/key.cert";
 const std::string kOdsignInfo = "/data/misc/odsign/odsign.info";
 const std::string kOdsignInfoSignature = "/data/misc/odsign/odsign.info.signature";
@@ -52,7 +58,6 @@ const std::string kArtArtifactsDir = "/data/misc/apexdata/com.android.art/dalvik
 
 constexpr const char* kOdrefreshPath = "/apex/com.android.art/bin/odrefresh";
 constexpr const char* kCompOsVerifyPath = "/apex/com.android.compos/bin/compos_verify_key";
-constexpr const char* kFsVerityProcPath = "/proc/sys/fs/verity";
 
 constexpr bool kForceCompilation = false;
 constexpr bool kUseCompOs = true;
@@ -484,15 +489,15 @@ int main(int /* argc */, char** argv) {
         LOG(INFO) << "Device doesn't support updatable APEX, exiting.";
         return 0;
     }
-
-    auto keystoreResult = KeystoreKey::getInstance();
+    auto keystoreResult =
+        KeystoreKey::getInstance(kPublicKeySignature, kKeyAlias, kKeyNspace, kKeyBootLevel);
     if (!keystoreResult.ok()) {
         LOG(ERROR) << "Could not create keystore key: " << keystoreResult.error();
         return -1;
     }
     SigningKey* key = keystoreResult.value();
 
-    bool supportsFsVerity = access(kFsVerityProcPath, F_OK) == 0;
+    bool supportsFsVerity = SupportsFsVerity();
     if (!supportsFsVerity) {
         LOG(INFO) << "Device doesn't support fsverity. Falling back to full verification.";
     }
