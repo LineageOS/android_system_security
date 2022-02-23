@@ -338,7 +338,7 @@ Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& /*
 }
 
 Result<OdsignInfo> getComposInfo(const std::vector<uint8_t>& /*compos_key*/) {
-    const char* const argv[] = {kCompOsVerifyPath, "--instance", "current"};
+    const char* const argv[] = {kNewCompOsVerifyPath, "--instance", "current"};
     int result =
         logwrap_fork_execvp(arraysize(argv), argv, nullptr, false, LOG_ALOG, false, nullptr);
     if (result != 0) {
