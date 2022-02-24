@@ -57,18 +57,11 @@ const std::string kOdsignInfoSignature = "/data/misc/odsign/odsign.info.signatur
 const std::string kArtArtifactsDir = "/data/misc/apexdata/com.android.art/dalvik-cache";
 
 constexpr const char* kOdrefreshPath = "/apex/com.android.art/bin/odrefresh";
-constexpr const char* kCompOsVerifyPath = "/apex/com.android.compos/bin/compos_verify_key";
+constexpr const char* kCompOsVerifyPath = "/apex/com.android.compos/bin/compos_verify";
 
 constexpr bool kForceCompilation = false;
 constexpr bool kUseCompOs = true;
 
-constexpr const char* kNewCompOsVerifyPath = "/apex/com.android.compos/bin/compos_verify";
-const std::string kCompOsCert = "/data/misc/odsign/compos_key.cert";
-
-const std::string kCompOsCurrentPublicKey =
-    "/data/misc/apexdata/com.android.compos/current/key.pubkey";
-const std::string kCompOsPendingPublicKey =
-    "/data/misc/apexdata/com.android.compos/pending/key.pubkey";
 const std::string kCompOsPendingArtifactsDir = "/data/misc/apexdata/com.android.art/compos-pending";
 const std::string kCompOsInfo = kArtArtifactsDir + "/compos.info";
 const std::string kCompOsInfoSignature = kCompOsInfo + ".signature";
@@ -145,7 +138,7 @@ std::string toHex(const std::vector<uint8_t>& digest) {
 
 bool compOsPresent() {
     // We must have the CompOS APEX
-    return access(kNewCompOsVerifyPath, X_OK) == 0;
+    return access(kCompOsVerifyPath, X_OK) == 0;
 }
 
 Result<void> verifyExistingRootCert(const SigningKey& key) {
@@ -337,13 +330,8 @@ Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity) {
     return {};
 }
 
-Result<std::vector<uint8_t>> addCompOsCertToFsVerityKeyring(const SigningKey& /*signingKey*/) {
-    // TODO(b/218494522): Remove this and usages of compos_key.
-    return {};
-}
-
-Result<OdsignInfo> getComposInfo(const std::vector<uint8_t>& /*compos_key*/) {
-    const char* const argv[] = {kNewCompOsVerifyPath, "--instance", "current"};
+Result<OdsignInfo> getComposInfo() {
+    const char* const argv[] = {kCompOsVerifyPath, "--instance", "current"};
     int result =
         logwrap_fork_execvp(arraysize(argv), argv, nullptr, false, LOG_ALOG, false, nullptr);
     if (result != 0) {
@@ -370,8 +358,7 @@ Result<OdsignInfo> getComposInfo(const std::vector<uint8_t>& /*compos_key*/) {
     return compos_info;
 }
 
-art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>& compos_key,
-                                                     const SigningKey& signing_key,
+art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_key,
                                                      bool* digests_verified) {
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
         return art::odrefresh::ExitCode::kCompilationRequired;
@@ -406,7 +393,7 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const std::vector<uint8_t>&
 
     // Make sure the artifacts we have are genuinely produced by the current
     // instance of CompOS.
-    auto compos_info = getComposInfo(compos_key);
+    auto compos_info = getComposInfo();
     if (!compos_info.ok()) {
         LOG(WARNING) << compos_info.error();
     } else {
@@ -512,13 +499,7 @@ int main(int /* argc */, char** argv) {
     bool digests_verified = false;
 
     if (useCompOs) {
-        auto compos_key = addCompOsCertToFsVerityKeyring(*key);
-        if (!compos_key.ok()) {
-            LOG(WARNING) << compos_key.error();
-        } else {
-            odrefresh_status =
-                checkCompOsPendingArtifacts(compos_key.value(), *key, &digests_verified);
-        }
+        odrefresh_status = checkCompOsPendingArtifacts(*key, &digests_verified);
     }
 
     if (odrefresh_status == art::odrefresh::ExitCode::kCompilationRequired) {
