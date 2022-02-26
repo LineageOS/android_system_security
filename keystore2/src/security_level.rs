@@ -132,8 +132,7 @@ impl KeystoreSecurityLevel {
                 _ => Some(
                     certificate_chain
                         .iter()
-                        .map(|c| c.encodedCertificate.iter())
-                        .flatten()
+                        .flat_map(|c| c.encodedCertificate.iter())
                         .copied()
                         .collect(),
                 ),

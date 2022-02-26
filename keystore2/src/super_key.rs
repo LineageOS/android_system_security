@@ -767,12 +767,8 @@ impl SuperKeyManager {
                     "Failed to super encrypt with LskfBound key."
                 )),
             SuperEncryptionType::ScreenLockBound => {
-                let entry = self
-                    .data
-                    .user_keys
-                    .get(&user_id)
-                    .map(|e| e.screen_lock_bound.as_ref())
-                    .flatten();
+                let entry =
+                    self.data.user_keys.get(&user_id).and_then(|e| e.screen_lock_bound.as_ref());
                 if let Some(super_key) = entry {
                     Self::encrypt_with_aes_super_key(key_blob, super_key).context(concat!(
                         "In handle_super_encryption_on_key_init. ",
