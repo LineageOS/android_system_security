@@ -286,7 +286,7 @@ mod tests {
         let operation = begin_result.operation.unwrap();
 
         let update_aad_result = operation.updateAad(
-            &b"foobar".to_vec(),
+            b"foobar".as_ref(),
             None, /* authToken */
             None, /* timestampToken */
         );
@@ -310,7 +310,7 @@ mod tests {
         let operation = begin_result.operation.unwrap();
 
         let update_aad_result = operation.updateAad(
-            &b"foobar".to_vec(),
+            b"foobar".as_ref(),
             None, /* authToken */
             None, /* timestampToken */
         );
