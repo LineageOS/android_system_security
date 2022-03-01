@@ -2114,11 +2114,12 @@ impl KeystoreDB {
         let tx = self.conn.unchecked_transaction().context(
             "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
         )?;
-        let key_id: i64;
-        match self.query_kid_for_attestation_key_and_cert_chain(&tx, domain, namespace, km_uuid)? {
+        let key_id: i64 = match self
+            .query_kid_for_attestation_key_and_cert_chain(&tx, domain, namespace, km_uuid)?
+        {
             None => return Ok(None),
-            Some(kid) => key_id = kid,
-        }
+            Some(kid) => kid,
+        };
         tx.commit()
             .context("In retrieve_attestation_key_and_cert_chain: Failed to commit keyid query")?;
         let key_id_guard = KEY_ID_LOCK.get(key_id);
@@ -3667,13 +3668,13 @@ pub mod tests {
             namespace_del1,
             &KEYSTORE_UUID,
         )?;
-        assert!(!cert_chain.is_some());
+        assert!(cert_chain.is_none());
         cert_chain = db.retrieve_attestation_key_and_cert_chain(
             Domain::APP,
             namespace_del2,
             &KEYSTORE_UUID,
         )?;
-        assert!(!cert_chain.is_some());
+        assert!(cert_chain.is_none());
 
         // Give the garbage collector half a second to catch up.
         std::thread::sleep(Duration::from_millis(500));
