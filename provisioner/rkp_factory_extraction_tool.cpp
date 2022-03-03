@@ -30,6 +30,7 @@ using aidl::android::hardware::security::keymint::DeviceInfo;
 using aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using aidl::android::hardware::security::keymint::MacedPublicKey;
 using aidl::android::hardware::security::keymint::ProtectedData;
+using aidl::android::hardware::security::keymint::RpcHardwareInfo;
 using aidl::android::hardware::security::keymint::remote_prov::generateEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::getProdEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
@@ -113,10 +114,10 @@ Array composeCertificateRequest(const ProtectedData& protectedData,
     return certificateRequest;
 }
 
-std::vector<uint8_t> getEekChain() {
+std::vector<uint8_t> getEekChain(uint32_t curve) {
     if (FLAGS_test_mode) {
         const std::vector<uint8_t> kFakeEekId = {'f', 'a', 'k', 'e', 0};
-        auto eekOrErr = generateEekChain(3 /* chainlength */, kFakeEekId);
+        auto eekOrErr = generateEekChain(curve, 3 /* chainlength */, kFakeEekId);
         if (!eekOrErr) {
             std::cerr << "Failed to generate test EEK somehow: " << eekOrErr.message() << std::endl;
             exit(-1);
@@ -128,7 +129,7 @@ std::vector<uint8_t> getEekChain() {
         return eek;
     }
 
-    return getProdEekChain();
+    return getProdEekChain(curve);
 }
 
 void writeOutput(const Array& csr) {
@@ -169,9 +170,16 @@ void getCsrForInstance(const char* name, void* /*context*/) {
     std::vector<MacedPublicKey> emptyKeys;
     DeviceInfo verifiedDeviceInfo;
     ProtectedData protectedData;
-    ::ndk::ScopedAStatus status = rkp_service->generateCertificateRequest(
-        FLAGS_test_mode, emptyKeys, getEekChain(), challenge, &verifiedDeviceInfo, &protectedData,
-        &keysToSignMac);
+    RpcHardwareInfo hwInfo;
+    ::ndk::ScopedAStatus status = rkp_service->getHardwareInfo(&hwInfo);
+    if (!status.isOk()) {
+        std::cerr << "Failed to get hardware info for '" << fullName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+    status = rkp_service->generateCertificateRequest(
+        FLAGS_test_mode, emptyKeys, getEekChain(hwInfo.supportedEekCurve), challenge,
+        &verifiedDeviceInfo, &protectedData, &keysToSignMac);
     if (!status.isOk()) {
         std::cerr << "Bundle extraction failed for '" << fullName
                   << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;

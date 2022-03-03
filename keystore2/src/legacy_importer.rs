@@ -932,8 +932,7 @@ impl LegacyImporterState {
 
         for (uid, alias) in aliases
             .into_iter()
-            .map(|(uid, aliases)| aliases.into_iter().map(move |alias| (uid, alias)))
-            .flatten()
+            .flat_map(|(uid, aliases)| aliases.into_iter().map(move |alias| (uid, alias)))
         {
             let (km_blob_params, _, _) = self
                 .legacy_loader
