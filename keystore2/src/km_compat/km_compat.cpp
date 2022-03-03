@@ -1420,7 +1420,7 @@ KeyMintDevice::KeyMintDevice(sp<Keymaster> device, KeyMintSecurityLevel security
         setNumFreeSlots(15);
     }
 
-    softKeyMintDevice_.reset(CreateKeyMintDevice(KeyMintSecurityLevel::SOFTWARE));
+    softKeyMintDevice_ = CreateKeyMintDevice(KeyMintSecurityLevel::SOFTWARE);
 }
 
 sp<Keymaster> getDevice(KeyMintSecurityLevel securityLevel) {
@@ -1448,7 +1448,7 @@ std::shared_ptr<IKeyMintDevice> getSoftwareKeymintDevice() {
     static std::shared_ptr<IKeyMintDevice> swDevice;
     std::lock_guard<std::mutex> lock(mutex);
     if (!swDevice) {
-        swDevice.reset(CreateKeyMintDevice(KeyMintSecurityLevel::SOFTWARE));
+        swDevice = CreateKeyMintDevice(KeyMintSecurityLevel::SOFTWARE);
     }
     return swDevice;
 }
