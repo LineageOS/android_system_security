@@ -205,7 +205,7 @@ Result<void> verifyDigests(const std::map<std::string, std::string>& digests,
     for (const auto& path_digest : digests) {
         auto path = path_digest.first;
         auto digest = path_digest.second;
-        if ((trusted_digests.count(path) == 0)) {
+        if (trusted_digests.count(path) == 0) {
             return Error() << "Couldn't find digest for " << path;
         }
         if (trusted_digests.at(path) != digest) {
@@ -240,7 +240,7 @@ Result<void> verifyIntegrityNoFsVerity(const std::map<std::string, std::string>&
     return verifyDigests(*result, trusted_digests);
 }
 
-Result<OdsignInfo> getOdsignInfo(const SigningKey& key) {
+Result<OdsignInfo> getAndVerifyOdsignInfo(const SigningKey& key) {
     std::string persistedSignature;
     OdsignInfo odsignInfo;
 
@@ -274,6 +274,28 @@ Result<OdsignInfo> getOdsignInfo(const SigningKey& key) {
     return odsignInfo;
 }
 
+std::map<std::string, std::string> getTrustedDigests(const SigningKey& key) {
+    std::map<std::string, std::string> trusted_digests;
+
+    if (access(kOdsignInfo.c_str(), F_OK) != 0) {
+        // no odsign info file, which is not necessarily an error - just return
+        // an empty list of digests.
+        LOG(INFO) << kOdsignInfo << " not found.";
+        return trusted_digests;
+    }
+    auto signInfo = getAndVerifyOdsignInfo(key);
+
+    if (signInfo.ok()) {
+        trusted_digests.insert(signInfo->file_hashes().begin(), signInfo->file_hashes().end());
+    } else {
+        // This is not expected, since the file did exist. Log an error and
+        // return an empty list of digests.
+        LOG(ERROR) << "Couldn't load trusted digests: " << signInfo.error();
+    }
+
+    return trusted_digests;
+}
+
 Result<void> persistDigests(const std::map<std::string, std::string>& digests,
                             const SigningKey& key) {
     OdsignInfo signInfo;
@@ -299,23 +321,8 @@ Result<void> persistDigests(const std::map<std::string, std::string>& digests,
     return {};
 }
 
-Result<void> verifyArtifacts(const SigningKey& key, bool supportsFsVerity) {
-    auto signInfo = getOdsignInfo(key);
-    // Tell init we're done with the key; this is a boot time optimization
-    // in particular for the no fs-verity case, where we need to do a
-    // costly verification. If the files haven't been tampered with, which
-    // should be the common path, the verification will succeed, and we won't
-    // need the key anymore. If it turns out the artifacts are invalid (eg not
-    // in fs-verity) or the hash doesn't match, we won't be able to generate
-    // new artifacts without the key, so in those cases, remove the artifacts,
-    // and use JIT zygote for the current boot. We should recover automatically
-    // by the next boot.
-    SetProperty(kOdsignKeyDoneProp, "1");
-    if (!signInfo.ok()) {
-        return signInfo.error();
-    }
-    std::map<std::string, std::string> trusted_digests(signInfo->file_hashes().begin(),
-                                                       signInfo->file_hashes().end());
+Result<void> verifyArtifactsIntegrity(const std::map<std::string, std::string>& trusted_digests,
+                                      bool supportsFsVerity) {
     Result<void> integrityStatus;
 
     if (supportsFsVerity) {
@@ -361,7 +368,8 @@ Result<OdsignInfo> getComposInfo() {
 art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_key,
                                                      bool* digests_verified) {
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
-        return art::odrefresh::ExitCode::kCompilationRequired;
+        // No pending CompOS artifacts, all that matters is the current ones.
+        return checkArtifacts();
     }
 
     // CompOS has generated some artifacts that may, or may not, match the
@@ -406,9 +414,17 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_k
         } else {
             LOG(INFO) << "CompOS artifacts successfully verified.";
             odrefresh_status = checkArtifacts();
-            if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
-                // We have digests of all the files, and they aren't going to change, so
-                // we can just sign them & save them now, and skip checking them later.
+            switch (odrefresh_status) {
+            case art::odrefresh::ExitCode::kCompilationRequired:
+                // We have verified all the files, and we need to make sure
+                // we don't check them against odsign.info which will be out
+                // of date.
+                *digests_verified = true;
+                return odrefresh_status;
+            case art::odrefresh::ExitCode::kOkay: {
+                // We have digests of all the files, so we can just sign them & save them now.
+                // We need to make sure we don't check them against odsign.info which will
+                // be out of date.
                 auto persisted = persistDigests(compos_digests, signing_key);
                 if (!persisted.ok()) {
                     LOG(ERROR) << persisted.error();
@@ -418,8 +434,11 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_k
                 }
                 LOG(INFO) << "Persisted CompOS digests.";
                 *digests_verified = true;
+                return odrefresh_status;
             }
-            return odrefresh_status;
+            default:
+                return odrefresh_status;
+            }
         }
     }
 
@@ -495,33 +514,60 @@ int main(int /* argc */, char** argv) {
         }
     }
 
-    art::odrefresh::ExitCode odrefresh_status = art::odrefresh::ExitCode::kCompilationRequired;
     bool digests_verified = false;
+    art::odrefresh::ExitCode odrefresh_status =
+        useCompOs ? checkCompOsPendingArtifacts(*key, &digests_verified) : checkArtifacts();
 
-    if (useCompOs) {
-        odrefresh_status = checkCompOsPendingArtifacts(*key, &digests_verified);
+    // The artifacts dir doesn't necessarily need to exist; if the existing
+    // artifacts on the system partition are valid, those can be used.
+    int err = access(kArtArtifactsDir.c_str(), F_OK);
+    // If we receive any error other than ENOENT, be suspicious
+    bool artifactsPresent = (err == 0) || (err < 0 && errno != ENOENT);
+
+    if (artifactsPresent && !digests_verified &&
+        (odrefresh_status == art::odrefresh::ExitCode::kOkay ||
+         odrefresh_status == art::odrefresh::ExitCode::kCompilationRequired)) {
+        // If we haven't verified the digests yet, we need to validate them. We
+        // need to do this both in case the existing artifacts are okay, but
+        // also if odrefresh said that a recompile is required. In the latter
+        // case, odrefresh may use partial compilation, and leave some
+        // artifacts unchanged.
+        auto trusted_digests = getTrustedDigests(*key);
+
+        if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
+            // Tell init we're done with the key; this is a boot time optimization
+            // in particular for the no fs-verity case, where we need to do a
+            // costly verification. If the files haven't been tampered with, which
+            // should be the common path, the verification will succeed, and we won't
+            // need the key anymore. If it turns out the artifacts are invalid (eg not
+            // in fs-verity) or the hash doesn't match, we won't be able to generate
+            // new artifacts without the key, so in those cases, remove the artifacts,
+            // and use JIT zygote for the current boot. We should recover automatically
+            // by the next boot.
+            SetProperty(kOdsignKeyDoneProp, "1");
+        }
+
+        auto verificationResult = verifyArtifactsIntegrity(trusted_digests, supportsFsVerity);
+        if (!verificationResult.ok()) {
+            int num_removed = removeDirectory(kArtArtifactsDir);
+            if (num_removed == 0) {
+                // If we can't remove the bad artifacts, we shouldn't continue, and
+                // instead prevent Zygote from using them (which is taken care of
+                // in the exit handler).
+                LOG(ERROR) << "Failed to remove unknown artifacts.";
+                return -1;
+            }
+        }
     }
 
+    // Now that we verified existing artifacts, compile if we need to.
     if (odrefresh_status == art::odrefresh::ExitCode::kCompilationRequired) {
         odrefresh_status = compileArtifacts(kForceCompilation);
     }
+
     if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
+        // No new artifacts generated, and we verified existing ones above, nothing left to do.
         LOG(INFO) << "odrefresh said artifacts are VALID";
-        if (!digests_verified) {
-            // A post-condition of validating artifacts is that if the ones on /system
-            // are used, kArtArtifactsDir is removed. Conversely, if kArtArtifactsDir
-            // exists, those are artifacts that will be used, and we should verify them.
-            int err = access(kArtArtifactsDir.c_str(), F_OK);
-            // If we receive any error other than ENOENT, be suspicious
-            bool artifactsPresent = (err == 0) || (err < 0 && errno != ENOENT);
-            if (artifactsPresent) {
-                auto verificationResult = verifyArtifacts(*key, supportsFsVerity);
-                if (!verificationResult.ok()) {
-                    LOG(ERROR) << verificationResult.error();
-                    return -1;
-                }
-            }
-        }
     } else if (odrefresh_status == art::odrefresh::ExitCode::kCompilationSuccess ||
                odrefresh_status == art::odrefresh::ExitCode::kCompilationFailed) {
         const bool compiled_all = odrefresh_status == art::odrefresh::ExitCode::kCompilationSuccess;
