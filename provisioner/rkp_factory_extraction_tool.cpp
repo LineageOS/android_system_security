@@ -132,12 +132,12 @@ std::vector<uint8_t> getEekChain(uint32_t curve) {
     return getProdEekChain(curve);
 }
 
-void writeOutput(const Array& csr) {
+void writeOutput(const std::string instance_name, const Array& csr) {
     if (FLAGS_output_format == kBinaryCsrOutput) {
         auto bytes = csr.encode();
         std::copy(bytes.begin(), bytes.end(), std::ostream_iterator<char>(std::cout));
     } else if (FLAGS_output_format == kBuildPlusCsr) {
-        auto [json, error] = jsonEncodeCsrWithBuild(csr);
+        auto [json, error] = jsonEncodeCsrWithBuild(instance_name, csr);
         if (!error.empty()) {
             std::cerr << "Error JSON encoding the output: " << error;
             exit(1);
@@ -187,7 +187,7 @@ void getCsrForInstance(const char* name, void* /*context*/) {
     }
     auto request =
         composeCertificateRequest(protectedData, verifiedDeviceInfo, challenge, keysToSignMac);
-    writeOutput(request);
+    writeOutput(std::string(name), request);
 }
 
 }  // namespace
