@@ -16,8 +16,9 @@
 
 use crate::{
     database::{
-        BlobMetaData, BlobMetaEntry, CertificateInfo, DateTime, KeyEntry, KeyEntryLoadBits,
-        KeyIdGuard, KeyMetaData, KeyMetaEntry, KeyType, KeystoreDB, SubComponentType, Uuid,
+        BlobInfo, BlobMetaData, BlobMetaEntry, CertificateInfo, DateTime, KeyEntry,
+        KeyEntryLoadBits, KeyIdGuard, KeyMetaData, KeyMetaEntry, KeyType, KeystoreDB,
+        SubComponentType, Uuid,
     },
     error::{map_km_error, Error, ErrorCode},
     globals::get_keymint_device,
@@ -123,7 +124,7 @@ impl KeyMintDevice {
             &key_desc,
             key_type,
             &key_parameters,
-            &(&creation_result.keyBlob, &blob_metadata),
+            &BlobInfo::new(&creation_result.keyBlob, &blob_metadata),
             &CertificateInfo::new(None, None),
             &key_metadata,
             &self.km_uuid,

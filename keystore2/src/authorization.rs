@@ -15,7 +15,7 @@
 //! This module implements IKeystoreAuthorization AIDL interface.
 
 use crate::error::Error as KeystoreError;
-use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_MIGRATOR};
+use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_IMPORTER};
 use crate::permission::KeystorePerm;
 use crate::super_key::UserState;
 use crate::utils::{check_keystore_permission, watchdog as wd};
@@ -161,7 +161,7 @@ impl AuthorizationManager {
                     .with(|db| {
                         UserState::get_with_password_unlock(
                             &mut db.borrow_mut(),
-                            &LEGACY_MIGRATOR,
+                            &LEGACY_IMPORTER,
                             &SUPER_KEY,
                             user_id as u32,
                             &password,
