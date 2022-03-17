@@ -107,9 +107,20 @@ pub fn is_device_id_attestation_tag(tag: Tag) -> bool {
 }
 
 /// This function checks whether the calling app has the Android permissions needed to attest device
-/// identifiers. It throws an error if the permissions cannot be verified, or if the caller doesn't
-/// have the right permissions, and returns silently otherwise.
+/// identifiers. It throws an error if the permissions cannot be verified or if the caller doesn't
+/// have the right permissions. Otherwise it returns silently.
 pub fn check_device_attestation_permissions() -> anyhow::Result<()> {
+    check_android_permission("android.permission.READ_PRIVILEGED_PHONE_STATE")
+}
+
+/// This function checks whether the calling app has the Android permissions needed to attest the
+/// device-unique identifier. It throws an error if the permissions cannot be verified or if the
+/// caller doesn't have the right permissions. Otherwise it returns silently.
+pub fn check_unique_id_attestation_permissions() -> anyhow::Result<()> {
+    check_android_permission("android.permission.REQUEST_UNIQUE_ID_ATTESTATION")
+}
+
+fn check_android_permission(permission: &str) -> anyhow::Result<()> {
     let permission_controller: Strong<dyn IPermissionController::IPermissionController> =
         binder::get_interface("permission")?;
 
@@ -119,7 +130,7 @@ pub fn check_device_attestation_permissions() -> anyhow::Result<()> {
             500,
         );
         permission_controller.checkPermission(
-            "android.permission.READ_PRIVILEGED_PHONE_STATE",
+            permission,
             ThreadState::get_calling_pid(),
             ThreadState::get_calling_uid() as i32,
         )
