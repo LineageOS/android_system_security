@@ -80,7 +80,6 @@ bool isAttestationParameter(const KMV1::KeyParameter& param) {
     case Tag::CERTIFICATE_SUBJECT:
     case Tag::CERTIFICATE_NOT_BEFORE:
     case Tag::CERTIFICATE_NOT_AFTER:
-    case Tag::INCLUDE_UNIQUE_ID:
     case Tag::DEVICE_UNIQUE_ATTESTATION:
         return true;
     default:
