@@ -15,6 +15,7 @@
 //! This module implements the shared secret negotiation.
 
 use crate::error::{map_binder_status, map_binder_status_code, Error};
+use crate::globals::get_keymint_device;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_hardware_security_keymint::binder::Strong;
 use android_hardware_security_sharedsecret::aidl::android::hardware::security::sharedsecret::{
@@ -43,6 +44,10 @@ pub fn perform_shared_secret_negotiation() {
         let connected = connect_participants(participants);
         negotiate_shared_secret(connected);
         log::info!("Shared secret negotiation concluded successfully.");
+
+        // Once shared secret negotiation is done, the StrongBox and TEE have a common key that
+        // can be used to authenticate a possible RootOfTrust transfer.
+        transfer_root_of_trust();
     });
 }
 
@@ -277,4 +282,49 @@ fn negotiate_shared_secret(
             ));
         }
     }
+}
+
+/// Perform RootOfTrust transfer from TEE to StrongBox (if available).
+pub fn transfer_root_of_trust() {
+    let strongbox = match get_keymint_device(&SecurityLevel::STRONGBOX) {
+        Ok((s, _, _)) => s,
+        Err(_e) => {
+            log::info!("No StrongBox Keymint available, so no RoT transfer");
+            return;
+        }
+    };
+    // Ask the StrongBox KeyMint for a challenge.
+    let challenge = match strongbox.getRootOfTrustChallenge() {
+        Ok(data) => data,
+        Err(e) => {
+            // If StrongBox doesn't provide a challenge, it might be because:
+            // - it already has RootOfTrust information
+            // - it's a KeyMint v1 implementation that doesn't understand the method.
+            // In either case, we're done.
+            log::info!("StrongBox does not provide a challenge, so no RoT transfer: {:?}", e);
+            return;
+        }
+    };
+    // Get the RoT info from the TEE
+    let tee = match get_keymint_device(&SecurityLevel::TRUSTED_ENVIRONMENT) {
+        Ok((s, _, _)) => s,
+        Err(e) => {
+            log::error!("No TEE KeyMint implementation found! {:?}", e);
+            return;
+        }
+    };
+    let root_of_trust = match tee.getRootOfTrust(&challenge) {
+        Ok(rot) => rot,
+        Err(e) => {
+            log::error!("TEE KeyMint failed to return RootOfTrust info: {:?}", e);
+            return;
+        }
+    };
+    // The RootOfTrust information is CBOR-serialized data, but we don't need to parse it.
+    // Just pass it on to the StrongBox KeyMint instance.
+    let result = strongbox.sendRootOfTrust(&root_of_trust);
+    if let Err(e) = result {
+        log::error!("Failed to send RootOfTrust to StrongBox: {:?}", e);
+    }
+    log::info!("RootOfTrust transfer process complete");
 }
