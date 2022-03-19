@@ -1387,25 +1387,24 @@ impl LegacyBlobLoader {
     }
 }
 
-#[cfg(test)]
-mod test {
+/// This module implements utility apis for creating legacy blob files.
+#[cfg(feature = "keystore2_blob_test_utils")]
+pub mod test_utils {
     #![allow(dead_code)]
-    use super::*;
-    use keystore2_crypto::{aes_gcm_decrypt, aes_gcm_encrypt};
-    use rand::Rng;
-    use std::string::FromUtf8Error;
-    mod legacy_blob_test_vectors;
+
+    /// test vectors for legacy key blobs
+    pub mod legacy_blob_test_vectors;
+
     use crate::legacy_blob::blob_types::{
         GENERIC, KEY_CHARACTERISTICS, KEY_CHARACTERISTICS_CACHE, KM_BLOB, SUPER_KEY,
         SUPER_KEY_AES256,
     };
-    use crate::legacy_blob::test::legacy_blob_test_vectors::*;
+    use crate::legacy_blob::*;
     use anyhow::{anyhow, Result};
-    use keystore2_test_utils::TempDir;
+    use keystore2_crypto::{aes_gcm_decrypt, aes_gcm_encrypt};
     use std::convert::TryInto;
     use std::fs::OpenOptions;
     use std::io::Write;
-    use std::ops::Deref;
 
     /// This function takes a blob and synchronizes the encrypted/super encrypted flags
     /// with the blob type for the pairs Generic/EncryptedGeneric,
@@ -1414,7 +1413,7 @@ mod test {
     /// or flags::ENCRYPTED is set, the payload is encrypted and the corresponding
     /// encrypted variant is returned, and vice versa. All other variants remain untouched
     /// even if flags and BlobValue variant are inconsistent.
-    fn prepare_blob(blob: Blob, key: &[u8]) -> Result<Blob> {
+    pub fn prepare_blob(blob: Blob, key: &[u8]) -> Result<Blob> {
         match blob {
             Blob { value: BlobValue::Generic(data), flags } if blob.is_encrypted() => {
                 let (ciphertext, iv, tag) = aes_gcm_encrypt(&data, key).unwrap();
@@ -1453,7 +1452,8 @@ mod test {
         }
     }
 
-    struct LegacyBlobHeader {
+    /// Legacy blob header structure.
+    pub struct LegacyBlobHeader {
         version: u8,
         blob_type: u8,
         flags: u8,
@@ -1467,7 +1467,7 @@ mod test {
     /// version 3. Note that the flags field and the values field may be
     /// inconsistent and could be sanitized by this function. It is intentionally
     /// not done to enable tests to construct malformed blobs.
-    fn write_legacy_blob(out: &mut dyn Write, blob: Blob) -> Result<usize> {
+    pub fn write_legacy_blob(out: &mut dyn Write, blob: Blob) -> Result<usize> {
         let (header, data, salt) = match blob {
             Blob { value: BlobValue::Generic(data), flags } => (
                 LegacyBlobHeader {
@@ -1581,7 +1581,9 @@ mod test {
         write_legacy_blob_helper(out, &header, &data, salt.as_deref())
     }
 
-    fn write_legacy_blob_helper(
+    /// This function takes LegacyBlobHeader, blob payload and writes it to out as a legacy blob file
+    /// version 3.
+    pub fn write_legacy_blob_helper(
         out: &mut dyn Write,
         header: &LegacyBlobHeader,
         data: &[u8],
@@ -1622,10 +1624,51 @@ mod test {
         Ok(40 + data.len() + info.map(|v| v.len()).unwrap_or(0))
     }
 
-    fn make_encrypted_characteristics_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
+    /// Create encrypted characteristics file using given key.
+    pub fn make_encrypted_characteristics_file<P: AsRef<Path>>(
+        path: P,
+        key: &[u8],
+        data: &[u8],
+    ) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob =
+            Blob { value: BlobValue::Characteristics(data.to_vec()), flags: flags::ENCRYPTED };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
+
+    /// Create encrypted user certificate file using given key.
+    pub fn make_encrypted_usr_cert_file<P: AsRef<Path>>(
+        path: P,
+        key: &[u8],
+        data: &[u8],
+    ) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob = Blob { value: BlobValue::Generic(data.to_vec()), flags: flags::ENCRYPTED };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
+
+    /// Create encrypted CA certificate file using given key.
+    pub fn make_encrypted_ca_cert_file<P: AsRef<Path>>(
+        path: P,
+        key: &[u8],
+        data: &[u8],
+    ) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob = Blob { value: BlobValue::Generic(data.to_vec()), flags: flags::ENCRYPTED };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
+
+    /// Create encrypted user key file using given key.
+    pub fn make_encrypted_key_file<P: AsRef<Path>>(path: P, key: &[u8], data: &[u8]) -> Result<()> {
         let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
         let blob = Blob {
-            value: BlobValue::Characteristics(KEY_PARAMETERS.to_vec()),
+            value: BlobValue::Decrypted(ZVec::try_from(data).unwrap()),
             flags: flags::ENCRYPTED,
         };
         let blob = prepare_blob(blob, key).unwrap();
@@ -1633,27 +1676,29 @@ mod test {
         Ok(())
     }
 
-    fn make_encrypted_usr_cert_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
+    /// Create user or ca cert blob file.
+    pub fn make_cert_blob_file<P: AsRef<Path>>(path: P, data: &[u8]) -> Result<()> {
         let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
-        let blob = Blob {
-            value: BlobValue::Generic(LOADED_CERT_AUTHBOUND.to_vec()),
-            flags: flags::ENCRYPTED,
-        };
-        let blob = prepare_blob(blob, key).unwrap();
+        let blob = Blob { value: BlobValue::Generic(data.to_vec()), flags: 0 };
+        let blob = prepare_blob(blob, &[]).unwrap();
         write_legacy_blob(&mut file, blob).unwrap();
         Ok(())
     }
+}
 
-    fn make_encrypted_ca_cert_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
-        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
-        let blob = Blob {
-            value: BlobValue::Generic(LOADED_CACERT_AUTHBOUND.to_vec()),
-            flags: flags::ENCRYPTED,
-        };
-        let blob = prepare_blob(blob, key).unwrap();
-        write_legacy_blob(&mut file, blob).unwrap();
-        Ok(())
-    }
+#[cfg(test)]
+mod test {
+    #![allow(dead_code)]
+    use super::*;
+    use crate::legacy_blob::test_utils::legacy_blob_test_vectors::*;
+    use crate::legacy_blob::test_utils::*;
+    use anyhow::{anyhow, Result};
+    use keystore2_crypto::aes_gcm_decrypt;
+    use keystore2_test_utils::TempDir;
+    use rand::Rng;
+    use std::convert::TryInto;
+    use std::ops::Deref;
+    use std::string::FromUtf8Error;
 
     #[test]
     fn decode_encode_alias_test() {
@@ -1962,6 +2007,7 @@ mod test {
         make_encrypted_characteristics_file(
             &*temp_dir.build().push("user_0").push(".10223_chr_USRPKEY_authbound"),
             &super_key,
+            KEY_PARAMETERS,
         )
         .unwrap();
         std::fs::write(
@@ -2053,11 +2099,13 @@ mod test {
         make_encrypted_usr_cert_file(
             &*temp_dir.build().push("user_0").push("10223_USRCERT_authbound"),
             &super_key,
+            LOADED_CERT_AUTHBOUND,
         )
         .unwrap();
         make_encrypted_ca_cert_file(
             &*temp_dir.build().push("user_0").push("10223_CACERT_authbound"),
             &super_key,
+            LOADED_CACERT_AUTHBOUND,
         )
         .unwrap();
 
@@ -2139,11 +2187,13 @@ mod test {
         make_encrypted_usr_cert_file(
             &*temp_dir.build().push("user_0").push("10223_USRCERT_authbound"),
             &super_key,
+            LOADED_CERT_AUTHBOUND,
         )
         .unwrap();
         make_encrypted_ca_cert_file(
             &*temp_dir.build().push("user_0").push("10223_CACERT_authbound"),
             &super_key,
+            LOADED_CACERT_AUTHBOUND,
         )
         .unwrap();
 
