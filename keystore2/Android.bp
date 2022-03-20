@@ -89,6 +89,19 @@ rust_library {
     ],
 }
 
+rust_library {
+    name: "libkeystore2_with_test_utils",
+    defaults: ["libkeystore2_defaults"],
+    features: [
+        "keystore2_blob_test_utils",
+    ],
+    rustlibs: [
+        "liblibsqlite3_sys",
+        "librusqlite",
+        "libkeystore2_test_utils",
+    ],
+}
+
 rust_test {
     name: "keystore2_test_utils_test",
     srcs: ["test_utils/lib.rs"],
@@ -119,10 +132,12 @@ rust_test {
         "liblibsqlite3_sys",
         "libnix",
         "librusqlite",
+        "libkeystore2_with_test_utils",
     ],
     // The test should always include watchdog.
     features: [
         "watchdog",
+        "keystore2_blob_test_utils",
     ],
 }
 
