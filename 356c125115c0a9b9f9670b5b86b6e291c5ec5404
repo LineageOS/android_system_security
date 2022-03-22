@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "41cbbf81_81709e56",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 19907
+      },
+      "writtenOn": "2022-03-22T08:09:51Z",
+      "side": 1,
+      "message": "Fixes booting with encryption enabled on Realme 6",
+      "revId": "356c125115c0a9b9f9670b5b86b6e291c5ec5404",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    }
+  ]
+}
