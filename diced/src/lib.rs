@@ -100,7 +100,7 @@ fn client_input_values(uid: uid_t) -> Result<BinderInputValues> {
     Ok(BinderInputValues {
         codeHash: [0; dice::HASH_SIZE],
         config: BinderConfig {
-            desc: dice::bcc::format_config_descriptor(Some(&format!("{}", uid)), None, true)
+            desc: dice::bcc::format_config_descriptor(Some(&format!("{}", uid)), None, false)
                 .context("In client_input_values: failed to format config descriptor")?,
         },
         authorityHash: [0; dice::HASH_SIZE],
