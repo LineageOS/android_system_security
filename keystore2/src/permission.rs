@@ -145,10 +145,6 @@ implement_class!(
         /// Checked when IKeystoreMaintenance::deleteAllKeys is called.
         #[selinux(name = delete_all_keys)]
         DeleteAllKeys,
-        /// Checked when migrating any key from any namespace to any other namespace. It was
-        /// introduced for migrating keys when an app leaves a sharedUserId.
-        #[selinux(name = migrate_any_key)]
-        MigrateAnyKey,
         /// Checked on calls to IRemotelyProvisionedKeyPool::getAttestationKey
         #[selinux(name = get_attestation_key)]
         GetAttestationKey,
