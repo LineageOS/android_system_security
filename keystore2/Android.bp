@@ -79,7 +79,10 @@ rust_library {
     name: "libkeystore2_test_utils",
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
+    defaults: ["keymint_use_latest_hal_aidl_rust"],
     rustlibs: [
+        "android.system.keystore2-V2-rust",
+        "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
         "libnix",
@@ -105,11 +108,14 @@ rust_library {
 rust_test {
     name: "keystore2_test_utils_test",
     srcs: ["test_utils/lib.rs"],
+    defaults: ["keymint_use_latest_hal_aidl_rust"],
     test_suites: ["general-tests"],
     require_root: true,
     auto_gen_config: true,
     compile_multilib: "first",
     rustlibs: [
+        "android.system.keystore2-V2-rust",
+        "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
         "libnix",
