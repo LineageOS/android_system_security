@@ -31,12 +31,12 @@ cc_fuzz {
     ],
     static_libs: [
         "libkeystore-wifi-hidl",
-        "libutils",
     ],
     shared_libs: [
         "android.system.wifi.keystore@1.0",
         "libhidlbase",
         "liblog",
+        "libutils",
     ],
     fuzz_config: {
         cc: [
@@ -51,13 +51,13 @@ cc_defaults {
     static_libs: [
         "libkeystore-attestation-application-id",
         "liblog",
-        "libutils",
         "libbase",
         "libhidlbase",
     ],
     shared_libs: [
         "libbinder",
         "libcrypto",
+        "libutils",
     ],
     fuzz_config: {
         cc: [
