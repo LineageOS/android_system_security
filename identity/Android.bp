@@ -59,7 +59,7 @@ cc_binary {
     ],
     static_libs: [
         "android.hardware.identity-V4-cpp",
-        "android.hardware.keymaster-V4-cpp",
+        "android.hardware.keymaster-V3-cpp",
         "libcppbor_external",
     ],
 }
