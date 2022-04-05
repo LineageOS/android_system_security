@@ -60,6 +60,7 @@ pub struct RemProvState {
     security_level: SecurityLevel,
     km_uuid: Uuid,
     is_hal_present: AtomicBool,
+    is_rkp_only: bool,
 }
 
 static COSE_KEY_XCOORD: Value = Value::Integer(-2);
@@ -70,12 +71,30 @@ static COSE_MAC0_PAYLOAD: usize = 2;
 impl RemProvState {
     /// Creates a RemProvState struct.
     pub fn new(security_level: SecurityLevel, km_uuid: Uuid) -> Self {
-        Self { security_level, km_uuid, is_hal_present: AtomicBool::new(true) }
+        Self {
+            security_level,
+            km_uuid,
+            is_hal_present: AtomicBool::new(true),
+            is_rkp_only: Self::read_is_rkp_only_property(security_level),
+        }
     }
 
     /// Returns the uuid for the KM instance attached to this RemProvState struct.
     pub fn get_uuid(&self) -> Uuid {
         self.km_uuid
+    }
+
+    fn read_is_rkp_only_property(security_level: SecurityLevel) -> bool {
+        let default_value = false;
+
+        let property_name = match security_level {
+            SecurityLevel::STRONGBOX => "ro.remote_provisioning.strongbox.rkp_only",
+            SecurityLevel::TRUSTED_ENVIRONMENT => "ro.remote_provisioning.tee.rkp_only",
+            _ => return default_value,
+        };
+
+        rustutils::system_properties::read_bool(property_name, default_value)
+            .unwrap_or(default_value)
     }
 
     /// Checks if remote provisioning is enabled and partially caches the result. On a hybrid system
@@ -137,12 +156,12 @@ impl RemProvState {
             match get_rem_prov_attest_key(key.domain, caller_uid, db, &self.km_uuid) {
                 Err(e) => {
                     log::error!(
-                        concat!(
-                            "In get_remote_provisioning_key_and_certs: Failed to get ",
-                            "attestation key. {:?}"
-                        ),
+                        "In get_remote_provisioning_key_and_certs: Error occurred: {:?}",
                         e
                     );
+                    if self.is_rkp_only {
+                        return Err(e);
+                    }
                     log_rkp_error_stats(MetricsRkpError::FALL_BACK_DURING_HYBRID);
                     Ok(None)
                 }
