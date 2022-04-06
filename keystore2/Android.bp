@@ -79,7 +79,10 @@ rust_library {
     name: "libkeystore2_test_utils",
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
+    defaults: ["keymint_use_latest_hal_aidl_rust"],
     rustlibs: [
+        "android.system.keystore2-V2-rust",
+        "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
         "libnix",
@@ -89,14 +92,30 @@ rust_library {
     ],
 }
 
+rust_library {
+    name: "libkeystore2_with_test_utils",
+    defaults: ["libkeystore2_defaults"],
+    features: [
+        "keystore2_blob_test_utils",
+    ],
+    rustlibs: [
+        "liblibsqlite3_sys",
+        "librusqlite",
+        "libkeystore2_test_utils",
+    ],
+}
+
 rust_test {
     name: "keystore2_test_utils_test",
     srcs: ["test_utils/lib.rs"],
+    defaults: ["keymint_use_latest_hal_aidl_rust"],
     test_suites: ["general-tests"],
     require_root: true,
     auto_gen_config: true,
     compile_multilib: "first",
     rustlibs: [
+        "android.system.keystore2-V2-rust",
+        "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
         "libnix",
@@ -119,10 +138,12 @@ rust_test {
         "liblibsqlite3_sys",
         "libnix",
         "librusqlite",
+        "libkeystore2_with_test_utils",
     ],
     // The test should always include watchdog.
     features: [
         "watchdog",
+        "keystore2_blob_test_utils",
     ],
 }
 
