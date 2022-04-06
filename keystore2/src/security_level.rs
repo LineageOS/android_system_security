@@ -27,7 +27,8 @@ use crate::metrics_store::log_key_creation_event_stats;
 use crate::remote_provisioning::RemProvState;
 use crate::super_key::{KeyBlob, SuperKeyManager};
 use crate::utils::{
-    check_device_attestation_permissions, check_key_permission, is_device_id_attestation_tag,
+    check_device_attestation_permissions, check_key_permission,
+    check_unique_id_attestation_permissions, is_device_id_attestation_tag,
     key_characteristics_to_internal, uid_to_android_user, watchdog as wd,
 };
 use crate::{
@@ -452,10 +453,14 @@ impl KeystoreSecurityLevel {
         }
 
         if params.iter().any(|kp| kp.tag == Tag::INCLUDE_UNIQUE_ID) {
-            check_key_permission(KeyPerm::GenUniqueId, key, &None).context(concat!(
-                "In add_required_parameters: ",
-                "Caller does not have the permission to generate a unique ID"
-            ))?;
+            if check_key_permission(KeyPerm::GenUniqueId, key, &None).is_err()
+                && check_unique_id_attestation_permissions().is_err()
+            {
+                return Err(Error::perm()).context(
+                    "In add_required_parameters: \
+                    Caller does not have the permission to generate a unique ID",
+                );
+            }
             if self.id_rotation_state.had_factory_reset_since_id_rotation().context(
                 "In add_required_parameters: Call to had_factory_reset_since_id_rotation failed.",
             )? {
