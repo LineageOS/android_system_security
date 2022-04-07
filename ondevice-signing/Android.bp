@@ -112,6 +112,7 @@ cc_binary {
     "KeystoreKey.cpp",
     "KeystoreHmacKey.cpp",
     "odsign_main.cpp",
+    "StatsReporter.cpp",
   ],
 
   header_libs: ["odrefresh_headers"],
