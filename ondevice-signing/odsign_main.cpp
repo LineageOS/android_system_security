@@ -33,6 +33,7 @@
 
 #include "CertUtils.h"
 #include "KeystoreKey.h"
+#include "StatsReporter.h"
 #include "VerityUtils.h"
 
 #include "odsign_info.pb.h"
@@ -365,12 +366,18 @@ Result<OdsignInfo> getComposInfo() {
     return compos_info;
 }
 
-art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_key,
-                                                     bool* digests_verified) {
+art::odrefresh::ExitCode CheckCompOsPendingArtifacts(const SigningKey& signing_key,
+                                                     bool* digests_verified,
+                                                     StatsReporter* stats_reporter) {
+    StatsReporter::CompOsArtifactsCheckRecord* compos_check_record =
+        stats_reporter->GetComposArtifactsCheckRecord();
+
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
         // No pending CompOS artifacts, all that matters is the current ones.
         return checkArtifacts();
     }
+
+    compos_check_record->comp_os_pending_artifacts_exists = true;
 
     // CompOS has generated some artifacts that may, or may not, match the
     // current state.  But if there are already valid artifacts present the
@@ -378,6 +385,7 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_k
     art::odrefresh::ExitCode odrefresh_status = checkArtifacts();
     if (odrefresh_status != art::odrefresh::ExitCode::kCompilationRequired) {
         if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
+            compos_check_record->current_artifacts_ok = true;
             LOG(INFO) << "Current artifacts are OK, deleting pending artifacts";
             removeDirectory(kCompOsPendingArtifactsDir);
         }
@@ -432,6 +440,7 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_k
                     // are pretty bad.
                     return art::odrefresh::ExitCode::kCleanupFailed;
                 }
+                compos_check_record->use_comp_os_generated_artifacts = true;
                 LOG(INFO) << "Persisted CompOS digests.";
                 *digests_verified = true;
                 return odrefresh_status;
@@ -455,6 +464,9 @@ art::odrefresh::ExitCode checkCompOsPendingArtifacts(const SigningKey& signing_k
 }  // namespace
 
 int main(int /* argc */, char** argv) {
+    // stats_reporter is a pointer so that we can explicitly delete it
+    // instead of waiting for the program to die & its destrcutor be called
+    auto stats_reporter = std::make_unique<StatsReporter>();
     android::base::InitLogging(argv, android::base::LogdLogger(android::base::SYSTEM));
 
     auto errorScopeGuard = []() {
@@ -516,7 +528,14 @@ int main(int /* argc */, char** argv) {
 
     bool digests_verified = false;
     art::odrefresh::ExitCode odrefresh_status =
-        useCompOs ? checkCompOsPendingArtifacts(*key, &digests_verified) : checkArtifacts();
+        useCompOs ? CheckCompOsPendingArtifacts(*key, &digests_verified, stats_reporter.get())
+                  : checkArtifacts();
+
+    // Explicitly reset the pointer - We rely on stats_reporter's
+    // destructor for actually writing the buffered metrics. This will otherwise not be called
+    // if the program doesn't exit normally (for ex, killed by init, which actually happens
+    // because odsign (after it finishes) sets kStopServiceProp instructing init to kill it).
+    stats_reporter.reset();
 
     // The artifacts dir doesn't necessarily need to exist; if the existing
     // artifacts on the system partition are valid, those can be used.
