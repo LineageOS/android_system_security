@@ -33,6 +33,23 @@
       "message": "Fixes booting with encryption enabled on exynos9810 line of devices.",
       "revId": "356c125115c0a9b9f9670b5b86b6e291c5ec5404",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "5a0d1230_cf099354",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 16185
+      },
+      "writtenOn": "2022-04-08T15:59:33Z",
+      "side": 1,
+      "message": "good on troika",
+      "revId": "356c125115c0a9b9f9670b5b86b6e291c5ec5404",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
     }
   ]
 }
