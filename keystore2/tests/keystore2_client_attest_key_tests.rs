@@ -27,27 +27,12 @@ use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error,
 };
 
+use crate::ffi_test_utils::validate_certchain;
+
 use crate::{
     keystore2_client_test_utils::app_attest_key_feature_exists,
     skip_test_if_no_app_attest_key_feature,
 };
-
-#[cxx::bridge]
-mod ffi {
-    unsafe extern "C++" {
-        include!("ffi_test_utils.hpp");
-        fn validateCertChain(cert_buf: Vec<u8>, cert_len: u32, strict_issuer_check: bool) -> bool;
-    }
-}
-
-/// Validate given certificate chain.
-pub fn validate_certchain(cert_buf: &[u8]) -> Result<bool, Error> {
-    if ffi::validateCertChain(cert_buf.to_vec(), cert_buf.len().try_into().unwrap(), true) {
-        return Ok(true);
-    }
-
-    Err(Error::ValidateCertChainFailed)
-}
 
 /// Generate RSA and EC attestation keys and use them for signing RSA-signing keys.
 /// Test should be able to generate attestation keys and use them successfully.

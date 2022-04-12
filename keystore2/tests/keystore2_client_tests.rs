@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod ffi_test_utils;
 pub mod keystore2_client_3des_key_tests;
 pub mod keystore2_client_aes_key_tests;
 pub mod keystore2_client_attest_key_tests;

@@ -149,6 +149,15 @@ impl AuthSetBuilder {
         self
     }
 
+    /// Add CALLER_NONCE.
+    pub fn caller_nonce(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CALLER_NONCE,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
     /// Add MAC length.
     pub fn mac_length(mut self, l: i32) -> Self {
         self.0.push(KeyParameter { tag: Tag::MAC_LENGTH, value: KeyParameterValue::Integer(l) });
