@@ -126,7 +126,7 @@ bool isKeyCreationParameter(const KMV1::KeyParameter& param) {
     case Tag::TRUSTED_CONFIRMATION_REQUIRED:
     case Tag::UNLOCKED_DEVICE_REQUIRED:
     case Tag::CREATION_DATETIME:
-    case Tag::UNIQUE_ID:
+    case Tag::INCLUDE_UNIQUE_ID:
     case Tag::IDENTITY_CREDENTIAL_KEY:
     case Tag::STORAGE_KEY:
     case Tag::MAC_LENGTH:
