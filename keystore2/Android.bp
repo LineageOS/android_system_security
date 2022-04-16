@@ -178,4 +178,5 @@ rust_binary {
         "liblegacykeystore-rust",
         "librusqlite",
     ],
+    afdo: true,
 }
