@@ -102,6 +102,9 @@ impl RemProvState {
     /// server, so unfortunately caching the presence or absence of the HAL is not enough to fully
     /// make decisions about the state of remote provisioning during runtime.
     fn check_rem_prov_enabled(&self, db: &mut KeystoreDB) -> Result<bool> {
+        if self.is_rkp_only {
+            return Ok(true);
+        }
         if !self.is_hal_present.load(Ordering::Relaxed)
             || get_remotely_provisioned_component(&self.security_level).is_err()
         {
