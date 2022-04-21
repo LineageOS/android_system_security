@@ -60,7 +60,6 @@ pub struct RemProvState {
     security_level: SecurityLevel,
     km_uuid: Uuid,
     is_hal_present: AtomicBool,
-    is_rkp_only: bool,
 }
 
 static COSE_KEY_XCOORD: Value = Value::Integer(-2);
@@ -71,12 +70,7 @@ static COSE_MAC0_PAYLOAD: usize = 2;
 impl RemProvState {
     /// Creates a RemProvState struct.
     pub fn new(security_level: SecurityLevel, km_uuid: Uuid) -> Self {
-        Self {
-            security_level,
-            km_uuid,
-            is_hal_present: AtomicBool::new(true),
-            is_rkp_only: Self::read_is_rkp_only_property(security_level),
-        }
+        Self { security_level, km_uuid, is_hal_present: AtomicBool::new(true) }
     }
 
     /// Returns the uuid for the KM instance attached to this RemProvState struct.
@@ -84,12 +78,12 @@ impl RemProvState {
         self.km_uuid
     }
 
-    fn read_is_rkp_only_property(security_level: SecurityLevel) -> bool {
+    fn is_rkp_only(&self) -> bool {
         let default_value = false;
 
-        let property_name = match security_level {
-            SecurityLevel::STRONGBOX => "ro.remote_provisioning.strongbox.rkp_only",
-            SecurityLevel::TRUSTED_ENVIRONMENT => "ro.remote_provisioning.tee.rkp_only",
+        let property_name = match self.security_level {
+            SecurityLevel::STRONGBOX => "remote_provisioning.strongbox.rkp_only",
+            SecurityLevel::TRUSTED_ENVIRONMENT => "remote_provisioning.tee.rkp_only",
             _ => return default_value,
         };
 
@@ -102,7 +96,7 @@ impl RemProvState {
     /// server, so unfortunately caching the presence or absence of the HAL is not enough to fully
     /// make decisions about the state of remote provisioning during runtime.
     fn check_rem_prov_enabled(&self, db: &mut KeystoreDB) -> Result<bool> {
-        if self.is_rkp_only {
+        if self.is_rkp_only() {
             return Ok(true);
         }
         if !self.is_hal_present.load(Ordering::Relaxed)
@@ -162,7 +156,7 @@ impl RemProvState {
                         "In get_remote_provisioning_key_and_certs: Error occurred: {:?}",
                         e
                     );
-                    if self.is_rkp_only {
+                    if self.is_rkp_only() {
                         return Err(e);
                     }
                     log_rkp_error_stats(MetricsRkpError::FALL_BACK_DURING_HYBRID);
