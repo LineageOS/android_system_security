@@ -197,24 +197,16 @@ impl<'a> Password<'a> {
     /// Generate a key from the given password and salt.
     /// The salt must be exactly 16 bytes long.
     /// Two key sizes are accepted: 16 and 32 bytes.
-    pub fn derive_key(&self, salt: Option<&[u8]>, key_length: usize) -> Result<ZVec, Error> {
-        let pw = self.get_key();
-
-        let salt: *const u8 = match salt {
-            Some(s) => {
-                if s.len() != SALT_LENGTH {
-                    return Err(Error::InvalidSaltLength);
-                }
-                s.as_ptr()
-            }
-            None => std::ptr::null(),
-        };
-
+    pub fn derive_key(&self, salt: &[u8], key_length: usize) -> Result<ZVec, Error> {
+        if salt.len() != SALT_LENGTH {
+            return Err(Error::InvalidSaltLength);
+        }
         match key_length {
             AES_128_KEY_LENGTH | AES_256_KEY_LENGTH => {}
             _ => return Err(Error::InvalidKeyLength),
         }
 
+        let pw = self.get_key();
         let mut result = ZVec::new(key_length)?;
 
         unsafe {
@@ -223,7 +215,7 @@ impl<'a> Password<'a> {
                 result.len(),
                 pw.as_ptr() as *const std::os::raw::c_char,
                 pw.len(),
-                salt,
+                salt.as_ptr(),
             )
         };
 
@@ -541,9 +533,9 @@ mod tests {
     fn test_generate_key_from_password() {
         let mut key = vec![0; 16];
         let pw = vec![0; 16];
-        let mut salt = vec![0; 16];
+        let salt = vec![0; 16];
         unsafe {
-            generateKeyFromPassword(key.as_mut_ptr(), 16, pw.as_ptr(), 16, salt.as_mut_ptr());
+            generateKeyFromPassword(key.as_mut_ptr(), 16, pw.as_ptr(), 16, salt.as_ptr());
         }
         assert_ne!(key, vec![0; 16]);
     }
