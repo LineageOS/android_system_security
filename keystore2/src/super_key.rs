@@ -646,7 +646,7 @@ impl SuperKeyManager {
             ) {
                 (Some(&EncryptedBy::Password), Some(salt), Some(iv), Some(tag)) => {
                     // Note that password encryption is AES no matter the value of algorithm.
-                    let key = pw.derive_key(Some(salt), AES_256_KEY_LENGTH).context(
+                    let key = pw.derive_key(salt, AES_256_KEY_LENGTH).context(
                         "In extract_super_key_from_key_entry: Failed to generate key from password.",
                     )?;
 
@@ -686,7 +686,7 @@ impl SuperKeyManager {
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         let salt = generate_salt().context("In encrypt_with_password: Failed to generate salt.")?;
         let derived_key = pw
-            .derive_key(Some(&salt), AES_256_KEY_LENGTH)
+            .derive_key(&salt, AES_256_KEY_LENGTH)
             .context("In encrypt_with_password: Failed to derive password.")?;
         let mut metadata = BlobMetaData::new();
         metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::Password));

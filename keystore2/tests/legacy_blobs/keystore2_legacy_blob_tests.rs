@@ -170,7 +170,7 @@ fn keystore2_encrypted_characteristics() -> anyhow::Result<()> {
 
             // Create keystore file layout for user_99.
             let pw: Password = PASSWORD.into();
-            let pw_key = TestKey(pw.derive_key(Some(SUPERKEY_SALT), 32).unwrap());
+            let pw_key = TestKey(pw.derive_key(SUPERKEY_SALT, 32).unwrap());
             let super_key =
                 TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap());
 
@@ -421,7 +421,7 @@ fn keystore2_encrypted_certificates() -> anyhow::Result<()> {
 
             // Create keystore file layout for user_98.
             let pw: Password = PASSWORD.into();
-            let pw_key = TestKey(pw.derive_key(Some(SUPERKEY_SALT), 32).unwrap());
+            let pw_key = TestKey(pw.derive_key(SUPERKEY_SALT, 32).unwrap());
             let super_key =
                 TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap());
 
