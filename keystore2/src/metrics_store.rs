@@ -599,8 +599,9 @@ fn pull_attestation_pool_stats() -> Result<Vec<KeystoreAtom>> {
 }
 
 /// Log error events related to Remote Key Provisioning (RKP).
-pub fn log_rkp_error_stats(rkp_error: MetricsRkpError) {
-    let rkp_error_stats = KeystoreAtomPayload::RkpErrorStats(RkpErrorStats { rkpError: rkp_error });
+pub fn log_rkp_error_stats(rkp_error: MetricsRkpError, sec_level: &SecurityLevel) {
+    let rkp_error_stats = KeystoreAtomPayload::RkpErrorStats(
+        RkpErrorStats { rkpError: rkp_error, security_level: process_security_level(*sec_level) });
     METRICS_STORE.insert_atom(AtomID::RKP_ERROR_STATS, rkp_error_stats);
 }
 
