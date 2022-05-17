@@ -199,3 +199,13 @@ cc_defaults {
         "android.system.keystore2-V2-ndk",
     ],
 }
+
+// A rust_defaults that includes the latest Keystore2 AIDL library.
+// Modules that depend on Keystore2 directly can include this rust_defaults to avoid
+// managing dependency versions explicitly.
+rust_defaults {
+    name: "keystore2_use_latest_aidl_rust",
+    rustlibs: [
+        "android.system.keystore2-V2-rust",
+    ],
+}

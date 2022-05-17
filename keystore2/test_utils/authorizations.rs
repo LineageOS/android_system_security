@@ -22,6 +22,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 };
 
 /// Helper struct to create set of Authorizations.
+#[derive(Debug, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AuthSetBuilder(Vec<KeyParameter>);
 
 impl Default for AuthSetBuilder {
@@ -74,6 +75,15 @@ impl AuthSetBuilder {
         self.0.push(KeyParameter {
             tag: Tag::ATTESTATION_APPLICATION_ID,
             value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add No_auth_required.
+    pub fn no_auth_required(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::NO_AUTH_REQUIRED,
+            value: KeyParameterValue::BoolValue(true),
         });
         self
     }
