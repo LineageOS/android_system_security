@@ -89,6 +89,8 @@ rust_library {
         "librand",
         "libserde",
         "libserde_cbor",
+	"libthiserror",
+	"libanyhow",
     ],
 }
 
@@ -122,6 +124,8 @@ rust_test {
         "librand",
         "libserde",
         "libserde_cbor",
+	"libthiserror",
+	"libanyhow",
     ],
 }
 

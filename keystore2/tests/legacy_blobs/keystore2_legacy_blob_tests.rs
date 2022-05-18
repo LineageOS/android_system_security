@@ -164,9 +164,17 @@ fn keystore2_encrypted_characteristics() -> anyhow::Result<()> {
                 .getSecurityLevel(SecurityLevel::SecurityLevel::TRUSTED_ENVIRONMENT)
                 .unwrap();
             // Generate Key BLOB and prepare legacy keystore blob files.
-            let key_metadata =
-                key_generations::generate_ec_p256_signing_key_with_attestation(&sec_level)
-                    .expect("Failed to generate key blob");
+            let att_challenge: &[u8] = b"foo";
+            let att_app_id: &[u8] = b"bar";
+            let key_metadata = key_generations::generate_ec_p256_signing_key(
+                &sec_level,
+                Domain::BLOB,
+                SELINUX_SHELL_NAMESPACE,
+                None,
+                Some(att_challenge),
+                Some(att_app_id),
+            )
+            .expect("Failed to generate key blob");
 
             // Create keystore file layout for user_99.
             let pw: Password = PASSWORD.into();
@@ -415,9 +423,17 @@ fn keystore2_encrypted_certificates() -> anyhow::Result<()> {
                 .getSecurityLevel(SecurityLevel::SecurityLevel::TRUSTED_ENVIRONMENT)
                 .unwrap();
             // Generate Key BLOB and prepare legacy keystore blob files.
-            let key_metadata =
-                key_generations::generate_ec_p256_signing_key_with_attestation(&sec_level)
-                    .expect("Failed to generate key blob");
+            let att_challenge: &[u8] = b"foo";
+            let att_app_id: &[u8] = b"bar";
+            let key_metadata = key_generations::generate_ec_p256_signing_key(
+                &sec_level,
+                Domain::BLOB,
+                SELINUX_SHELL_NAMESPACE,
+                None,
+                Some(att_challenge),
+                Some(att_app_id),
+            )
+            .expect("Failed to generate key blob");
 
             // Create keystore file layout for user_98.
             let pw: Password = PASSWORD.into();
