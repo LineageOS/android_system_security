@@ -159,7 +159,10 @@ impl RemProvState {
                     if self.is_rkp_only() {
                         return Err(e);
                     }
-                    log_rkp_error_stats(MetricsRkpError::FALL_BACK_DURING_HYBRID);
+                    log_rkp_error_stats(
+                        MetricsRkpError::FALL_BACK_DURING_HYBRID,
+                        &self.security_level,
+                    );
                     Ok(None)
                 }
                 Ok(v) => match v {
