@@ -46,6 +46,7 @@ pub(crate) mod utils;
 mod versioning;
 
 use crate::gc::Gc;
+use crate::globals::get_keymint_dev_by_uuid;
 use crate::impl_metadata; // This is in db_utils.rs
 use crate::key_parameter::{KeyParameter, Tag};
 use crate::metrics_store::log_rkp_error_stats;
@@ -1863,7 +1864,9 @@ impl KeystoreDB {
                 )
                 .context("Failed to assign attestation key")?;
             if result == 0 {
-                log_rkp_error_stats(MetricsRkpError::OUT_OF_KEYS);
+                let (_, hw_info) = get_keymint_dev_by_uuid(km_uuid)
+                    .context("Error in retrieving keymint device by UUID.")?;
+                log_rkp_error_stats(MetricsRkpError::OUT_OF_KEYS, &hw_info.securityLevel);
                 return Err(KsError::Rc(ResponseCode::OUT_OF_KEYS)).context("Out of keys.");
             } else if result > 1 {
                 return Err(KsError::sys())
