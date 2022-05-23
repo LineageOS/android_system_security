@@ -31,6 +31,12 @@ use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
 /// Shell namespace.
 pub const SELINUX_SHELL_NAMESPACE: i64 = 1;
 
+/// SU context.
+pub const TARGET_SU_CTX: &str = "u:r:su:s0";
+
+/// Vold context
+pub const TARGET_VOLD_CTX: &str = "u:r:vold:s0";
+
 /// To map Keystore errors.
 #[derive(thiserror::Error, Debug, Eq, PartialEq)]
 pub enum Error {
