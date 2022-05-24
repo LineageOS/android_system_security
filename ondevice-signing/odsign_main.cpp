@@ -374,7 +374,11 @@ art::odrefresh::ExitCode CheckCompOsPendingArtifacts(const SigningKey& signing_k
 
     if (!directoryHasContent(kCompOsPendingArtifactsDir)) {
         // No pending CompOS artifacts, all that matters is the current ones.
-        return checkArtifacts();
+        art::odrefresh::ExitCode odrefresh_status = checkArtifacts();
+        if (odrefresh_status == art::odrefresh::ExitCode::kOkay) {
+            compos_check_record->current_artifacts_ok = true;
+        }
+        return odrefresh_status;
     }
 
     compos_check_record->comp_os_pending_artifacts_exists = true;
