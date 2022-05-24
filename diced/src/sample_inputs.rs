@@ -48,6 +48,9 @@ fn encode_pub_key_ed25519(pub_key: &[u8], stream: &mut dyn Write) -> Result<()> 
         .context("In encode_pub_key_ed25519: Trying to encode algorithm.")?;
     cbor::encode_number(4, stream)
         .context("In encode_pub_key_ed25519: Trying to encode ops tag.")?;
+    // Encoding a single-element array for key ops
+    cbor::encode_header(4 /* CBOR ARRAY */, 1, stream)
+        .context("In encode_pub_key_ed25519: Trying to encode ops array header.")?;
     // Ops 2 for verify.
     cbor::encode_number(2, stream).context("In encode_pub_key_ed25519: Trying to encode ops.")?;
     cbor::encode_header(1 /* CBOR NEGATIVE INT */, 0 /* -1 -0 = -1*/, stream)
