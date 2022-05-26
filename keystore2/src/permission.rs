@@ -19,6 +19,7 @@
 //! defined by keystore2 and keystore2_key respectively.
 
 use crate::error::Error as KsError;
+use crate::error::ResponseCode;
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor, KeyPermission::KeyPermission,
 };
@@ -390,7 +391,7 @@ pub fn check_key_permission(
             tctx
         }
         _ => {
-            return Err(KsError::sys())
+            return Err(KsError::Rc(ResponseCode::INVALID_ARGUMENT))
                 .context(format!("Unknown domain value: \"{:?}\".", key.domain))
         }
     };
