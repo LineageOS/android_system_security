@@ -2893,33 +2893,33 @@ impl KeystoreDB {
                 "DELETE FROM persistent.keymetadata
                 WHERE keyentryid IN (
                     SELECT id FROM persistent.keyentry
-                    WHERE domain = ? AND namespace = ? AND key_type = ?
+                    WHERE domain = ? AND namespace = ? AND (key_type = ? OR key_type = ?)
                 );",
-                params![domain.0, namespace, KeyType::Client],
+                params![domain.0, namespace, KeyType::Client, KeyType::Attestation],
             )
             .context("Trying to delete keymetadata.")?;
             tx.execute(
                 "DELETE FROM persistent.keyparameter
                 WHERE keyentryid IN (
                     SELECT id FROM persistent.keyentry
-                    WHERE domain = ? AND namespace = ? AND key_type = ?
+                    WHERE domain = ? AND namespace = ? AND (key_type = ? OR key_type = ?)
                 );",
-                params![domain.0, namespace, KeyType::Client],
+                params![domain.0, namespace, KeyType::Client, KeyType::Attestation],
             )
             .context("Trying to delete keyparameters.")?;
             tx.execute(
                 "DELETE FROM persistent.grant
                 WHERE keyentryid IN (
                     SELECT id FROM persistent.keyentry
-                    WHERE domain = ? AND namespace = ? AND key_type = ?
+                    WHERE domain = ? AND namespace = ? AND (key_type = ? OR key_type = ?)
                 );",
-                params![domain.0, namespace, KeyType::Client],
+                params![domain.0, namespace, KeyType::Client, KeyType::Attestation],
             )
             .context("Trying to delete grants.")?;
             tx.execute(
                 "DELETE FROM persistent.keyentry
-                 WHERE domain = ? AND namespace = ? AND key_type = ?;",
-                params![domain.0, namespace, KeyType::Client],
+                 WHERE domain = ? AND namespace = ? AND (key_type = ? OR key_type = ?);",
+                params![domain.0, namespace, KeyType::Client, KeyType::Attestation],
             )
             .context("Trying to delete keyentry.")?;
             Ok(()).need_gc()
