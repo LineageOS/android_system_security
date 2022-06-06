@@ -17,8 +17,8 @@
 use crate::{
     error::{Error as KsError, ResponseCode},
     key_parameter::{KeyParameter, KeyParameterValue},
-    super_key::SuperKeyManager,
     utils::uid_to_android_user,
+    utils::AesGcm,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     SecurityLevel::SecurityLevel, Tag::Tag, TagType::TagType,
@@ -26,6 +26,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 use anyhow::{Context, Result};
 use keystore2_crypto::{aes_gcm_decrypt, Password, ZVec};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::{convert::TryInto, fs::File, path::Path, path::PathBuf};
 use std::{
     fs,
@@ -87,6 +88,14 @@ pub enum Error {
     /// an invalid alias filename encoding.
     #[error("Invalid alias filename encoding.")]
     BadEncoding,
+    /// A component of the requested entry other than the KM key blob itself
+    /// was encrypted and no super key was provided.
+    #[error("Locked entry component.")]
+    LockedComponent,
+    /// The uids presented to move_keystore_entry belonged to different
+    /// Android users.
+    #[error("Cannot move keys across Android users.")]
+    AndroidUserMismatch,
 }
 
 /// The blob payload, optionally with all information required to decrypt it.
@@ -96,6 +105,16 @@ pub enum BlobValue {
     Generic(Vec<u8>),
     /// A legacy key characteristics file. This has only a single list of Authorizations.
     Characteristics(Vec<u8>),
+    /// A legacy key characteristics file. This has only a single list of Authorizations.
+    /// Additionally, this characteristics file was encrypted with the user's super key.
+    EncryptedCharacteristics {
+        /// Initialization vector.
+        iv: Vec<u8>,
+        /// Aead tag for integrity verification.
+        tag: Vec<u8>,
+        /// Ciphertext.
+        data: Vec<u8>,
+    },
     /// A key characteristics cache has both a hardware enforced and a software enforced list
     /// of authorizations.
     CharacteristicsCache(Vec<u8>),
@@ -124,12 +143,36 @@ pub enum BlobValue {
         /// Ciphertext.
         data: Vec<u8>,
     },
+    /// An encrypted blob. Includes the initialization vector, the aead tag, and the
+    /// ciphertext data. The key can be selected from context, i.e., the owner of the key
+    /// blob. This is a special case for generic encrypted blobs as opposed to key blobs.
+    EncryptedGeneric {
+        /// Initialization vector.
+        iv: Vec<u8>,
+        /// Aead tag for integrity verification.
+        tag: Vec<u8>,
+        /// Ciphertext.
+        data: Vec<u8>,
+    },
     /// Holds the plaintext key blob either after unwrapping an encrypted blob or when the
     /// blob was stored in "plaintext" on disk. The "plaintext" of a key blob is not actual
     /// plaintext because all KeyMint blobs are encrypted with a device bound key. The key
     /// blob in this Variant is decrypted only with respect to any extra layer of encryption
     /// that Keystore added.
     Decrypted(ZVec),
+}
+
+/// Keystore used two different key characteristics file formats in the past.
+/// The key characteristics cache which superseded the characteristics file.
+/// The latter stored only one list of key parameters, while the former stored
+/// a hardware enforced and a software enforced list. This Enum indicates which
+/// type was read from the file system.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum LegacyKeyCharacteristics {
+    /// A characteristics cache was read.
+    Cache(Vec<KeyParameter>),
+    /// A characteristics file was read.
+    File(Vec<KeyParameter>),
 }
 
 /// Represents a loaded legacy key blob file.
@@ -169,6 +212,16 @@ fn read_ne_i64(stream: &mut dyn Read) -> Result<i64> {
 }
 
 impl Blob {
+    /// Creates a new blob from flags and value.
+    pub fn new(flags: u8, value: BlobValue) -> Self {
+        Self { flags, value }
+    }
+
+    /// Return the raw flags of this Blob.
+    pub fn get_flags(&self) -> u8 {
+        self.flags
+    }
+
     /// This blob was generated with a fallback software KM device.
     pub fn is_fallback(&self) -> bool {
         self.flags & flags::FALLBACK != 0
@@ -212,10 +265,14 @@ impl LegacyBlobLoader {
     // version (1 Byte)
     // blob_type (1 Byte)
     // flags (1 Byte)
-    // info (1 Byte)
+    // info (1 Byte) Size of an info field appended to the blob.
     // initialization_vector (16 Bytes)
     // integrity (MD5 digest or gcm tag) (16 Bytes)
     // length (4 Bytes)
+    //
+    // The info field is used to store the salt for password encrypted blobs.
+    // The beginning of the info field can be computed from the file length
+    // and the info byte from the header: <file length> - <info> bytes.
     const COMMON_HEADER_SIZE: usize = 4 + Self::IV_SIZE + Self::GCM_TAG_LENGTH + 4;
 
     const VERSION_OFFSET: usize = 0;
@@ -341,12 +398,28 @@ impl LegacyBlobLoader {
         let tag = &buffer[Self::AEAD_TAG_OFFSET..Self::AEAD_TAG_OFFSET + Self::GCM_TAG_LENGTH];
 
         match (blob_type, is_encrypted, salt) {
-            (blob_types::GENERIC, _, _) => {
+            (blob_types::GENERIC, false, _) => {
                 Ok(Blob { flags, value: BlobValue::Generic(value.to_vec()) })
             }
-            (blob_types::KEY_CHARACTERISTICS, _, _) => {
+            (blob_types::GENERIC, true, _) => Ok(Blob {
+                flags,
+                value: BlobValue::EncryptedGeneric {
+                    iv: iv.to_vec(),
+                    tag: tag.to_vec(),
+                    data: value.to_vec(),
+                },
+            }),
+            (blob_types::KEY_CHARACTERISTICS, false, _) => {
                 Ok(Blob { flags, value: BlobValue::Characteristics(value.to_vec()) })
             }
+            (blob_types::KEY_CHARACTERISTICS, true, _) => Ok(Blob {
+                flags,
+                value: BlobValue::EncryptedCharacteristics {
+                    iv: iv.to_vec(),
+                    tag: tag.to_vec(),
+                    data: value.to_vec(),
+                },
+            }),
             (blob_types::KEY_CHARACTERISTICS_CACHE, _, _) => {
                 Ok(Blob { flags, value: BlobValue::CharacteristicsCache(value.to_vec()) })
             }
@@ -427,6 +500,15 @@ impl LegacyBlobLoader {
                         .context("In new_from_stream_decrypt_with.")?,
                 ),
             }),
+            BlobValue::EncryptedGeneric { iv, tag, data } => Ok(Blob {
+                flags: blob.flags,
+                value: BlobValue::Generic(
+                    decrypt(data, iv, tag, None, None)
+                        .context("In new_from_stream_decrypt_with.")?[..]
+                        .to_vec(),
+                ),
+            }),
+
             _ => Ok(blob),
         }
     }
@@ -546,24 +628,91 @@ impl LegacyBlobLoader {
         Ok(params)
     }
 
+    /// This function takes a Blob and an optional AesGcm. Plain text blob variants are
+    /// passed through as is. If a super key is given an attempt is made to decrypt the
+    /// blob thereby mapping BlobValue variants as follows:
+    /// BlobValue::Encrypted => BlobValue::Decrypted
+    /// BlobValue::EncryptedGeneric => BlobValue::Generic
+    /// BlobValue::EncryptedCharacteristics => BlobValue::Characteristics
+    /// If now super key is given or BlobValue::PwEncrypted is encountered,
+    /// Err(Error::LockedComponent) is returned.
+    fn decrypt_if_required(super_key: &Option<Arc<dyn AesGcm>>, blob: Blob) -> Result<Blob> {
+        match blob {
+            Blob { value: BlobValue::Generic(_), .. }
+            | Blob { value: BlobValue::Characteristics(_), .. }
+            | Blob { value: BlobValue::CharacteristicsCache(_), .. }
+            | Blob { value: BlobValue::Decrypted(_), .. } => Ok(blob),
+            Blob { value: BlobValue::EncryptedCharacteristics { iv, tag, data }, flags }
+                if super_key.is_some() =>
+            {
+                Ok(Blob {
+                    value: BlobValue::Characteristics(
+                        super_key.as_ref().unwrap().decrypt(&data, &iv, &tag).context(
+                            "In decrypt_if_required: Failed to decrypt EncryptedCharacteristics",
+                        )?[..]
+                            .to_vec(),
+                    ),
+                    flags,
+                })
+            }
+            Blob { value: BlobValue::Encrypted { iv, tag, data }, flags }
+                if super_key.is_some() =>
+            {
+                Ok(Blob {
+                    value: BlobValue::Decrypted(
+                        super_key
+                            .as_ref()
+                            .unwrap()
+                            .decrypt(&data, &iv, &tag)
+                            .context("In decrypt_if_required: Failed to decrypt Encrypted")?,
+                    ),
+                    flags,
+                })
+            }
+            Blob { value: BlobValue::EncryptedGeneric { iv, tag, data }, flags }
+                if super_key.is_some() =>
+            {
+                Ok(Blob {
+                    value: BlobValue::Generic(
+                        super_key
+                            .as_ref()
+                            .unwrap()
+                            .decrypt(&data, &iv, &tag)
+                            .context("In decrypt_if_required: Failed to decrypt Encrypted")?[..]
+                            .to_vec(),
+                    ),
+                    flags,
+                })
+            }
+            // This arm catches all encrypted cases where super key is not present or cannot
+            // decrypt the blob, the latter being BlobValue::PwEncrypted.
+            _ => Err(Error::LockedComponent)
+                .context("In decrypt_if_required: Encountered encrypted blob without super key."),
+        }
+    }
+
     fn read_characteristics_file(
         &self,
         uid: u32,
         prefix: &str,
         alias: &str,
         hw_sec_level: SecurityLevel,
-    ) -> Result<Vec<KeyParameter>> {
+        super_key: &Option<Arc<dyn AesGcm>>,
+    ) -> Result<LegacyKeyCharacteristics> {
         let blob = Self::read_generic_blob(&self.make_chr_filename(uid, alias, prefix))
             .context("In read_characteristics_file")?;
 
         let blob = match blob {
-            None => return Ok(Vec::new()),
+            None => return Ok(LegacyKeyCharacteristics::Cache(Vec::new())),
             Some(blob) => blob,
         };
 
-        let mut stream = match blob.value() {
-            BlobValue::Characteristics(data) => &data[..],
-            BlobValue::CharacteristicsCache(data) => &data[..],
+        let blob = Self::decrypt_if_required(super_key, blob)
+            .context("In read_characteristics_file: Trying to decrypt blob.")?;
+
+        let (mut stream, is_cache) = match blob.value() {
+            BlobValue::Characteristics(data) => (&data[..], false),
+            BlobValue::CharacteristicsCache(data) => (&data[..], true),
             _ => {
                 return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED)).context(concat!(
                     "In read_characteristics_file: ",
@@ -589,7 +738,12 @@ impl LegacyBlobLoader {
             .into_iter()
             .map(|value| KeyParameter::new(value, SecurityLevel::KEYSTORE));
 
-        Ok(hw_list.into_iter().flatten().chain(sw_list).collect())
+        let params: Vec<KeyParameter> = hw_list.into_iter().flatten().chain(sw_list).collect();
+        if is_cache {
+            Ok(LegacyKeyCharacteristics::Cache(params))
+        } else {
+            Ok(LegacyKeyCharacteristics::File(params))
+        }
     }
 
     // This is a list of known prefixes that the Keystore 1.0 SPI used to use.
@@ -639,14 +793,40 @@ impl LegacyBlobLoader {
         Ok(Some(Self::new_from_stream(&mut file).context("In read_generic_blob.")?))
     }
 
+    fn read_generic_blob_decrypt_with<F>(path: &Path, decrypt: F) -> Result<Option<Blob>>
+    where
+        F: FnOnce(&[u8], &[u8], &[u8], Option<&[u8]>, Option<usize>) -> Result<ZVec>,
+    {
+        let mut file = match Self::with_retry_interrupted(|| File::open(path)) {
+            Ok(file) => file,
+            Err(e) => match e.kind() {
+                ErrorKind::NotFound => return Ok(None),
+                _ => return Err(e).context("In read_generic_blob_decrypt_with."),
+            },
+        };
+
+        Ok(Some(
+            Self::new_from_stream_decrypt_with(&mut file, decrypt)
+                .context("In read_generic_blob_decrypt_with.")?,
+        ))
+    }
+
     /// Read a legacy keystore entry blob.
-    pub fn read_legacy_keystore_entry(&self, uid: u32, alias: &str) -> Result<Option<Vec<u8>>> {
+    pub fn read_legacy_keystore_entry<F>(
+        &self,
+        uid: u32,
+        alias: &str,
+        decrypt: F,
+    ) -> Result<Option<Vec<u8>>>
+    where
+        F: FnOnce(&[u8], &[u8], &[u8], Option<&[u8]>, Option<usize>) -> Result<ZVec>,
+    {
         let path = match self.make_legacy_keystore_entry_filename(uid, alias) {
             Some(path) => path,
             None => return Ok(None),
         };
 
-        let blob = Self::read_generic_blob(&path)
+        let blob = Self::read_generic_blob_decrypt_with(&path, decrypt)
             .context("In read_legacy_keystore_entry: Failed to read blob.")?;
 
         Ok(blob.and_then(|blob| match blob.value {
@@ -659,22 +839,23 @@ impl LegacyBlobLoader {
     }
 
     /// Remove a legacy keystore entry by the name alias with owner uid.
-    pub fn remove_legacy_keystore_entry(&self, uid: u32, alias: &str) -> Result<()> {
+    pub fn remove_legacy_keystore_entry(&self, uid: u32, alias: &str) -> Result<bool> {
         let path = match self.make_legacy_keystore_entry_filename(uid, alias) {
             Some(path) => path,
-            None => return Ok(()),
+            None => return Ok(false),
         };
 
         if let Err(e) = Self::with_retry_interrupted(|| fs::remove_file(path.as_path())) {
             match e.kind() {
-                ErrorKind::NotFound => return Ok(()),
+                ErrorKind::NotFound => return Ok(false),
                 _ => return Err(e).context("In remove_legacy_keystore_entry."),
             }
         }
 
         let user_id = uid_to_android_user(uid);
         self.remove_user_dir_if_empty(user_id)
-            .context("In remove_legacy_keystore_entry: Trying to remove empty user dir.")
+            .context("In remove_legacy_keystore_entry: Trying to remove empty user dir.")?;
+        Ok(true)
     }
 
     /// List all entries belonging to the given uid.
@@ -1004,79 +1185,66 @@ impl LegacyBlobLoader {
         &self,
         uid: u32,
         alias: &str,
-        key_manager: Option<&SuperKeyManager>,
-    ) -> Result<(Option<(Blob, Vec<KeyParameter>)>, Option<Vec<u8>>, Option<Vec<u8>>)> {
+        super_key: &Option<Arc<dyn AesGcm>>,
+    ) -> Result<(Option<(Blob, LegacyKeyCharacteristics)>, Option<Vec<u8>>, Option<Vec<u8>>)> {
         let km_blob = self.read_km_blob_file(uid, alias).context("In load_by_uid_alias.")?;
 
         let km_blob = match km_blob {
             Some((km_blob, prefix)) => {
-                let km_blob = match km_blob {
-                    Blob { flags: _, value: BlobValue::Decrypted(_) } => km_blob,
-                    // Unwrap the key blob if required and if we have key_manager.
-                    Blob { flags, value: BlobValue::Encrypted { ref iv, ref tag, ref data } } => {
-                        if let Some(key_manager) = key_manager {
-                            let decrypted = match key_manager
-                                .get_per_boot_key_by_user_id(uid_to_android_user(uid))
-                            {
-                                Some(key) => key.aes_gcm_decrypt(data, iv, tag).context(
-                                    "In load_by_uid_alias: while trying to decrypt legacy blob.",
-                                )?,
-                                None => {
-                                    return Err(KsError::Rc(ResponseCode::LOCKED)).context(format!(
-                                        concat!(
-                                            "In load_by_uid_alias: ",
-                                            "User {} has not unlocked the keystore yet.",
-                                        ),
-                                        uid_to_android_user(uid)
-                                    ))
-                                }
-                            };
-                            Blob { flags, value: BlobValue::Decrypted(decrypted) }
-                        } else {
-                            km_blob
-                        }
-                    }
-                    _ => {
-                        return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED)).context(
+                let km_blob =
+                    match km_blob {
+                        Blob { flags: _, value: BlobValue::Decrypted(_) }
+                        | Blob { flags: _, value: BlobValue::Encrypted { .. } } => km_blob,
+                        _ => return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED)).context(
                             "In load_by_uid_alias: Found wrong blob type in legacy key blob file.",
-                        )
-                    }
-                };
+                        ),
+                    };
 
                 let hw_sec_level = match km_blob.is_strongbox() {
                     true => SecurityLevel::STRONGBOX,
                     false => SecurityLevel::TRUSTED_ENVIRONMENT,
                 };
                 let key_parameters = self
-                    .read_characteristics_file(uid, &prefix, alias, hw_sec_level)
+                    .read_characteristics_file(uid, &prefix, alias, hw_sec_level, super_key)
                     .context("In load_by_uid_alias.")?;
                 Some((km_blob, key_parameters))
             }
             None => None,
         };
 
-        let user_cert =
-            match Self::read_generic_blob(&self.make_blob_filename(uid, alias, "USRCERT"))
-                .context("In load_by_uid_alias: While loading user cert.")?
-            {
-                Some(Blob { value: BlobValue::Generic(data), .. }) => Some(data),
-                None => None,
-                _ => {
-                    return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED)).context(
-                        "In load_by_uid_alias: Found unexpected blob type in USRCERT file",
-                    )
-                }
-            };
+        let user_cert_blob =
+            Self::read_generic_blob(&self.make_blob_filename(uid, alias, "USRCERT"))
+                .context("In load_by_uid_alias: While loading user cert.")?;
 
-        let ca_cert = match Self::read_generic_blob(&self.make_blob_filename(uid, alias, "CACERT"))
-            .context("In load_by_uid_alias: While loading ca cert.")?
-        {
-            Some(Blob { value: BlobValue::Generic(data), .. }) => Some(data),
-            None => None,
-            _ => {
+        let user_cert = if let Some(blob) = user_cert_blob {
+            let blob = Self::decrypt_if_required(super_key, blob)
+                .context("In load_by_uid_alias: While decrypting user cert.")?;
+
+            if let Blob { value: BlobValue::Generic(data), .. } = blob {
+                Some(data)
+            } else {
                 return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED))
-                    .context("In load_by_uid_alias: Found unexpected blob type in CACERT file")
+                    .context("In load_by_uid_alias: Found unexpected blob type in USRCERT file");
             }
+        } else {
+            None
+        };
+
+        let ca_cert_blob = Self::read_generic_blob(&self.make_blob_filename(uid, alias, "CACERT"))
+            .context("In load_by_uid_alias: While loading ca cert.")?;
+
+        let ca_cert = if let Some(blob) = ca_cert_blob {
+            let blob = Self::decrypt_if_required(super_key, blob)
+                .context("In load_by_uid_alias: While decrypting ca cert.")?;
+
+            if let Blob { value: BlobValue::Generic(data), .. } = blob {
+                Some(data)
+            } else {
+                return Err(KsError::Rc(ResponseCode::VALUE_CORRUPTED))
+                    .context("In load_by_uid_alias: Found unexpected blob type in CACERT file");
+            }
+        } else {
+            None
         };
 
         Ok((km_blob, user_cert, ca_cert))
@@ -1139,15 +1307,271 @@ impl LegacyBlobLoader {
 
 #[cfg(test)]
 mod test {
+    #![allow(dead_code)]
     use super::*;
-    use anyhow::anyhow;
-    use keystore2_crypto::aes_gcm_decrypt;
+    use keystore2_crypto::{aes_gcm_decrypt, aes_gcm_encrypt};
     use rand::Rng;
     use std::string::FromUtf8Error;
     mod legacy_blob_test_vectors;
-    use crate::error;
+    use crate::legacy_blob::blob_types::{
+        GENERIC, KEY_CHARACTERISTICS, KEY_CHARACTERISTICS_CACHE, KM_BLOB, SUPER_KEY,
+        SUPER_KEY_AES256,
+    };
     use crate::legacy_blob::test::legacy_blob_test_vectors::*;
+    use anyhow::{anyhow, Result};
     use keystore2_test_utils::TempDir;
+    use std::convert::TryInto;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::ops::Deref;
+
+    /// This function takes a blob and synchronizes the encrypted/super encrypted flags
+    /// with the blob type for the pairs Generic/EncryptedGeneric,
+    /// Characteristics/EncryptedCharacteristics and Encrypted/Decrypted.
+    /// E.g. if a non encrypted enum variant is encountered with flags::SUPER_ENCRYPTED
+    /// or flags::ENCRYPTED is set, the payload is encrypted and the corresponding
+    /// encrypted variant is returned, and vice versa. All other variants remain untouched
+    /// even if flags and BlobValue variant are inconsistent.
+    fn prepare_blob(blob: Blob, key: &[u8]) -> Result<Blob> {
+        match blob {
+            Blob { value: BlobValue::Generic(data), flags } if blob.is_encrypted() => {
+                let (ciphertext, iv, tag) = aes_gcm_encrypt(&data, key).unwrap();
+                Ok(Blob { value: BlobValue::EncryptedGeneric { data: ciphertext, iv, tag }, flags })
+            }
+            Blob { value: BlobValue::Characteristics(data), flags } if blob.is_encrypted() => {
+                let (ciphertext, iv, tag) = aes_gcm_encrypt(&data, key).unwrap();
+                Ok(Blob {
+                    value: BlobValue::EncryptedCharacteristics { data: ciphertext, iv, tag },
+                    flags,
+                })
+            }
+            Blob { value: BlobValue::Decrypted(data), flags } if blob.is_encrypted() => {
+                let (ciphertext, iv, tag) = aes_gcm_encrypt(&data, key).unwrap();
+                Ok(Blob { value: BlobValue::Encrypted { data: ciphertext, iv, tag }, flags })
+            }
+            Blob { value: BlobValue::EncryptedGeneric { data, iv, tag }, flags }
+                if !blob.is_encrypted() =>
+            {
+                let plaintext = aes_gcm_decrypt(&data, &iv, &tag, key).unwrap();
+                Ok(Blob { value: BlobValue::Generic(plaintext[..].to_vec()), flags })
+            }
+            Blob { value: BlobValue::EncryptedCharacteristics { data, iv, tag }, flags }
+                if !blob.is_encrypted() =>
+            {
+                let plaintext = aes_gcm_decrypt(&data, &iv, &tag, key).unwrap();
+                Ok(Blob { value: BlobValue::Characteristics(plaintext[..].to_vec()), flags })
+            }
+            Blob { value: BlobValue::Encrypted { data, iv, tag }, flags }
+                if !blob.is_encrypted() =>
+            {
+                let plaintext = aes_gcm_decrypt(&data, &iv, &tag, key).unwrap();
+                Ok(Blob { value: BlobValue::Decrypted(plaintext), flags })
+            }
+            _ => Ok(blob),
+        }
+    }
+
+    struct LegacyBlobHeader {
+        version: u8,
+        blob_type: u8,
+        flags: u8,
+        info: u8,
+        iv: [u8; 12],
+        tag: [u8; 16],
+        blob_size: u32,
+    }
+
+    /// This function takes a Blob and writes it to out as a legacy blob file
+    /// version 3. Note that the flags field and the values field may be
+    /// inconsistent and could be sanitized by this function. It is intentionally
+    /// not done to enable tests to construct malformed blobs.
+    fn write_legacy_blob(out: &mut dyn Write, blob: Blob) -> Result<usize> {
+        let (header, data, salt) = match blob {
+            Blob { value: BlobValue::Generic(data), flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: GENERIC,
+                    flags,
+                    info: 0,
+                    iv: [0u8; 12],
+                    tag: [0u8; 16],
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::Characteristics(data), flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: KEY_CHARACTERISTICS,
+                    flags,
+                    info: 0,
+                    iv: [0u8; 12],
+                    tag: [0u8; 16],
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::CharacteristicsCache(data), flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: KEY_CHARACTERISTICS_CACHE,
+                    flags,
+                    info: 0,
+                    iv: [0u8; 12],
+                    tag: [0u8; 16],
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::PwEncrypted { iv, tag, data, salt, key_size }, flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: if key_size == keystore2_crypto::AES_128_KEY_LENGTH {
+                        SUPER_KEY
+                    } else {
+                        SUPER_KEY_AES256
+                    },
+                    flags,
+                    info: 0,
+                    iv: iv.try_into().unwrap(),
+                    tag: tag[..].try_into().unwrap(),
+                    blob_size: data.len() as u32,
+                },
+                data,
+                Some(salt),
+            ),
+            Blob { value: BlobValue::Encrypted { iv, tag, data }, flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: KM_BLOB,
+                    flags,
+                    info: 0,
+                    iv: iv.try_into().unwrap(),
+                    tag: tag[..].try_into().unwrap(),
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::EncryptedGeneric { iv, tag, data }, flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: GENERIC,
+                    flags,
+                    info: 0,
+                    iv: iv.try_into().unwrap(),
+                    tag: tag[..].try_into().unwrap(),
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::EncryptedCharacteristics { iv, tag, data }, flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: KEY_CHARACTERISTICS,
+                    flags,
+                    info: 0,
+                    iv: iv.try_into().unwrap(),
+                    tag: tag[..].try_into().unwrap(),
+                    blob_size: data.len() as u32,
+                },
+                data,
+                None,
+            ),
+            Blob { value: BlobValue::Decrypted(data), flags } => (
+                LegacyBlobHeader {
+                    version: 3,
+                    blob_type: KM_BLOB,
+                    flags,
+                    info: 0,
+                    iv: [0u8; 12],
+                    tag: [0u8; 16],
+                    blob_size: data.len() as u32,
+                },
+                data[..].to_vec(),
+                None,
+            ),
+        };
+        write_legacy_blob_helper(out, &header, &data, salt.as_deref())
+    }
+
+    fn write_legacy_blob_helper(
+        out: &mut dyn Write,
+        header: &LegacyBlobHeader,
+        data: &[u8],
+        info: Option<&[u8]>,
+    ) -> Result<usize> {
+        if 1 != out.write(&[header.version])? {
+            return Err(anyhow!("Unexpected size while writing version."));
+        }
+        if 1 != out.write(&[header.blob_type])? {
+            return Err(anyhow!("Unexpected size while writing blob_type."));
+        }
+        if 1 != out.write(&[header.flags])? {
+            return Err(anyhow!("Unexpected size while writing flags."));
+        }
+        if 1 != out.write(&[header.info])? {
+            return Err(anyhow!("Unexpected size while writing info."));
+        }
+        if 12 != out.write(&header.iv)? {
+            return Err(anyhow!("Unexpected size while writing iv."));
+        }
+        if 4 != out.write(&[0u8; 4])? {
+            return Err(anyhow!("Unexpected size while writing last 4 bytes of iv."));
+        }
+        if 16 != out.write(&header.tag)? {
+            return Err(anyhow!("Unexpected size while writing tag."));
+        }
+        if 4 != out.write(&header.blob_size.to_be_bytes())? {
+            return Err(anyhow!("Unexpected size while writing blob size."));
+        }
+        if data.len() != out.write(data)? {
+            return Err(anyhow!("Unexpected size while writing blob."));
+        }
+        if let Some(info) = info {
+            if info.len() != out.write(info)? {
+                return Err(anyhow!("Unexpected size while writing inof."));
+            }
+        }
+        Ok(40 + data.len() + info.map(|v| v.len()).unwrap_or(0))
+    }
+
+    fn make_encrypted_characteristics_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob = Blob {
+            value: BlobValue::Characteristics(KEY_PARAMETERS.to_vec()),
+            flags: flags::ENCRYPTED,
+        };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
+
+    fn make_encrypted_usr_cert_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob = Blob {
+            value: BlobValue::Generic(LOADED_CERT_AUTHBOUND.to_vec()),
+            flags: flags::ENCRYPTED,
+        };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
+
+    fn make_encrypted_ca_cert_file<P: AsRef<Path>>(path: P, key: &[u8]) -> Result<()> {
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+        let blob = Blob {
+            value: BlobValue::Generic(LOADED_CACERT_AUTHBOUND.to_vec()),
+            flags: flags::ENCRYPTED,
+        };
+        let blob = prepare_blob(blob, key).unwrap();
+        write_legacy_blob(&mut file, blob).unwrap();
+        Ok(())
+    }
 
     #[test]
     fn decode_encode_alias_test() {
@@ -1203,7 +1627,8 @@ mod test {
     fn read_golden_key_blob_test() -> anyhow::Result<()> {
         let blob = LegacyBlobLoader::new_from_stream_decrypt_with(&mut &*BLOB, |_, _, _, _, _| {
             Err(anyhow!("should not be called"))
-        })?;
+        })
+        .unwrap();
         assert!(!blob.is_encrypted());
         assert!(!blob.is_fallback());
         assert!(!blob.is_strongbox());
@@ -1213,7 +1638,8 @@ mod test {
         let blob = LegacyBlobLoader::new_from_stream_decrypt_with(
             &mut &*REAL_LEGACY_BLOB,
             |_, _, _, _, _| Err(anyhow!("should not be called")),
-        )?;
+        )
+        .unwrap();
         assert!(!blob.is_encrypted());
         assert!(!blob.is_fallback());
         assert!(!blob.is_strongbox());
@@ -1301,62 +1727,75 @@ mod test {
 
     #[test]
     fn test_legacy_blobs() -> anyhow::Result<()> {
-        let temp_dir = TempDir::new("legacy_blob_test")?;
-        std::fs::create_dir(&*temp_dir.build().push("user_0"))?;
+        let temp_dir = TempDir::new("legacy_blob_test").unwrap();
+        std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
 
-        std::fs::write(&*temp_dir.build().push("user_0").push(".masterkey"), SUPERKEY)?;
+        std::fs::write(&*temp_dir.build().push("user_0").push(".masterkey"), SUPERKEY).unwrap();
 
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_USRPKEY_authbound"),
             USRPKEY_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push(".10223_chr_USRPKEY_authbound"),
             USRPKEY_AUTHBOUND_CHR,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_USRCERT_authbound"),
             USRCERT_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_CACERT_authbound"),
             CACERT_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
 
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_USRPKEY_non_authbound"),
             USRPKEY_NON_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push(".10223_chr_USRPKEY_non_authbound"),
             USRPKEY_NON_AUTHBOUND_CHR,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_USRCERT_non_authbound"),
             USRCERT_NON_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
         std::fs::write(
             &*temp_dir.build().push("user_0").push("10223_CACERT_non_authbound"),
             CACERT_NON_AUTHBOUND,
-        )?;
+        )
+        .unwrap();
 
-        let key_manager: SuperKeyManager = Default::default();
-        let mut db = crate::database::KeystoreDB::new(temp_dir.path(), None)?;
         let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
 
-        assert_eq!(
-            legacy_blob_loader
-                .load_by_uid_alias(10223, "authbound", Some(&key_manager))
-                .unwrap_err()
-                .root_cause()
-                .downcast_ref::<error::Error>(),
-            Some(&error::Error::Rc(ResponseCode::LOCKED))
-        );
-
-        key_manager.unlock_user_key(&mut db, 0, &(PASSWORD.into()), &legacy_blob_loader)?;
+        if let (Some((Blob { flags, value }, _params)), Some(cert), Some(chain)) =
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &None)?
+        {
+            assert_eq!(flags, 4);
+            assert_eq!(
+                value,
+                BlobValue::Encrypted {
+                    data: USRPKEY_AUTHBOUND_ENC_PAYLOAD.to_vec(),
+                    iv: USRPKEY_AUTHBOUND_IV.to_vec(),
+                    tag: USRPKEY_AUTHBOUND_TAG.to_vec()
+                }
+            );
+            assert_eq!(&cert[..], LOADED_CERT_AUTHBOUND);
+            assert_eq!(&chain[..], LOADED_CACERT_AUTHBOUND);
+        } else {
+            panic!("");
+        }
 
         if let (Some((Blob { flags, value: _ }, _params)), Some(cert), Some(chain)) =
-            legacy_blob_loader.load_by_uid_alias(10223, "authbound", Some(&key_manager))?
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &None)?
         {
             assert_eq!(flags, 4);
             //assert_eq!(value, BlobValue::Encrypted(..));
@@ -1366,7 +1805,7 @@ mod test {
             panic!("");
         }
         if let (Some((Blob { flags, value }, _params)), Some(cert), Some(chain)) =
-            legacy_blob_loader.load_by_uid_alias(10223, "non_authbound", Some(&key_manager))?
+            legacy_blob_loader.load_by_uid_alias(10223, "non_authbound", &None)?
         {
             assert_eq!(flags, 0);
             assert_eq!(value, BlobValue::Decrypted(LOADED_USRPKEY_NON_AUTHBOUND.try_into()?));
@@ -1383,11 +1822,11 @@ mod test {
 
         assert_eq!(
             (None, None, None),
-            legacy_blob_loader.load_by_uid_alias(10223, "authbound", Some(&key_manager))?
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &None)?
         );
         assert_eq!(
             (None, None, None),
-            legacy_blob_loader.load_by_uid_alias(10223, "non_authbound", Some(&key_manager))?
+            legacy_blob_loader.load_by_uid_alias(10223, "non_authbound", &None)?
         );
 
         // The database should not be empty due to the super key.
@@ -1406,9 +1845,196 @@ mod test {
         Ok(())
     }
 
+    struct TestKey(ZVec);
+
+    impl crate::utils::AesGcmKey for TestKey {
+        fn key(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    impl Deref for TestKey {
+        type Target = [u8];
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn test_with_encrypted_characteristics() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new("test_with_encrypted_characteristics").unwrap();
+        std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
+
+        let pw: Password = PASSWORD.into();
+        let pw_key = TestKey(pw.derive_key(Some(SUPERKEY_SALT), 32).unwrap());
+        let super_key =
+            Arc::new(TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap()));
+
+        std::fs::write(&*temp_dir.build().push("user_0").push(".masterkey"), SUPERKEY).unwrap();
+
+        std::fs::write(
+            &*temp_dir.build().push("user_0").push("10223_USRPKEY_authbound"),
+            USRPKEY_AUTHBOUND,
+        )
+        .unwrap();
+        make_encrypted_characteristics_file(
+            &*temp_dir.build().push("user_0").push(".10223_chr_USRPKEY_authbound"),
+            &super_key,
+        )
+        .unwrap();
+        std::fs::write(
+            &*temp_dir.build().push("user_0").push("10223_USRCERT_authbound"),
+            USRCERT_AUTHBOUND,
+        )
+        .unwrap();
+        std::fs::write(
+            &*temp_dir.build().push("user_0").push("10223_CACERT_authbound"),
+            CACERT_AUTHBOUND,
+        )
+        .unwrap();
+
+        let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
+
+        assert_eq!(
+            legacy_blob_loader
+                .load_by_uid_alias(10223, "authbound", &None)
+                .unwrap_err()
+                .root_cause()
+                .downcast_ref::<Error>(),
+            Some(&Error::LockedComponent)
+        );
+
+        assert_eq!(
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &Some(super_key)).unwrap(),
+            (
+                Some((
+                    Blob {
+                        flags: 4,
+                        value: BlobValue::Encrypted {
+                            data: USRPKEY_AUTHBOUND_ENC_PAYLOAD.to_vec(),
+                            iv: USRPKEY_AUTHBOUND_IV.to_vec(),
+                            tag: USRPKEY_AUTHBOUND_TAG.to_vec()
+                        }
+                    },
+                    structured_test_params()
+                )),
+                Some(LOADED_CERT_AUTHBOUND.to_vec()),
+                Some(LOADED_CACERT_AUTHBOUND.to_vec())
+            )
+        );
+
+        legacy_blob_loader.remove_keystore_entry(10223, "authbound").expect("This should succeed.");
+
+        assert_eq!(
+            (None, None, None),
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &None).unwrap()
+        );
+
+        // The database should not be empty due to the super key.
+        assert!(!legacy_blob_loader.is_empty().unwrap());
+        assert!(!legacy_blob_loader.is_empty_user(0).unwrap());
+
+        // The database should be considered empty for user 1.
+        assert!(legacy_blob_loader.is_empty_user(1).unwrap());
+
+        legacy_blob_loader.remove_super_key(0);
+
+        // Now it should be empty.
+        assert!(legacy_blob_loader.is_empty_user(0).unwrap());
+        assert!(legacy_blob_loader.is_empty().unwrap());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_encrypted_certificates() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new("test_with_encrypted_certificates").unwrap();
+        std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
+
+        let pw: Password = PASSWORD.into();
+        let pw_key = TestKey(pw.derive_key(Some(SUPERKEY_SALT), 32).unwrap());
+        let super_key =
+            Arc::new(TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap()));
+
+        std::fs::write(&*temp_dir.build().push("user_0").push(".masterkey"), SUPERKEY).unwrap();
+
+        std::fs::write(
+            &*temp_dir.build().push("user_0").push("10223_USRPKEY_authbound"),
+            USRPKEY_AUTHBOUND,
+        )
+        .unwrap();
+        std::fs::write(
+            &*temp_dir.build().push("user_0").push(".10223_chr_USRPKEY_authbound"),
+            USRPKEY_AUTHBOUND_CHR,
+        )
+        .unwrap();
+        make_encrypted_usr_cert_file(
+            &*temp_dir.build().push("user_0").push("10223_USRCERT_authbound"),
+            &super_key,
+        )
+        .unwrap();
+        make_encrypted_ca_cert_file(
+            &*temp_dir.build().push("user_0").push("10223_CACERT_authbound"),
+            &super_key,
+        )
+        .unwrap();
+
+        let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
+
+        assert_eq!(
+            legacy_blob_loader
+                .load_by_uid_alias(10223, "authbound", &None)
+                .unwrap_err()
+                .root_cause()
+                .downcast_ref::<Error>(),
+            Some(&Error::LockedComponent)
+        );
+
+        assert_eq!(
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &Some(super_key)).unwrap(),
+            (
+                Some((
+                    Blob {
+                        flags: 4,
+                        value: BlobValue::Encrypted {
+                            data: USRPKEY_AUTHBOUND_ENC_PAYLOAD.to_vec(),
+                            iv: USRPKEY_AUTHBOUND_IV.to_vec(),
+                            tag: USRPKEY_AUTHBOUND_TAG.to_vec()
+                        }
+                    },
+                    structured_test_params_cache()
+                )),
+                Some(LOADED_CERT_AUTHBOUND.to_vec()),
+                Some(LOADED_CACERT_AUTHBOUND.to_vec())
+            )
+        );
+
+        legacy_blob_loader.remove_keystore_entry(10223, "authbound").expect("This should succeed.");
+
+        assert_eq!(
+            (None, None, None),
+            legacy_blob_loader.load_by_uid_alias(10223, "authbound", &None).unwrap()
+        );
+
+        // The database should not be empty due to the super key.
+        assert!(!legacy_blob_loader.is_empty().unwrap());
+        assert!(!legacy_blob_loader.is_empty_user(0).unwrap());
+
+        // The database should be considered empty for user 1.
+        assert!(legacy_blob_loader.is_empty_user(1).unwrap());
+
+        legacy_blob_loader.remove_super_key(0);
+
+        // Now it should be empty.
+        assert!(legacy_blob_loader.is_empty_user(0).unwrap());
+        assert!(legacy_blob_loader.is_empty().unwrap());
+
+        Ok(())
+    }
+
     #[test]
     fn list_non_existing_user() -> Result<()> {
-        let temp_dir = TempDir::new("list_non_existing_user")?;
+        let temp_dir = TempDir::new("list_non_existing_user").unwrap();
         let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
 
         assert!(legacy_blob_loader.list_user(20)?.is_empty());
@@ -1418,7 +2044,7 @@ mod test {
 
     #[test]
     fn list_legacy_keystore_entries_on_non_existing_user() -> Result<()> {
-        let temp_dir = TempDir::new("list_legacy_keystore_entries_on_non_existing_user")?;
+        let temp_dir = TempDir::new("list_legacy_keystore_entries_on_non_existing_user").unwrap();
         let legacy_blob_loader = LegacyBlobLoader::new(temp_dir.path());
 
         assert!(legacy_blob_loader.list_legacy_keystore_entries_for_user(20)?.is_empty());

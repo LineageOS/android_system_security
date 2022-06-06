@@ -26,11 +26,10 @@ use crate::{
     error::ResponseCode,
     key_parameter::{KeyParameter, KeyParameterValue},
     legacy_blob::LegacyBlobLoader,
-    legacy_migrator::LegacyMigrator,
+    legacy_importer::LegacyImporter,
     raw_device::KeyMintDevice,
     try_insert::TryInsert,
-    utils::watchdog as wd,
-    utils::AID_KEYSTORE,
+    utils::{watchdog as wd, AesGcm, AID_KEYSTORE},
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, HardwareAuthToken::HardwareAuthToken,
@@ -157,15 +156,22 @@ pub struct SuperKey {
     reencrypt_with: Option<Arc<SuperKey>>,
 }
 
-impl SuperKey {
-    /// For most purposes `unwrap_key` handles decryption,
-    /// but legacy handling and some tests need to assume AES and decrypt directly.
-    pub fn aes_gcm_decrypt(&self, data: &[u8], iv: &[u8], tag: &[u8]) -> Result<ZVec> {
+impl AesGcm for SuperKey {
+    fn decrypt(&self, data: &[u8], iv: &[u8], tag: &[u8]) -> Result<ZVec> {
         if self.algorithm == SuperEncryptionAlgorithm::Aes256Gcm {
             aes_gcm_decrypt(data, iv, tag, &self.key)
-                .context("In aes_gcm_decrypt: decryption failed")
+                .context("In SuperKey::decrypt: Decryption failed.")
         } else {
-            Err(Error::sys()).context("In aes_gcm_decrypt: Key is not an AES key")
+            Err(Error::sys()).context("In SuperKey::decrypt: Key is not an AES key.")
+        }
+    }
+
+    fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        if self.algorithm == SuperEncryptionAlgorithm::Aes256Gcm {
+            aes_gcm_encrypt(plaintext, &self.key)
+                .context("In SuperKey::encrypt: Encryption failed.")
+        } else {
+            Err(Error::sys()).context("In SuperKey::encrypt: Key is not an AES key.")
         }
     }
 }
@@ -378,7 +384,15 @@ impl SuperKeyManager {
         })
     }
 
-    pub fn get_per_boot_key_by_user_id(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
+    pub fn get_per_boot_key_by_user_id(
+        &self,
+        user_id: UserId,
+    ) -> Option<Arc<dyn AesGcm + Send + Sync>> {
+        self.get_per_boot_key_by_user_id_internal(user_id)
+            .map(|sk| -> Arc<dyn AesGcm + Send + Sync> { sk })
+    }
+
+    fn get_per_boot_key_by_user_id_internal(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
         let data = self.data.lock().unwrap();
         data.user_keys.get(&user_id).and_then(|e| e.per_boot.as_ref().cloned())
     }
@@ -457,7 +471,7 @@ impl SuperKeyManager {
         match key.algorithm {
             SuperEncryptionAlgorithm::Aes256Gcm => match (metadata.iv(), metadata.aead_tag()) {
                 (Some(iv), Some(tag)) => key
-                    .aes_gcm_decrypt(blob, iv, tag)
+                    .decrypt(blob, iv, tag)
                     .context("In unwrap_key_with_key: Failed to decrypt the key blob."),
                 (iv, tag) => Err(Error::Rc(ResponseCode::VALUE_CORRUPTED)).context(format!(
                     concat!(
@@ -497,7 +511,7 @@ impl SuperKeyManager {
     /// Checks if user has setup LSKF, even when super key cache is empty for the user.
     pub fn super_key_exists_in_db_for_user(
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<bool> {
         let key_in_db = db
@@ -507,7 +521,7 @@ impl SuperKeyManager {
         if key_in_db {
             Ok(key_in_db)
         } else {
-            legacy_migrator
+            legacy_importer
                 .has_super_key(user_id)
                 .context("In super_key_exists_in_db_for_user: Trying to query legacy db.")
         }
@@ -519,13 +533,13 @@ impl SuperKeyManager {
     pub fn check_and_unlock_super_key(
         &self,
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         user_id: UserId,
         pw: &Password,
     ) -> Result<UserState> {
         let alias = &USER_SUPER_KEY;
-        let result = legacy_migrator
-            .with_try_migrate_super_key(user_id, pw, || db.load_super_key(alias, user_id))
+        let result = legacy_importer
+            .with_try_import_super_key(user_id, pw, || db.load_super_key(alias, user_id))
             .context("In check_and_unlock_super_key. Failed to load super key")?;
 
         match result {
@@ -548,12 +562,12 @@ impl SuperKeyManager {
     pub fn check_and_initialize_super_key(
         &self,
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         user_id: UserId,
         pw: Option<&Password>,
     ) -> Result<UserState> {
         let super_key_exists_in_db =
-            Self::super_key_exists_in_db_for_user(db, legacy_migrator, user_id).context(
+            Self::super_key_exists_in_db_for_user(db, legacy_importer, user_id).context(
                 "In check_and_initialize_super_key. Failed to check if super key exists.",
             )?;
         if super_key_exists_in_db {
@@ -682,11 +696,11 @@ impl SuperKeyManager {
     fn super_encrypt_on_key_init(
         &self,
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         user_id: UserId,
         key_blob: &[u8],
     ) -> Result<(Vec<u8>, BlobMetaData)> {
-        match UserState::get(db, legacy_migrator, self, user_id)
+        match UserState::get(db, legacy_importer, self, user_id)
             .context("In super_encrypt. Failed to get user state.")?
         {
             UserState::LskfUnlocked(super_key) => {
@@ -727,7 +741,7 @@ impl SuperKeyManager {
     pub fn handle_super_encryption_on_key_init(
         &self,
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         domain: &Domain,
         key_parameters: &[KeyParameter],
         flags: Option<i32>,
@@ -737,7 +751,7 @@ impl SuperKeyManager {
         match Enforcements::super_encryption_required(domain, key_parameters, flags) {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
             SuperEncryptionType::LskfBound => self
-                .super_encrypt_on_key_init(db, legacy_migrator, user_id, &key_blob)
+                .super_encrypt_on_key_init(db, legacy_importer, user_id, &key_blob)
                 .context(concat!(
                     "In handle_super_encryption_on_key_init. ",
                     "Failed to super encrypt with LskfBound key."
@@ -1077,16 +1091,16 @@ pub enum UserState {
 impl UserState {
     pub fn get(
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         skm: &SuperKeyManager,
         user_id: UserId,
     ) -> Result<UserState> {
-        match skm.get_per_boot_key_by_user_id(user_id) {
+        match skm.get_per_boot_key_by_user_id_internal(user_id) {
             Some(super_key) => Ok(UserState::LskfUnlocked(super_key)),
             None => {
                 //Check if a super key exists in the database or legacy database.
                 //If so, return locked user state.
-                if SuperKeyManager::super_key_exists_in_db_for_user(db, legacy_migrator, user_id)
+                if SuperKeyManager::super_key_exists_in_db_for_user(db, legacy_importer, user_id)
                     .context("In get.")?
                 {
                     Ok(UserState::LskfLocked)
@@ -1100,17 +1114,17 @@ impl UserState {
     /// Queries user state when serving password change requests.
     pub fn get_with_password_changed(
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         skm: &SuperKeyManager,
         user_id: UserId,
         password: Option<&Password>,
     ) -> Result<UserState> {
-        match skm.get_per_boot_key_by_user_id(user_id) {
+        match skm.get_per_boot_key_by_user_id_internal(user_id) {
             Some(super_key) => {
                 if password.is_none() {
                     //transitioning to swiping, delete only the super key in database and cache, and
                     //super-encrypted keys in database (and in KM)
-                    Self::reset_user(db, skm, legacy_migrator, user_id, true).context(
+                    Self::reset_user(db, skm, legacy_importer, user_id, true).context(
                         "In get_with_password_changed: Trying to delete keys from the db.",
                     )?;
                     //Lskf is now removed in Keystore
@@ -1126,7 +1140,7 @@ impl UserState {
                 //If so, return LskfLocked state.
                 //Otherwise, i) if the password is provided, initialize the super key and return
                 //LskfUnlocked state ii) if password is not provided, return Uninitialized state.
-                skm.check_and_initialize_super_key(db, legacy_migrator, user_id, password)
+                skm.check_and_initialize_super_key(db, legacy_importer, user_id, password)
             }
         }
     }
@@ -1134,12 +1148,12 @@ impl UserState {
     /// Queries user state when serving password unlock requests.
     pub fn get_with_password_unlock(
         db: &mut KeystoreDB,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         skm: &SuperKeyManager,
         user_id: UserId,
         password: &Password,
     ) -> Result<UserState> {
-        match skm.get_per_boot_key_by_user_id(user_id) {
+        match skm.get_per_boot_key_by_user_id_internal(user_id) {
             Some(super_key) => {
                 log::info!("In get_with_password_unlock. Trying to unlock when already unlocked.");
                 Ok(UserState::LskfUnlocked(super_key))
@@ -1149,7 +1163,7 @@ impl UserState {
                 //If not, return Uninitialized state.
                 //Otherwise, try to unlock the super key and if successful,
                 //return LskfUnlocked state
-                skm.check_and_unlock_super_key(db, legacy_migrator, user_id, password)
+                skm.check_and_unlock_super_key(db, legacy_importer, user_id, password)
                     .context("In get_with_password_unlock. Failed to unlock super key.")
             }
         }
@@ -1161,12 +1175,12 @@ impl UserState {
     pub fn reset_user(
         db: &mut KeystoreDB,
         skm: &SuperKeyManager,
-        legacy_migrator: &LegacyMigrator,
+        legacy_importer: &LegacyImporter,
         user_id: UserId,
         keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
         // mark keys created on behalf of the user as unreferenced.
-        legacy_migrator
+        legacy_importer
             .bulk_delete_user(user_id, keep_non_super_encrypted_keys)
             .context("In reset_user: Trying to delete legacy keys.")?;
         db.unbind_keys_for_user(user_id, keep_non_super_encrypted_keys)

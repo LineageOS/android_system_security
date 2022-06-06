@@ -40,7 +40,7 @@ use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::database::{CertificateChain, KeystoreDB, Uuid};
+use crate::database::{CertificateChain, KeyIdGuard, KeystoreDB, Uuid};
 use crate::error::{self, map_or_log_err, map_rem_prov_error, Error};
 use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB};
 use crate::metrics_store::log_rkp_error_stats;
@@ -60,6 +60,11 @@ impl RemProvState {
     /// Creates a RemProvState struct.
     pub fn new(security_level: SecurityLevel, km_uuid: Uuid) -> Self {
         Self { security_level, km_uuid, is_hal_present: AtomicBool::new(true) }
+    }
+
+    /// Returns the uuid for the KM instance attached to this RemProvState struct.
+    pub fn get_uuid(&self) -> Uuid {
+        self.km_uuid
     }
 
     /// Checks if remote provisioning is enabled and partially caches the result. On a hybrid system
@@ -92,7 +97,7 @@ impl RemProvState {
         key: &KeyDescriptor,
         caller_uid: u32,
         db: &mut KeystoreDB,
-    ) -> Result<Option<CertificateChain>> {
+    ) -> Result<Option<(KeyIdGuard, CertificateChain)>> {
         match key.domain {
             Domain::APP => {
                 // Attempt to get an Attestation Key once. If it fails, then the app doesn't
@@ -117,7 +122,7 @@ impl RemProvState {
                                 "key and failed silently. Something is very wrong."
                             ))
                         },
-                        |cert_chain| Ok(Some(cert_chain)),
+                        |(guard, cert_chain)| Ok(Some((guard, cert_chain))),
                     )
             }
             _ => Ok(None),
@@ -130,12 +135,12 @@ impl RemProvState {
         key: &KeyDescriptor,
         caller_uid: u32,
         db: &mut KeystoreDB,
-    ) -> Result<Option<CertificateChain>> {
+    ) -> Result<Option<(KeyIdGuard, CertificateChain)>> {
         let cert_chain = db
             .retrieve_attestation_key_and_cert_chain(key.domain, caller_uid as i64, &self.km_uuid)
             .context("In get_rem_prov_attest_key_helper: Failed to retrieve a key + cert chain")?;
         match cert_chain {
-            Some(cert_chain) => Ok(Some(cert_chain)),
+            Some((guard, cert_chain)) => Ok(Some((guard, cert_chain))),
             // Either this app needs to be assigned a key, or the pool is empty. An error will
             // be thrown if there is no key available to assign. This will indicate that the app
             // should be nudged to provision more keys so keystore can retry.
@@ -174,7 +179,7 @@ impl RemProvState {
         caller_uid: u32,
         params: &[KeyParameter],
         db: &mut KeystoreDB,
-    ) -> Result<Option<(AttestationKey, Certificate)>> {
+    ) -> Result<Option<(KeyIdGuard, AttestationKey, Certificate)>> {
         if !self.is_asymmetric_key(params) || !self.check_rem_prov_enabled(db)? {
             // There is no remote provisioning component for this security level on the
             // device. Return None so the underlying KM instance knows to use its
@@ -195,7 +200,8 @@ impl RemProvState {
                     Ok(None)
                 }
                 Ok(v) => match v {
-                    Some(cert_chain) => Ok(Some((
+                    Some((guard, cert_chain)) => Ok(Some((
+                        guard,
                         AttestationKey {
                             keyBlob: cert_chain.private_key.to_vec(),
                             attestKeyParams: vec![],
