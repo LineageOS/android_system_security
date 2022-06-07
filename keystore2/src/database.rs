@@ -323,6 +323,8 @@ pub static KEYSTORE_UUID: Uuid = Uuid([
     0x41, 0xe3, 0xb9, 0xce, 0x27, 0x58, 0x4e, 0x91, 0xbc, 0xfd, 0xa5, 0x5d, 0x91, 0x85, 0xab, 0x11,
 ]);
 
+static EXPIRATION_BUFFER_MS: i64 = 20000;
+
 /// Indicates how the sensitive part of this key blob is encrypted.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum EncryptedBy {
@@ -576,6 +578,36 @@ impl Drop for KeyIdGuard {
 pub struct CertificateInfo {
     cert: Option<Vec<u8>>,
     cert_chain: Option<Vec<u8>>,
+}
+
+/// This type represents a Blob with its metadata and an optional superseded blob.
+#[derive(Debug)]
+pub struct BlobInfo<'a> {
+    blob: &'a [u8],
+    metadata: &'a BlobMetaData,
+    /// Superseded blobs are an artifact of legacy import. In some rare occasions
+    /// the key blob needs to be upgraded during import. In that case two
+    /// blob are imported, the superseded one will have to be imported first,
+    /// so that the garbage collector can reap it.
+    superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+}
+
+impl<'a> BlobInfo<'a> {
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// and no superseded blob info.
+    pub fn new(blob: &'a [u8], metadata: &'a BlobMetaData) -> Self {
+        Self { blob, metadata, superseded_blob: None }
+    }
+
+    /// Create a new instance of blob info with blob and corresponding metadata
+    /// as well as superseded blob info.
+    pub fn new_with_superseded(
+        blob: &'a [u8],
+        metadata: &'a BlobMetaData,
+        superseded_blob: Option<(&'a [u8], &'a BlobMetaData)>,
+    ) -> Self {
+        Self { blob, metadata, superseded_blob }
+    }
 }
 
 impl CertificateInfo {
@@ -1909,8 +1941,11 @@ impl KeystoreDB {
                 )?
                 .collect::<rusqlite::Result<Vec<(i64, DateTime)>>>()
                 .context("Failed to get date metadata")?;
+            // Calculate curr_time with a discount factor to avoid a key that's milliseconds away
+            // from expiration dodging this delete call.
             let curr_time = DateTime::from_millis_epoch(
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64,
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                    + EXPIRATION_BUFFER_MS,
             );
             let mut num_deleted = 0;
             for id in key_ids_to_check.iter().filter(|kt| kt.1 < curr_time).map(|kt| kt.0) {
@@ -2019,6 +2054,41 @@ impl KeystoreDB {
         .context("In get_attestation_pool_status: ")
     }
 
+    fn query_kid_for_attestation_key_and_cert_chain(
+        &self,
+        tx: &Transaction,
+        domain: Domain,
+        namespace: i64,
+        km_uuid: &Uuid,
+    ) -> Result<Option<i64>> {
+        let mut stmt = tx.prepare(
+            "SELECT id
+             FROM persistent.keyentry
+             WHERE key_type = ?
+                   AND domain = ?
+                   AND namespace = ?
+                   AND state = ?
+                   AND km_uuid = ?;",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![
+                    KeyType::Attestation,
+                    domain.0 as u32,
+                    namespace,
+                    KeyLifeCycle::Live,
+                    km_uuid
+                ],
+                |row| row.get(0),
+            )?
+            .collect::<rusqlite::Result<Vec<i64>>>()
+            .context("query failed.")?;
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(rows[0]))
+    }
+
     /// Fetches the private key and corresponding certificate chain assigned to a
     /// domain/namespace pair. Will either return nothing if the domain/namespace is
     /// not assigned, or one CertificateChain.
@@ -2027,7 +2097,7 @@ impl KeystoreDB {
         domain: Domain,
         namespace: i64,
         km_uuid: &Uuid,
-    ) -> Result<Option<CertificateChain>> {
+    ) -> Result<Option<(KeyIdGuard, CertificateChain)>> {
         let _wp = wd::watch_millis("KeystoreDB::retrieve_attestation_key_and_cert_chain", 500);
 
         match domain {
@@ -2037,69 +2107,70 @@ impl KeystoreDB {
                     .context(format!("Domain {:?} must be either App or SELinux.", domain));
             }
         }
-        self.with_transaction(TransactionBehavior::Deferred, |tx| {
-            let mut stmt = tx.prepare(
-                "SELECT subcomponent_type, blob
-             FROM persistent.blobentry
-             WHERE keyentryid IN
-                (SELECT id
-                 FROM persistent.keyentry
-                 WHERE key_type = ?
-                       AND domain = ?
-                       AND namespace = ?
-                       AND state = ?
-                       AND km_uuid = ?);",
-            )?;
-            let rows = stmt
-                .query_map(
-                    params![
-                        KeyType::Attestation,
-                        domain.0 as u32,
-                        namespace,
-                        KeyLifeCycle::Live,
-                        km_uuid
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?
-                .collect::<rusqlite::Result<Vec<(SubComponentType, Vec<u8>)>>>()
-                .context("query failed.")?;
-            if rows.is_empty() {
-                return Ok(None).no_gc();
-            } else if rows.len() != 3 {
-                return Err(KsError::sys()).context(format!(
-                    concat!(
-                        "Expected to get a single attestation",
-                        "key, cert, and cert chain for a total of 3 entries, but instead got {}."
-                    ),
-                    rows.len()
-                ));
-            }
-            let mut km_blob: Vec<u8> = Vec::new();
-            let mut cert_chain_blob: Vec<u8> = Vec::new();
-            let mut batch_cert_blob: Vec<u8> = Vec::new();
-            for row in rows {
-                let sub_type: SubComponentType = row.0;
-                match sub_type {
-                    SubComponentType::KEY_BLOB => {
-                        km_blob = row.1;
-                    }
-                    SubComponentType::CERT_CHAIN => {
-                        cert_chain_blob = row.1;
-                    }
-                    SubComponentType::CERT => {
-                        batch_cert_blob = row.1;
-                    }
-                    _ => Err(KsError::sys()).context("Unknown or incorrect subcomponent type.")?,
+
+        self.delete_expired_attestation_keys().context(
+            "In retrieve_attestation_key_and_cert_chain: failed to prune expired attestation keys",
+        )?;
+        let tx = self.conn.unchecked_transaction().context(
+            "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
+        )?;
+        let key_id: i64;
+        match self.query_kid_for_attestation_key_and_cert_chain(&tx, domain, namespace, km_uuid)? {
+            None => return Ok(None),
+            Some(kid) => key_id = kid,
+        }
+        tx.commit()
+            .context("In retrieve_attestation_key_and_cert_chain: Failed to commit keyid query")?;
+        let key_id_guard = KEY_ID_LOCK.get(key_id);
+        let tx = self.conn.unchecked_transaction().context(
+            "In retrieve_attestation_key_and_cert_chain: Failed to initialize transaction.",
+        )?;
+        let mut stmt = tx.prepare(
+            "SELECT subcomponent_type, blob
+            FROM persistent.blobentry
+            WHERE keyentryid = ?;",
+        )?;
+        let rows = stmt
+            .query_map(params![key_id_guard.id()], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<(SubComponentType, Vec<u8>)>>>()
+            .context("query failed.")?;
+        if rows.is_empty() {
+            return Ok(None);
+        } else if rows.len() != 3 {
+            return Err(KsError::sys()).context(format!(
+                concat!(
+                    "Expected to get a single attestation",
+                    "key, cert, and cert chain for a total of 3 entries, but instead got {}."
+                ),
+                rows.len()
+            ));
+        }
+        let mut km_blob: Vec<u8> = Vec::new();
+        let mut cert_chain_blob: Vec<u8> = Vec::new();
+        let mut batch_cert_blob: Vec<u8> = Vec::new();
+        for row in rows {
+            let sub_type: SubComponentType = row.0;
+            match sub_type {
+                SubComponentType::KEY_BLOB => {
+                    km_blob = row.1;
                 }
+                SubComponentType::CERT_CHAIN => {
+                    cert_chain_blob = row.1;
+                }
+                SubComponentType::CERT => {
+                    batch_cert_blob = row.1;
+                }
+                _ => Err(KsError::sys()).context("Unknown or incorrect subcomponent type.")?,
             }
-            Ok(Some(CertificateChain {
+        }
+        Ok(Some((
+            key_id_guard,
+            CertificateChain {
                 private_key: ZVec::try_from(km_blob)?,
                 batch_cert: batch_cert_blob,
                 cert_chain: cert_chain_blob,
-            }))
-            .no_gc()
-        })
-        .context("In retrieve_attestation_key_and_cert_chain:")
+            },
+        )))
     }
 
     /// Updates the alias column of the given key id `newid` with the given alias,
@@ -2233,7 +2304,7 @@ impl KeystoreDB {
         key: &KeyDescriptor,
         key_type: KeyType,
         params: &[KeyParameter],
-        blob_info: &(&[u8], &BlobMetaData),
+        blob_info: &BlobInfo,
         cert_info: &CertificateInfo,
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
@@ -2253,7 +2324,27 @@ impl KeystoreDB {
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
-            let (blob, blob_metadata) = *blob_info;
+            let BlobInfo { blob, metadata: blob_metadata, superseded_blob } = *blob_info;
+
+            // In some occasions the key blob is already upgraded during the import.
+            // In order to make sure it gets properly deleted it is inserted into the
+            // database here and then immediately replaced by the superseding blob.
+            // The garbage collector will then subject the blob to deleteKey of the
+            // KM back end to permanently invalidate the key.
+            let need_gc = if let Some((blob, blob_metadata)) = superseded_blob {
+                Self::set_blob_internal(
+                    tx,
+                    key_id.id(),
+                    SubComponentType::KEY_BLOB,
+                    Some(blob),
+                    Some(blob_metadata),
+                )
+                .context("Trying to insert superseded key blob.")?;
+                true
+            } else {
+                false
+            };
+
             Self::set_blob_internal(
                 tx,
                 key_id.id(),
@@ -2280,7 +2371,8 @@ impl KeystoreDB {
                 .context("Trying to insert key parameters.")?;
             metadata.store_in_db(key_id.id(), tx).context("Trying to insert key metadata.")?;
             let need_gc = Self::rebind_alias(tx, &key_id, &alias, &domain, namespace, key_type)
-                .context("Trying to rebind alias.")?;
+                .context("Trying to rebind alias.")?
+                || need_gc;
             Ok(key_id).do_gc(need_gc)
         })
         .context("In store_new_key.")
@@ -3235,6 +3327,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, SystemTime};
+    use crate::utils::AesGcm;
     #[cfg(disabled)]
     use std::time::Instant;
 
@@ -3457,7 +3550,10 @@ mod tests {
     #[test]
     fn test_store_signed_attestation_certificate_chain() -> Result<()> {
         let mut db = new_test_db()?;
-        let expiration_date: i64 = 20;
+        let expiration_date: i64 =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
         let namespace: i64 = 30;
         let base_byte: u8 = 1;
         let loaded_values =
@@ -3465,7 +3561,7 @@ mod tests {
         let chain =
             db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace, &KEYSTORE_UUID)?;
         assert_eq!(true, chain.is_some());
-        let cert_chain = chain.unwrap();
+        let (_, cert_chain) = chain.unwrap();
         assert_eq!(cert_chain.private_key.to_vec(), loaded_values.priv_key);
         assert_eq!(cert_chain.batch_cert, loaded_values.batch_cert);
         assert_eq!(cert_chain.cert_chain, loaded_values.cert_chain);
@@ -3534,7 +3630,9 @@ mod tests {
             TempDir::new("test_remove_expired_certs_").expect("Failed to create temp dir.");
         let mut db = new_test_db_with_gc(temp_dir.path(), |_, _| Ok(()))?;
         let expiration_date: i64 =
-            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64 + 10000;
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
         let namespace: i64 = 30;
         let namespace_del1: i64 = 45;
         let namespace_del2: i64 = 60;
@@ -3545,7 +3643,7 @@ mod tests {
             0x01, /* base_byte */
         )?;
         load_attestation_key_pool(&mut db, 45, namespace_del1, 0x02)?;
-        load_attestation_key_pool(&mut db, 60, namespace_del2, 0x03)?;
+        load_attestation_key_pool(&mut db, expiration_date - 10001, namespace_del2, 0x03)?;
 
         let blob_entry_row_count: u32 = db
             .conn
@@ -3560,7 +3658,7 @@ mod tests {
         let mut cert_chain =
             db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace, &KEYSTORE_UUID)?;
         assert!(cert_chain.is_some());
-        let value = cert_chain.unwrap();
+        let (_, value) = cert_chain.unwrap();
         assert_eq!(entry_values.batch_cert, value.batch_cert);
         assert_eq!(entry_values.cert_chain, value.cert_chain);
         assert_eq!(entry_values.priv_key, value.private_key.to_vec());
@@ -3592,6 +3690,73 @@ mod tests {
         Ok(())
     }
 
+    fn compare_rem_prov_values(
+        expected: &RemoteProvValues,
+        actual: Option<(KeyIdGuard, CertificateChain)>,
+    ) {
+        assert!(actual.is_some());
+        let (_, value) = actual.unwrap();
+        assert_eq!(expected.batch_cert, value.batch_cert);
+        assert_eq!(expected.cert_chain, value.cert_chain);
+        assert_eq!(expected.priv_key, value.private_key.to_vec());
+    }
+
+    #[test]
+    fn test_dont_remove_valid_certs() -> Result<()> {
+        let temp_dir =
+            TempDir::new("test_remove_expired_certs_").expect("Failed to create temp dir.");
+        let mut db = new_test_db_with_gc(temp_dir.path(), |_, _| Ok(()))?;
+        let expiration_date: i64 =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as i64
+                + EXPIRATION_BUFFER_MS
+                + 10000;
+        let namespace1: i64 = 30;
+        let namespace2: i64 = 45;
+        let namespace3: i64 = 60;
+        let entry_values1 = load_attestation_key_pool(
+            &mut db,
+            expiration_date,
+            namespace1,
+            0x01, /* base_byte */
+        )?;
+        let entry_values2 =
+            load_attestation_key_pool(&mut db, expiration_date + 40000, namespace2, 0x02)?;
+        let entry_values3 =
+            load_attestation_key_pool(&mut db, expiration_date - 9000, namespace3, 0x03)?;
+
+        let blob_entry_row_count: u32 = db
+            .conn
+            .query_row("SELECT COUNT(id) FROM persistent.blobentry;", NO_PARAMS, |row| row.get(0))
+            .expect("Failed to get blob entry row count.");
+        // We expect 9 rows here because there are three blobs per attestation key, i.e.,
+        // one key, one certificate chain, and one certificate.
+        assert_eq!(blob_entry_row_count, 9);
+
+        let mut cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace1, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values1, cert_chain);
+
+        cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace2, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values2, cert_chain);
+
+        cert_chain =
+            db.retrieve_attestation_key_and_cert_chain(Domain::APP, namespace3, &KEYSTORE_UUID)?;
+        compare_rem_prov_values(&entry_values3, cert_chain);
+
+        // Give the garbage collector half a second to catch up.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let blob_entry_row_count: u32 = db
+            .conn
+            .query_row("SELECT COUNT(id) FROM persistent.blobentry;", NO_PARAMS, |row| row.get(0))
+            .expect("Failed to get blob entry row count.");
+        // There shound be 9 blob entries left, because all three keys are valid with
+        // three blobs each.
+        assert_eq!(blob_entry_row_count, 9);
+
+        Ok(())
+    }
     #[test]
     fn test_delete_all_attestation_keys() -> Result<()> {
         let mut db = new_test_db()?;
@@ -5561,8 +5726,7 @@ mod tests {
             None,
         )?;
 
-        let decrypted_secret_bytes =
-            loaded_super_key.aes_gcm_decrypt(&encrypted_secret, &iv, &tag)?;
+        let decrypted_secret_bytes = loaded_super_key.decrypt(&encrypted_secret, &iv, &tag)?;
         assert_eq!(secret_bytes, &*decrypted_secret_bytes);
 
         Ok(())
