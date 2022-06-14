@@ -87,7 +87,9 @@ implement_class!(
         /// Checked when the caller attempts to use a private or public key.
         #[selinux(name = use)]
         Use = KeyPermission::USE.0,
-        /// Checked when the caller attempts to use device ids for attestation.
+        /// Does nothing, and is not checked. For use of device identifiers,
+        /// the caller must hold the READ_PRIVILEGED_PHONE_STATE Android
+        /// permission.
         #[selinux(name = use_dev_id)]
         UseDevId = KeyPermission::USE_DEV_ID.0,
     }
