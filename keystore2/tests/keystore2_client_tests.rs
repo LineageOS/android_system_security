@@ -321,3 +321,116 @@ fn keystore2_max_forced_ops_test() {
         .count();
     assert!(busy_count > 0);
 }
+
+/// This test will verify the use case with the same owner(UID) requesting `n` number of operations.
+/// This test confirms that when all operation slots are full and a new operation is requested,
+/// an operation which is least recently used and lived longest will be pruned to make a room
+/// for a new operation. Pruning strategy should prevent the operations of the other owners(UID)
+/// from being pruned.
+///
+/// 1. Create an operation in a child process with `untrusted_app` context and wait for parent
+///    notification to complete the operation.
+/// 2. Let parent process create `n` number of operations such that there are enough operations
+///    outstanding to trigger cannibalizing their own sibling operations.
+/// 3. Sequentially try to use above created `n` number of operations and also add a new operation,
+///    so that it should trigger cannibalizing one of their own sibling operations.
+///    3.1 While trying to use these pruned operations an `INVALID_OPERATION_HANDLE` error is
+///        expected as they are already pruned.
+/// 4. Notify the child process to resume and complete the operation. It is expected to complete the
+///    operation successfully.
+/// 5. Try to use the latest operation of parent. It is expected to complete the operation
+///    successfully.
+#[test]
+fn keystore2_ops_prune_test() {
+    const MAX_OPS: usize = 40; // This should be at least 32 with sec_level TEE.
+
+    static TARGET_CTX: &str = "u:r:untrusted_app:s0";
+    const USER_ID: u32 = 99;
+    const APPLICATION_ID: u32 = 10601;
+
+    let uid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+    let gid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+
+    // Create an operation in an untrusted_app context. Wait until the parent notifies to continue.
+    // Once the parent notifies, this operation is expected to be completed successfully.
+    let alias = format!("ks_reg_op_key_{}", getuid());
+    let mut child_handle = execute_op_run_as_child(
+        TARGET_CTX,
+        Domain::APP,
+        -1,
+        Some(alias),
+        Uid::from_raw(uid),
+        Gid::from_raw(gid),
+        ForcedOp(false),
+    );
+
+    // Wait until child process notifies us to continue, so that an operation from child process is
+    // outstanding to complete the operation.
+    child_handle.recv();
+
+    // Generate a key to use in below operations.
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    let alias = format!("ks_prune_op_test_key_{}", getuid());
+    let key_metadata = key_generations::generate_ec_p256_signing_key(
+        &sec_level,
+        Domain::SELINUX,
+        key_generations::SELINUX_SHELL_NAMESPACE,
+        Some(alias),
+        None,
+        None,
+    )
+    .unwrap();
+
+    // Create multiple operations in this process to trigger cannibalizing sibling operations.
+    let mut ops: Vec<binder::Result<CreateOperationResponse>> = (0..MAX_OPS)
+        .into_iter()
+        .map(|_| {
+            sec_level.createOperation(
+                &key_metadata.key,
+                &authorizations::AuthSetBuilder::new()
+                    .purpose(KeyPurpose::SIGN)
+                    .digest(Digest::SHA_2_256),
+                false,
+            )
+        })
+        .collect();
+
+    // Sequentially try to use operation handles created above and also add a new operation.
+    for vec_index in 0..MAX_OPS {
+        match &ops[vec_index] {
+            Ok(CreateOperationResponse { iOperation: Some(op), .. }) => {
+                // Older operation handle is pruned, if we try to use that an error is expected.
+                assert_eq!(
+                    Err(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE)),
+                    key_generations::map_ks_error(op.update(b"my message"))
+                );
+            }
+            _ => panic!("Operation should have created successfully."),
+        }
+
+        // Create a new operation, it should trigger to cannibalize one of their own sibling
+        // operations.
+        ops.push(
+            sec_level.createOperation(
+                &key_metadata.key,
+                &authorizations::AuthSetBuilder::new()
+                    .purpose(KeyPurpose::SIGN)
+                    .digest(Digest::SHA_2_256),
+                false,
+            ),
+        );
+    }
+
+    // Notify child process to continue the operation.
+    child_handle.send(&BarrierReached {});
+    assert!((child_handle.get_result() == TestOutcome::Ok), "Failed to perform an operation");
+
+    // Try to use the latest operation created by parent, should be able to use it successfully.
+    match ops.last() {
+        Some(Ok(CreateOperationResponse { iOperation: Some(op), .. })) => {
+            assert_eq!(Ok(()), key_generations::map_ks_error(perform_sample_sign_operation(op)));
+        }
+        _ => panic!("Operation should have created successfully."),
+    }
+}
