@@ -434,3 +434,30 @@ fn keystore2_ops_prune_test() {
         _ => panic!("Operation should have created successfully."),
     }
 }
+
+/// This test will try to load the key with Domain::BLOB.
+/// INVALID_ARGUMENT error is expected.
+#[test]
+fn keystore2_get_key_entry_blob_fail() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    // Generate a key with domain as BLOB.
+    let key_metadata = key_generations::generate_ec_p256_signing_key(
+        &sec_level,
+        Domain::BLOB,
+        key_generations::SELINUX_SHELL_NAMESPACE,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+
+    // Try to load the key using above generated KeyDescriptor.
+    let result = key_generations::map_ks_error(keystore2.getKeyEntry(&key_metadata.key));
+    assert!(result.is_err());
+    assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
+
+    // Delete the generated key blob.
+    sec_level.deleteKey(&key_metadata.key).unwrap();
+}

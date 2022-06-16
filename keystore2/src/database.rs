@@ -2581,7 +2581,7 @@ impl KeystoreDB {
 
                 Ok((key_id, access_key, access_vector))
             }
-            _ => Err(anyhow!(KsError::sys())),
+            _ => Err(anyhow!(KsError::Rc(ResponseCode::INVALID_ARGUMENT))),
         }
     }
 
