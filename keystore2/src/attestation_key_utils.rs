@@ -59,8 +59,11 @@ pub fn get_attest_key_info(
     db: &mut KeystoreDB,
 ) -> Result<Option<AttestationKeyInfo>> {
     let challenge_present = params.iter().any(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE);
+    let is_device_unique_attestation =
+        params.iter().any(|kp| kp.tag == Tag::DEVICE_UNIQUE_ATTESTATION);
     match attest_key_descriptor {
-        None if challenge_present => rem_prov_state
+        // Do not select an RKP key if DEVICE_UNIQUE_ATTESTATION is present.
+        None if challenge_present && !is_device_unique_attestation => rem_prov_state
             .get_remotely_provisioned_attestation_key_and_certs(key, caller_uid, params, db)
             .context(concat!(
                 "In get_attest_key_and_cert_chain: ",
