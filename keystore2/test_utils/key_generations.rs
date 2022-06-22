@@ -30,6 +30,8 @@ use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
 
 /// Shell namespace.
 pub const SELINUX_SHELL_NAMESPACE: i64 = 1;
+/// Vold namespace.
+pub const SELINUX_VOLD_NAMESPACE: i64 = 100;
 
 /// SU context.
 pub const TARGET_SU_CTX: &str = "u:r:su:s0";
