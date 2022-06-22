@@ -461,3 +461,64 @@ fn keystore2_get_key_entry_blob_fail() {
     // Delete the generated key blob.
     sec_level.deleteKey(&key_metadata.key).unwrap();
 }
+
+/// Try to create forced operations with various contexts -
+///   - untrusted_app
+///   - system_server
+///   - priv_app
+/// `PERMISSION_DENIED` error response is expected.
+#[test]
+fn keystore2_forced_op_perm_denied_test() {
+    static TARGET_CTXS: &[&str] =
+        &["u:r:untrusted_app:s0", "u:r:system_server:s0", "u:r:priv_app:s0"];
+    const USER_ID: u32 = 99;
+    const APPLICATION_ID: u32 = 10601;
+
+    let uid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+    let gid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+
+    for context in TARGET_CTXS.iter() {
+        unsafe {
+            run_as::run_as(context, Uid::from_raw(uid), Gid::from_raw(gid), move || {
+                let alias = format!("ks_app_forced_op_test_key_{}", getuid());
+                let result = key_generations::map_ks_error(create_signing_operation(
+                    ForcedOp(true),
+                    KeyPurpose::SIGN,
+                    Digest::SHA_2_256,
+                    Domain::APP,
+                    -1,
+                    Some(alias),
+                ));
+                assert!(result.is_err());
+                assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
+            });
+        }
+    }
+}
+
+/// Try to create a forced operation with `vold` context.
+/// Should be able to create forced operation with `vold` context successfully.
+#[test]
+fn keystore2_forced_op_success_test() {
+    static TARGET_CTX: &str = "u:r:vold:s0";
+    const USER_ID: u32 = 99;
+    const APPLICATION_ID: u32 = 10601;
+
+    let uid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+    let gid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
+
+    unsafe {
+        run_as::run_as(TARGET_CTX, Uid::from_raw(uid), Gid::from_raw(gid), move || {
+            let alias = format!("ks_vold_forced_op_key_{}", getuid());
+            create_signing_operation(
+                ForcedOp(true),
+                KeyPurpose::SIGN,
+                Digest::SHA_2_256,
+                Domain::SELINUX,
+                key_generations::SELINUX_VOLD_NAMESPACE,
+                Some(alias),
+            )
+            .expect("Client with vold context failed to create forced operation.");
+        });
+    }
+}
