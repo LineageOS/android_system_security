@@ -1025,7 +1025,7 @@ int Confirmation(const std::string& promptText, const std::string& extraDataHex,
         return 1;
     }
 
-    auto listener = std::make_shared<ConfirmationListener>();
+    auto listener = ndk::SharedRefBase::make<ConfirmationListener>();
 
     auto future = listener->get_future();
     auto rc = apcService->presentPrompt(listener, promptText, extraData, locale, uiOptionsAsFlags);
