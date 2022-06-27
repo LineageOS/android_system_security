@@ -465,12 +465,10 @@ fn connect_remotely_provisioned_component(
     .context("In connect_remotely_provisioned_component.")?;
 
     let rem_prov_hal: Strong<dyn IRemotelyProvisionedComponent> =
-        map_binder_status_code(binder::get_interface(&service_name))
-            .context(concat!(
-                "In connect_remotely_provisioned_component: Trying to connect to",
-                " RemotelyProvisionedComponent service."
-            ))
-            .map_err(|e| e)?;
+        map_binder_status_code(binder::get_interface(&service_name)).context(concat!(
+            "In connect_remotely_provisioned_component: Trying to connect to",
+            " RemotelyProvisionedComponent service."
+        ))?;
     Ok(rem_prov_hal)
 }
 
