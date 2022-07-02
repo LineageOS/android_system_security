@@ -85,7 +85,7 @@ fn keystore2_restart_service() {
         .expect("failed to execute pidof keystore2");
 
     let id = String::from_utf8(output.stdout).unwrap();
-    let id: String = id.chars().filter(|c| c.is_digit(10)).collect();
+    let id: String = id.chars().filter(|c| c.is_ascii_digit()).collect();
 
     let _status = std::process::Command::new("kill").arg("-9").arg(id).status().unwrap();
 
