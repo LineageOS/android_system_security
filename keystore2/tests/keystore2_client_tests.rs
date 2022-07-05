@@ -17,7 +17,8 @@ use rustutils::users::AID_USER_OFFSET;
 use serde::{Deserialize, Serialize};
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    Digest::Digest, ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, SecurityLevel::SecurityLevel,
+    Algorithm::Algorithm, Digest::Digest, EcCurve::EcCurve, ErrorCode::ErrorCode,
+    KeyPurpose::KeyPurpose, SecurityLevel::SecurityLevel,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
     CreateOperationResponse::CreateOperationResponse, Domain::Domain,
@@ -698,4 +699,357 @@ fn keystore2_grant_get_info_use_key_perm() {
             },
         )
     };
+}
+
+/// Try to generate a key with invalid Domain. `INVALID_ARGUMENT` error response is expected.
+#[test]
+fn keystore2_generate_key_invalid_domain() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    let alias = format!("ks_invalid_test_key_{}", getuid());
+
+    let result = key_generations::map_ks_error(key_generations::generate_ec_key(
+        &*sec_level,
+        Domain(99), // Invalid domain.
+        key_generations::SELINUX_SHELL_NAMESPACE,
+        Some(alias),
+        EcCurve::P_256,
+        Digest::SHA_2_256,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
+}
+
+/// Try to generate a EC key without providing the curve.
+/// `UNSUPPORTED_EC_CURVE or UNSUPPORTED_KEY_SIZE` error response is expected.
+#[test]
+fn keystore2_generate_ec_key_missing_curve() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    let alias = format!("ks_ec_no_curve_test_key_{}", getuid());
+
+    // Don't provide EC curve.
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256);
+
+    let result = key_generations::map_ks_error(sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::SELINUX,
+            nspace: key_generations::SELINUX_SHELL_NAMESPACE,
+            alias: Some(alias),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    ));
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(matches!(
+        err,
+        Error::Km(ErrorCode::UNSUPPORTED_EC_CURVE) | Error::Km(ErrorCode::UNSUPPORTED_KEY_SIZE)
+    ));
+}
+
+/// Try to generate a EC key with curve `CURVE_25519` having `SIGN and AGREE_KEY` purposes.
+/// `INCOMPATIBLE_PURPOSE` error response is expected.
+#[test]
+fn keystore2_generate_ec_key_25519_multi_purpose() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    let alias = format!("ks_ec_no_curve_test_key_{}", getuid());
+
+    // Specify `SIGN and AGREE_KEY` purposes.
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .ec_curve(EcCurve::CURVE_25519)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::AGREE_KEY)
+        .digest(Digest::SHA_2_256);
+
+    let result = key_generations::map_ks_error(sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::SELINUX,
+            nspace: key_generations::SELINUX_SHELL_NAMESPACE,
+            alias: Some(alias),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::INCOMPATIBLE_PURPOSE), result.unwrap_err());
+}
+
+/// Generate EC keys with curves EcCurve::P_224, EcCurve::P_256, EcCurve::P_384, EcCurve::P_521 and
+/// various digest modes. Try to create operations using generated keys. Operations with digest
+/// modes `SHA1, SHA-2 224, SHA-2 256, SHA-2 384 and SHA-2 512` should be created  successfully.
+/// Creation of operations with digest modes NONE and MD5 should fail with an error code
+/// `UNSUPPORTED_DIGEST`.
+#[test]
+fn keystore2_ec_generate_key() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let digests = [
+        Digest::NONE,
+        Digest::MD5,
+        Digest::SHA1,
+        Digest::SHA_2_224,
+        Digest::SHA_2_256,
+        Digest::SHA_2_384,
+        Digest::SHA_2_512,
+    ];
+
+    let ec_curves = [EcCurve::P_224, EcCurve::P_256, EcCurve::P_384, EcCurve::P_521];
+
+    for ec_curve in ec_curves {
+        for digest in digests {
+            let alias = format!("ks_ec_test_key_gen_{}{}{}", getuid(), ec_curve.0, digest.0);
+            let key_metadata = key_generations::generate_ec_key(
+                &*sec_level,
+                Domain::APP,
+                -1,
+                Some(alias.to_string()),
+                ec_curve,
+                digest,
+            )
+            .unwrap();
+
+            match key_generations::map_ks_error(sec_level.createOperation(
+                &key_metadata.key,
+                &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(digest),
+                false,
+            )) {
+                Ok(op_response) => {
+                    assert!(op_response.iOperation.is_some());
+                    assert_eq!(
+                        Ok(()),
+                        key_generations::map_ks_error(perform_sample_sign_operation(
+                            &op_response.iOperation.unwrap()
+                        ))
+                    );
+                }
+                Err(e) => {
+                    assert_eq!(e, Error::Km(ErrorCode::UNSUPPORTED_DIGEST));
+                    assert!(digest == Digest::NONE || digest == Digest::MD5);
+                }
+            }
+        }
+    }
+}
+
+/// Generate EC key with curve `CURVE_25519` and digest mode NONE. Try to create an operation using
+/// generated key. `CURVE_25519` key should support `Digest::NONE` digest mode and test should be
+/// able to create an operation successfully.
+#[test]
+fn keystore2_ec_25519_generate_key_success() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let alias = format!("ks_ec_25519_none_test_key_gen_{}", getuid());
+    let key_metadata = key_generations::generate_ec_key(
+        &*sec_level,
+        Domain::APP,
+        -1,
+        Some(alias),
+        EcCurve::CURVE_25519,
+        Digest::NONE,
+    )
+    .unwrap();
+
+    let op_response = sec_level
+        .createOperation(
+            &key_metadata.key,
+            &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::NONE),
+            false,
+        )
+        .unwrap();
+    assert!(op_response.iOperation.is_some());
+    assert_eq!(
+        Ok(()),
+        key_generations::map_ks_error(perform_sample_sign_operation(
+            &op_response.iOperation.unwrap()
+        ))
+    );
+}
+
+/// Generate EC keys with curve `CURVE_25519` and digest modes `MD5, SHA1, SHA-2 224, SHA-2 256,
+/// SHA-2 384 and SHA-2 512`. Try to create operations using generated keys. `CURVE_25519` keys
+/// shouldn't support these digest modes. Test should fail to create operations with an error
+/// `UNSUPPORTED_DIGEST`.
+#[test]
+fn keystore2_ec_25519_generate_key_fail() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let digests = [
+        Digest::MD5,
+        Digest::SHA1,
+        Digest::SHA_2_224,
+        Digest::SHA_2_256,
+        Digest::SHA_2_384,
+        Digest::SHA_2_512,
+    ];
+
+    for digest in digests {
+        let alias = format!("ks_ec_25519_test_key_gen_{}{}", getuid(), digest.0);
+        let key_metadata = key_generations::generate_ec_key(
+            &*sec_level,
+            Domain::APP,
+            -1,
+            Some(alias.to_string()),
+            EcCurve::CURVE_25519,
+            digest,
+        )
+        .unwrap();
+
+        let result = key_generations::map_ks_error(sec_level.createOperation(
+            &key_metadata.key,
+            &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(digest),
+            false,
+        ));
+        assert!(result.is_err());
+        assert_eq!(Error::Km(ErrorCode::UNSUPPORTED_DIGEST), result.unwrap_err());
+    }
+}
+
+/// Generate a EC key with `SHA_2_256` digest mode. Try to create an operation with digest mode
+/// other than `SHA_2_256`. Creation of an operation with generated key should fail with
+/// `INCOMPATIBLE_DIGEST` error as there is a mismatch of digest mode in key authorizations.
+#[test]
+fn keystore2_create_op_with_incompatible_key_digest() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let alias = "ks_ec_test_incomp_key_digest";
+    let key_metadata = key_generations::generate_ec_key(
+        &*sec_level,
+        Domain::APP,
+        -1,
+        Some(alias.to_string()),
+        EcCurve::P_256,
+        Digest::SHA_2_256,
+    )
+    .unwrap();
+
+    let digests =
+        [Digest::NONE, Digest::SHA1, Digest::SHA_2_224, Digest::SHA_2_384, Digest::SHA_2_512];
+
+    for digest in digests {
+        let result = key_generations::map_ks_error(sec_level.createOperation(
+            &key_metadata.key,
+            &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(digest),
+            false,
+        ));
+        assert!(result.is_err());
+        assert_eq!(Error::Km(ErrorCode::INCOMPATIBLE_DIGEST), result.unwrap_err());
+    }
+}
+
+/// Generate a key in client#1 and try to use it in other client#2.
+/// Client#2 should fail to load the key as the it doesn't own the client#1 generated key.
+#[test]
+fn keystore2_key_owner_validation() {
+    static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
+    const USER_ID: u32 = 99;
+    const APPLICATION_ID_1: u32 = 10601;
+
+    let uid1 = USER_ID * AID_USER_OFFSET + APPLICATION_ID_1;
+    let gid1 = USER_ID * AID_USER_OFFSET + APPLICATION_ID_1;
+    let alias = "ks_owner_check_test_key";
+
+    // Client#1: Generate a key and create an operation using generated key.
+    // Wait until the parent notifies to continue. Once the parent notifies, this operation
+    // is expected to be completed successfully.
+    let mut child_handle = execute_op_run_as_child(
+        TARGET_CTX,
+        Domain::APP,
+        -1,
+        Some(alias.to_string()),
+        Uid::from_raw(uid1),
+        Gid::from_raw(gid1),
+        ForcedOp(false),
+    );
+
+    // Wait until (client#1) child process notifies us to continue, so that there will be a key
+    // generated by client#1.
+    child_handle.recv();
+
+    // Client#2: This child will try to load the key generated by client#1.
+    const APPLICATION_ID_2: u32 = 10602;
+    let uid2 = USER_ID * AID_USER_OFFSET + APPLICATION_ID_2;
+    let gid2 = USER_ID * AID_USER_OFFSET + APPLICATION_ID_2;
+    unsafe {
+        run_as::run_as(TARGET_CTX, Uid::from_raw(uid2), Gid::from_raw(gid2), move || {
+            let keystore2_inst = get_keystore_service();
+            let result =
+                key_generations::map_ks_error(keystore2_inst.getKeyEntry(&KeyDescriptor {
+                    domain: Domain::APP,
+                    nspace: -1,
+                    alias: Some(alias.to_string()),
+                    blob: None,
+                }));
+            assert!(result.is_err());
+            assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
+        });
+    };
+
+    // Notify the child process (client#1) to resume and finish.
+    child_handle.send(&BarrierReached {});
+    assert!(
+        (child_handle.get_result() == TestOutcome::Ok),
+        "Client#1 failed to complete the operation."
+    );
+}
+
+/// Generate EC key with BLOB as domain. Generated key should be returned to caller as key blob.
+/// Verify that `blob` field in the `KeyDescriptor` is not empty and should have the key blob.
+/// Try to use this key for performing a sample operation and the operation should complete
+/// successfully.
+#[test]
+fn keystore2_generate_key_with_blob_domain() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let key_metadata = key_generations::generate_ec_key(
+        &*sec_level,
+        Domain::BLOB,
+        key_generations::SELINUX_SHELL_NAMESPACE,
+        None,
+        EcCurve::P_256,
+        Digest::SHA_2_256,
+    )
+    .unwrap();
+
+    assert!(key_metadata.certificate.is_some());
+    assert!(key_metadata.certificateChain.is_none());
+
+    // Must have the key blob.
+    assert!(key_metadata.key.blob.is_some());
+
+    let op_response = key_generations::map_ks_error(sec_level.createOperation(
+        &key_metadata.key,
+        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
+        false,
+    ))
+    .unwrap();
+    assert!(op_response.iOperation.is_some());
+    assert_eq!(
+        Ok(()),
+        key_generations::map_ks_error(perform_sample_sign_operation(
+            &op_response.iOperation.unwrap()
+        ))
+    );
+
+    // Delete the generated key blob.
+    sec_level.deleteKey(&key_metadata.key).unwrap();
 }
