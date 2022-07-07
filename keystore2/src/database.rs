@@ -324,7 +324,7 @@ pub static KEYSTORE_UUID: Uuid = Uuid([
     0x41, 0xe3, 0xb9, 0xce, 0x27, 0x58, 0x4e, 0x91, 0xbc, 0xfd, 0xa5, 0x5d, 0x91, 0x85, 0xab, 0x11,
 ]);
 
-static EXPIRATION_BUFFER_MS: i64 = 20000;
+static EXPIRATION_BUFFER_MS: i64 = 12 * 60 * 60 * 1000;
 
 /// Indicates how the sensitive part of this key blob is encrypted.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
