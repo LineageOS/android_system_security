@@ -42,6 +42,12 @@ python_library_host {
     },
 }
 
+python_binary_host {
+    name: "fsverity_manifest_generator",
+    srcs: ["fsverity_manifest_generator.py"],
+    libs: ["fsverity_digests_proto_python"],
+}
+
 rust_protobuf {
     name: "libfsverity_digests_proto_rust",
     crate_name: "fsverity_digests_proto",
