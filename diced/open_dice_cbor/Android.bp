@@ -33,6 +33,10 @@ rust_library {
         "libopen_dice_cbor",
     ],
     vendor_available: true,
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
 }
 
 rust_test {
