@@ -145,6 +145,7 @@ pub fn get_op_nonce(parameters: &KeyParameters) -> Option<Vec<u8>> {
 }
 
 /// This performs sample encryption operation with given symmetric key (AES/3DES).
+/// It encrypts `SAMPLE_PLAIN_TEXT` of length 128-bits.
 pub fn perform_sample_sym_key_encrypt_op(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     padding_mode: PaddingMode,

@@ -41,8 +41,9 @@ fn create_aes_key_and_operation(
 ) -> Result<(), binder::Status> {
     let alias = format!("ks_aes_test_key_{}{}{}", key_size, block_mode.0, padding_mode.0);
 
-    let key_metadata = key_generations::generate_aes_key(
+    let key_metadata = key_generations::generate_sym_key(
         sec_level,
+        Algorithm::AES,
         key_size,
         &alias,
         &padding_mode,
@@ -176,8 +177,9 @@ fn keystore2_aes_key_fails_unsupported_key_size() {
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
     let alias = "aes_key_test_invalid_1";
 
-    let result = key_generations::map_ks_error(key_generations::generate_aes_key(
+    let result = key_generations::map_ks_error(key_generations::generate_sym_key(
         &sec_level,
+        Algorithm::AES,
         1024,
         alias,
         &PaddingMode::NONE,
@@ -196,8 +198,9 @@ fn keystore2_aes_gcm_key_fails_missing_min_mac_len() {
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
     let alias = "aes_key_test_invalid_1";
 
-    let result = key_generations::map_ks_error(key_generations::generate_aes_key(
+    let result = key_generations::map_ks_error(key_generations::generate_sym_key(
         &sec_level,
+        Algorithm::AES,
         128,
         alias,
         &PaddingMode::NONE,
@@ -313,8 +316,9 @@ fn keystore2_aes_key_op_fails_incompatible_padding() {
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
     let alias = "aes_key_test_invalid_1";
 
-    let key_metadata = key_generations::generate_aes_key(
+    let key_metadata = key_generations::generate_sym_key(
         &sec_level,
+        Algorithm::AES,
         128,
         alias,
         &PaddingMode::NONE,
@@ -344,8 +348,9 @@ fn keystore2_aes_key_op_fails_incompatible_blockmode() {
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
     let alias = "aes_key_test_invalid_1";
 
-    let key_metadata = key_generations::generate_aes_key(
+    let key_metadata = key_generations::generate_sym_key(
         &sec_level,
+        Algorithm::AES,
         128,
         alias,
         &PaddingMode::NONE,
@@ -443,8 +448,9 @@ fn keystore2_aes_key_op_fails_nonce_prohibited() {
     let alias = "aes_key_test_nonce_1";
     let mut nonce = Some(vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
-    let key_metadata = key_generations::generate_aes_key(
+    let key_metadata = key_generations::generate_sym_key(
         &sec_level,
+        Algorithm::AES,
         128,
         alias,
         &PaddingMode::PKCS7,
