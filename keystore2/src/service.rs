@@ -266,7 +266,7 @@ impl KeystoreService {
                 ..Default::default()
             },
             Domain::SELINUX => KeyDescriptor{domain, nspace: namespace, ..Default::default()},
-            _ => return Err(Error::perm()).context(
+            _ => return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
                 "In list_entries: List entries is only supported for Domain::APP and Domain::SELINUX."
             ),
         };
@@ -278,8 +278,8 @@ impl KeystoreService {
         // selected.
         if let Err(e) = check_key_permission(KeyPerm::GetInfo, &k, &None) {
             if let Some(selinux::Error::PermissionDenied) =
-                e.root_cause().downcast_ref::<selinux::Error>() {
-
+                e.root_cause().downcast_ref::<selinux::Error>()
+            {
                 check_keystore_permission(KeystorePerm::List)
                     .context("In list_entries: While checking keystore permission.")?;
                 if namespace != -1 {
