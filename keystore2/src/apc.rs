@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 /// This is the main APC error type, it wraps binder exceptions and the
 /// APC ResponseCode.
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Wraps an Android Protected Confirmation (APC) response code as defined by the
     /// android.security.apc AIDL interface specification.
