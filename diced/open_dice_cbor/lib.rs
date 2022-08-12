@@ -74,7 +74,7 @@ pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
 pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
 
 /// Open dice wrapper error type.
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// The libopen-dice backend reported InvalidInput.
     #[error("Open dice backend: Invalid input")]
