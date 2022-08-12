@@ -186,7 +186,7 @@ lazy_static! {
             Box::new(|uuid, blob| {
                 let km_dev = get_keymint_dev_by_uuid(uuid).map(|(dev, _)| dev)?;
                 let _wp = wd::watch_millis("In invalidate key closure: calling deleteKey", 500);
-                map_km_error(km_dev.deleteKey(&*blob))
+                map_km_error(km_dev.deleteKey(blob))
                     .context("In invalidate key closure: Trying to invalidate key blob.")
             }),
             KeystoreDB::new(&DB_PATH.read().expect("Could not get the database directory."), None)

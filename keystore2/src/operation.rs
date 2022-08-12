@@ -790,7 +790,7 @@ impl KeystoreOperation {
             Ok(mut mutex_guard) => {
                 let result = match &*mutex_guard {
                     Some(op) => {
-                        let result = f(&*op);
+                        let result = f(op);
                         // Any error here means we can discard the operation.
                         if result.is_err() {
                             delete_op = true;

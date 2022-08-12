@@ -21,7 +21,7 @@ use selinux::{implement_class, ClassPermission};
 implement_class!(
     /// Permission provides a convenient abstraction from the SELinux class `diced`.
     #[selinux(class_name = diced)]
-    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Permission {
         /// Checked when a client attempts to call seal or unseal.
         #[selinux(name = use_seal)]
