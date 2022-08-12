@@ -254,9 +254,10 @@ pub fn generate_rsa_key(
     Ok(key_metadata)
 }
 
-/// Generate AES key.
-pub fn generate_aes_key(
+/// Generate AES/3DES key.
+pub fn generate_sym_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    algorithm: Algorithm,
     size: i32,
     alias: &str,
     padding_mode: &PaddingMode,
@@ -265,7 +266,7 @@ pub fn generate_aes_key(
 ) -> binder::Result<KeyMetadata> {
     let mut gen_params = AuthSetBuilder::new()
         .no_auth_required()
-        .algorithm(Algorithm::AES)
+        .algorithm(algorithm)
         .purpose(KeyPurpose::ENCRYPT)
         .purpose(KeyPurpose::DECRYPT)
         .key_size(size)
