@@ -38,7 +38,7 @@ use keystore2_selinux as selinux;
 
 /// This is the Authorization error type, it wraps binder exceptions and the
 /// Authorization ResponseCode
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Wraps an IKeystoreAuthorization response code as defined by
     /// android.security.authorization AIDL interface specification.

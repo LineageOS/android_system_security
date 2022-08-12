@@ -41,7 +41,7 @@ use std::ffi::CString;
 
 /// This is the main Keystore error type. It wraps the Keystore `ResponseCode` generated
 /// from AIDL in the `Rc` variant and Keymint `ErrorCode` in the Km variant.
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Wraps a Keystore `ResponseCode` as defined by the Keystore AIDL interface specification.
     #[error("Error::Rc({0:?})")]

@@ -108,6 +108,12 @@ impl DB {
                 .prepare("SELECT alias FROM profiles WHERE owner = ? ORDER BY alias ASC;")
                 .context("In list: Failed to prepare statement.")?;
 
+            // This allow is necessary to avoid the following error:
+            //
+            // error[E0597]: `stmt` does not live long enough
+            //
+            // See: https://github.com/rust-lang/rust-clippy/issues/8114
+            #[allow(clippy::let_and_return)]
             let aliases = stmt
                 .query_map(params![caller_uid], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()
@@ -172,7 +178,7 @@ impl DB {
 
 /// This is the main LegacyKeystore error type, it wraps binder exceptions and the
 /// LegacyKeystore errors.
-#[derive(Debug, thiserror::Error, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Wraps a LegacyKeystore error code.
     #[error("Error::Error({0:?})")]
