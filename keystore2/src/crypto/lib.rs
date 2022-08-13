@@ -190,7 +190,7 @@ impl<'a> Password<'a> {
     fn get_key(&'a self) -> &'a [u8] {
         match self {
             Self::Ref(b) => b,
-            Self::Owned(z) => &*z,
+            Self::Owned(z) => z,
         }
     }
 
