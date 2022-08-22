@@ -17,13 +17,23 @@ package {
 }
 
 rust_fuzz {
-    name: "legacy_blob_fuzzer",
-    srcs: ["legacy_blob_fuzzer.rs"],
+    name: "keystore2_unsafe_fuzzer",
+    srcs: ["keystore2_unsafe_fuzzer.rs"],
     rustlibs: [
         "libkeystore2",
+        "libkeystore2_crypto_rust",
+        "libkeystore2_vintf_rust",
+        "libkeystore2_aaid-rust",
+        "libkeystore2_apc_compat-rust",
+        "libkeystore2_selinux",
+        "libarbitrary",
     ],
     fuzz_config: {
         fuzz_on_haiku_device: true,
         fuzz_on_haiku_host: false,
+        cc: [
+            "android-media-fuzzing-reports@google.com",
+        ],
+        componentid: 155276,
     },
 }
