@@ -39,7 +39,58 @@ enum DenyLaterStrategy {
     EarlyBootOnly,
 }
 
+/// Generally the L0 KM and strategy are chosen by probing KM versions in TEE and Strongbox.
+/// However, once a device is launched the KM and strategy must never change, even if the
+/// KM version in TEE or Strongbox is updated. Setting this property at build time using
+/// `PRODUCT_VENDOR_PROPERTIES` means that the strategy can be fixed no matter what versions
+/// of KM are present.
+const PROPERTY_NAME: &str = "ro.keystore.boot_level_key.strategy";
+
+fn lookup_level_zero_km_and_strategy() -> Result<Option<(SecurityLevel, DenyLaterStrategy)>> {
+    let property_val = rustutils::system_properties::read(PROPERTY_NAME).with_context(|| {
+        format!("In lookup_level_zero_km_and_strategy: property read failed: {}", PROPERTY_NAME)
+    })?;
+    // TODO: use feature(let_else) when that's stabilized.
+    let property_val = if let Some(p) = property_val {
+        p
+    } else {
+        log::info!("{} not set, inferring from installed KM instances", PROPERTY_NAME);
+        return Ok(None);
+    };
+    let (level, strategy) = if let Some(c) = property_val.split_once(':') {
+        c
+    } else {
+        log::error!("Missing colon in {}: {:?}", PROPERTY_NAME, property_val);
+        return Ok(None);
+    };
+    let level = match level {
+        "TRUSTED_ENVIRONMENT" => SecurityLevel::TRUSTED_ENVIRONMENT,
+        "STRONGBOX" => SecurityLevel::STRONGBOX,
+        _ => {
+            log::error!("Unknown security level in {}: {:?}", PROPERTY_NAME, level);
+            return Ok(None);
+        }
+    };
+    let strategy = match strategy {
+        "EARLY_BOOT_ONLY" => DenyLaterStrategy::EarlyBootOnly,
+        "MAX_USES_PER_BOOT" => DenyLaterStrategy::MaxUsesPerBoot,
+        _ => {
+            log::error!("Unknown DenyLaterStrategy in {}: {:?}", PROPERTY_NAME, strategy);
+            return Ok(None);
+        }
+    };
+    log::info!("Set from {}: {}", PROPERTY_NAME, property_val);
+    Ok(Some((level, strategy)))
+}
+
 fn get_level_zero_key_km_and_strategy() -> Result<(KeyMintDevice, DenyLaterStrategy)> {
+    if let Some((level, strategy)) = lookup_level_zero_km_and_strategy()? {
+        return Ok((
+            KeyMintDevice::get(level)
+                .context("In get_level_zero_key_km_and_strategy: Get KM instance failed.")?,
+            strategy,
+        ));
+    }
     let tee = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
         .context("In get_level_zero_key_km_and_strategy: Get TEE instance failed.")?;
     if tee.version() >= KeyMintDevice::KEY_MASTER_V4_1 {
