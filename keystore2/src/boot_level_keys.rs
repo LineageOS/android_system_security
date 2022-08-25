@@ -21,26 +21,88 @@ use crate::{
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, Digest::Digest, KeyParameter::KeyParameter as KmKeyParameter,
-    KeyParameterValue::KeyParameterValue as KmKeyParameterValue, KeyPurpose::KeyPurpose,
-    SecurityLevel::SecurityLevel, Tag::Tag,
+    KeyPurpose::KeyPurpose, SecurityLevel::SecurityLevel,
 };
 use anyhow::{Context, Result};
 use keystore2_crypto::{hkdf_expand, ZVec, AES_256_KEY_LENGTH};
 use std::{collections::VecDeque, convert::TryFrom};
 
-fn get_preferred_km_instance_for_level_zero_key() -> Result<KeyMintDevice> {
-    let tee = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
-        .context("In get_preferred_km_instance_for_level_zero_key: Get TEE instance failed.")?;
-    if tee.version() >= KeyMintDevice::KEY_MASTER_V4_1 {
-        Ok(tee)
+/// Strategies used to prevent later boot stages from using the KM key that protects the level 0
+/// key
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DenyLaterStrategy {
+    /// set MaxUsesPerBoot to 1. This is much less secure, since the attacker can replace the key
+    /// itself, and therefore create artifacts which appear to come from early boot.
+    MaxUsesPerBoot,
+    /// set the EarlyBootOnly property. This property is only supported in KM from 4.1 on, but
+    /// it ensures that the level 0 key was genuinely created in early boot
+    EarlyBootOnly,
+}
+
+/// Generally the L0 KM and strategy are chosen by probing KM versions in TEE and Strongbox.
+/// However, once a device is launched the KM and strategy must never change, even if the
+/// KM version in TEE or Strongbox is updated. Setting this property at build time using
+/// `PRODUCT_VENDOR_PROPERTIES` means that the strategy can be fixed no matter what versions
+/// of KM are present.
+const PROPERTY_NAME: &str = "ro.keystore.boot_level_key.strategy";
+
+fn lookup_level_zero_km_and_strategy() -> Result<Option<(SecurityLevel, DenyLaterStrategy)>> {
+    let property_val = rustutils::system_properties::read(PROPERTY_NAME).with_context(|| {
+        format!("In lookup_level_zero_km_and_strategy: property read failed: {}", PROPERTY_NAME)
+    })?;
+    // TODO: use feature(let_else) when that's stabilized.
+    let property_val = if let Some(p) = property_val {
+        p
     } else {
-        match KeyMintDevice::get_or_none(SecurityLevel::STRONGBOX).context(
-            "In get_preferred_km_instance_for_level_zero_key: Get Strongbox instance failed.",
-        )? {
+        log::info!("{} not set, inferring from installed KM instances", PROPERTY_NAME);
+        return Ok(None);
+    };
+    let (level, strategy) = if let Some(c) = property_val.split_once(':') {
+        c
+    } else {
+        log::error!("Missing colon in {}: {:?}", PROPERTY_NAME, property_val);
+        return Ok(None);
+    };
+    let level = match level {
+        "TRUSTED_ENVIRONMENT" => SecurityLevel::TRUSTED_ENVIRONMENT,
+        "STRONGBOX" => SecurityLevel::STRONGBOX,
+        _ => {
+            log::error!("Unknown security level in {}: {:?}", PROPERTY_NAME, level);
+            return Ok(None);
+        }
+    };
+    let strategy = match strategy {
+        "EARLY_BOOT_ONLY" => DenyLaterStrategy::EarlyBootOnly,
+        "MAX_USES_PER_BOOT" => DenyLaterStrategy::MaxUsesPerBoot,
+        _ => {
+            log::error!("Unknown DenyLaterStrategy in {}: {:?}", PROPERTY_NAME, strategy);
+            return Ok(None);
+        }
+    };
+    log::info!("Set from {}: {}", PROPERTY_NAME, property_val);
+    Ok(Some((level, strategy)))
+}
+
+fn get_level_zero_key_km_and_strategy() -> Result<(KeyMintDevice, DenyLaterStrategy)> {
+    if let Some((level, strategy)) = lookup_level_zero_km_and_strategy()? {
+        return Ok((
+            KeyMintDevice::get(level)
+                .context("In get_level_zero_key_km_and_strategy: Get KM instance failed.")?,
+            strategy,
+        ));
+    }
+    let tee = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
+        .context("In get_level_zero_key_km_and_strategy: Get TEE instance failed.")?;
+    if tee.version() >= KeyMintDevice::KEY_MASTER_V4_1 {
+        Ok((tee, DenyLaterStrategy::EarlyBootOnly))
+    } else {
+        match KeyMintDevice::get_or_none(SecurityLevel::STRONGBOX)
+            .context("In get_level_zero_key_km_and_strategy: Get Strongbox instance failed.")?
+        {
             Some(strongbox) if strongbox.version() >= KeyMintDevice::KEY_MASTER_V4_1 => {
-                Ok(strongbox)
+                Ok((strongbox, DenyLaterStrategy::EarlyBootOnly))
             }
-            _ => Ok(tee),
+            _ => Ok((tee, DenyLaterStrategy::MaxUsesPerBoot)),
         }
     }
 }
@@ -49,52 +111,49 @@ fn get_preferred_km_instance_for_level_zero_key() -> Result<KeyMintDevice> {
 /// In practice the caller is SuperKeyManager and the lock is the
 /// Mutex on its internal state.
 pub fn get_level_zero_key(db: &mut KeystoreDB) -> Result<ZVec> {
-    let km_dev = get_preferred_km_instance_for_level_zero_key()
+    let (km_dev, deny_later_strategy) = get_level_zero_key_km_and_strategy()
         .context("In get_level_zero_key: get preferred KM instance failed")?;
-
-    let key_desc = KeyMintDevice::internal_descriptor("boot_level_key".to_string());
-    let mut params = vec![
+    log::info!(
+        "In get_level_zero_key: security_level={:?}, deny_later_strategy={:?}",
+        km_dev.security_level(),
+        deny_later_strategy
+    );
+    let required_security_level = km_dev.security_level();
+    let required_param: KmKeyParameter = match deny_later_strategy {
+        DenyLaterStrategy::EarlyBootOnly => KeyParameterValue::EarlyBootOnly,
+        DenyLaterStrategy::MaxUsesPerBoot => KeyParameterValue::MaxUsesPerBoot(1),
+    }
+    .into();
+    let params = vec![
         KeyParameterValue::Algorithm(Algorithm::HMAC).into(),
         KeyParameterValue::Digest(Digest::SHA_2_256).into(),
         KeyParameterValue::KeySize(256).into(),
         KeyParameterValue::MinMacLength(256).into(),
         KeyParameterValue::KeyPurpose(KeyPurpose::SIGN).into(),
         KeyParameterValue::NoAuthRequired.into(),
+        required_param.clone(),
     ];
 
-    let has_early_boot_only = km_dev.version() >= KeyMintDevice::KEY_MASTER_V4_1;
-
-    if has_early_boot_only {
-        params.push(KeyParameterValue::EarlyBootOnly.into());
-    } else {
-        params.push(KeyParameterValue::MaxUsesPerBoot(1).into())
-    }
-
+    let key_desc = KeyMintDevice::internal_descriptor("boot_level_key".to_string());
     let (key_id_guard, key_entry) = km_dev
         .lookup_or_generate_key(db, &key_desc, KeyType::Client, &params, |key_characteristics| {
             key_characteristics.iter().any(|kc| {
-                if kc.securityLevel == km_dev.security_level() {
-                    kc.authorizations.iter().any(|a| {
-                        matches!(
-                            (has_early_boot_only, a),
-                            (
-                                true,
-                                KmKeyParameter {
-                                    tag: Tag::EARLY_BOOT_ONLY,
-                                    value: KmKeyParameterValue::BoolValue(true)
-                                }
-                            ) | (
-                                false,
-                                KmKeyParameter {
-                                    tag: Tag::MAX_USES_PER_BOOT,
-                                    value: KmKeyParameterValue::Integer(1)
-                                }
-                            )
-                        )
-                    })
-                } else {
-                    false
+                if kc.securityLevel != required_security_level {
+                    log::error!(
+                        "In get_level_zero_key: security level expected={:?} got={:?}",
+                        required_security_level,
+                        kc.securityLevel
+                    );
+                    return false;
                 }
+                if !kc.authorizations.iter().any(|a| a == &required_param) {
+                    log::error!(
+                        "In get_level_zero_key: required param absent {:?}",
+                        required_param
+                    );
+                    return false;
+                }
+                true
             })
         })
         .context("In get_level_zero_key: lookup_or_generate_key failed")?;
