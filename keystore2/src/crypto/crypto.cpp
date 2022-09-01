@@ -18,6 +18,7 @@
 
 #include "crypto.hpp"
 
+#include <assert.h>
 #include <log/log.h>
 #include <openssl/aes.h>
 #include <openssl/ec.h>
