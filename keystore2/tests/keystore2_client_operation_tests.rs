@@ -14,12 +14,15 @@
 
 use nix::unistd::{getuid, Gid, Uid};
 use rustutils::users::AID_USER_OFFSET;
+use std::thread;
+use std::thread::JoinHandle;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Digest::Digest, ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, SecurityLevel::SecurityLevel,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    CreateOperationResponse::CreateOperationResponse, Domain::Domain, ResponseCode::ResponseCode,
+    CreateOperationResponse::CreateOperationResponse, Domain::Domain,
+    IKeystoreOperation::IKeystoreOperation, ResponseCode::ResponseCode,
 };
 
 use keystore2_test_utils::{
@@ -55,6 +58,25 @@ pub fn create_operations(
             )
         })
         .collect()
+}
+
+/// Executes an operation in a thread. Expect an `OPERATION_BUSY` error in case of operation
+/// failure. Returns True if `OPERATION_BUSY` error is encountered otherwise returns false.
+fn perform_op_busy_in_thread(op: binder::Strong<dyn IKeystoreOperation>) -> JoinHandle<bool> {
+    thread::spawn(move || {
+        for _n in 1..1000 {
+            match key_generations::map_ks_error(op.update(b"my message")) {
+                Ok(_) => continue,
+                Err(e) => {
+                    assert_eq!(Error::Rc(ResponseCode::OPERATION_BUSY), e);
+                    return true;
+                }
+            }
+        }
+        let sig = op.finish(None, None).unwrap();
+        assert!(sig.is_some());
+        false
+    })
 }
 
 /// This test verifies that backend service throws BACKEND_BUSY error when all
@@ -401,4 +423,30 @@ fn keystore2_forced_op_success_test() {
             .expect("Client with vold context failed to create forced operation.");
         });
     }
+}
+
+/// Create an operation and try to use this operation handle in multiple threads to perform
+/// operations. Test should fail to perform an operation with an error response `OPERATION_BUSY`
+/// when multiple threads try to access the operation handle at same time.
+#[test]
+fn keystore2_op_fails_operation_busy() {
+    let op_response = create_signing_operation(
+        ForcedOp(false),
+        KeyPurpose::SIGN,
+        Digest::SHA_2_256,
+        Domain::APP,
+        -1,
+        Some("op_busy_alias_test_key".to_string()),
+    )
+    .unwrap();
+
+    let op: binder::Strong<dyn IKeystoreOperation> = op_response.iOperation.unwrap();
+
+    let th_handle_1 = perform_op_busy_in_thread(op.clone());
+    let th_handle_2 = perform_op_busy_in_thread(op);
+
+    let result1 = th_handle_1.join().unwrap();
+    let result2 = th_handle_2.join().unwrap();
+
+    assert!(result1 || result2);
 }
