@@ -297,3 +297,42 @@ pub fn generate_sym_key(
     assert!(key_metadata.certificateChain.is_none());
     Ok(key_metadata)
 }
+
+/// Generate HMAC key.
+pub fn generate_hmac_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias: &str,
+    key_size: i32,
+    min_mac_len: i32,
+    digest: Digest,
+) -> binder::Result<KeyMetadata> {
+    let gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::HMAC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .key_size(key_size)
+        .min_mac_length(min_mac_len)
+        .digest(digest);
+
+    let key_metadata = sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    // Should not have public certificate.
+    assert!(key_metadata.certificate.is_none());
+
+    // Should not have an attestation record.
+    assert!(key_metadata.certificateChain.is_none());
+
+    Ok(key_metadata)
+}

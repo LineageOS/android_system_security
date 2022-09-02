@@ -24,7 +24,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 use keystore2_test_utils::{get_keystore_service, key_generations, key_generations::Error, run_as};
 
 /// Try to find a key with given key parameters using `listEntries` API.
-fn is_key_alias_exist(
+fn key_alias_exists(
     keystore2: &binder::Strong<dyn IKeystoreService>,
     domain: Domain,
     nspace: i64,
@@ -66,7 +66,7 @@ fn keystore2_list_entries_success() {
 
             // Make sure there is no key exist with this `alias` in `SELINUX` domain and
             // `SELINUX_SHELL_NAMESPACE` namespace.
-            if is_key_alias_exist(
+            if key_alias_exists(
                 &keystore2,
                 Domain::SELINUX,
                 key_generations::SELINUX_SHELL_NAMESPACE,
@@ -95,7 +95,7 @@ fn keystore2_list_entries_success() {
 
             // Verify that above generated key entry is listed with domain SELINUX and
             // namespace SELINUX_SHELL_NAMESPACE
-            assert!(is_key_alias_exist(
+            assert!(key_alias_exists(
                 &keystore2,
                 Domain::SELINUX,
                 key_generations::SELINUX_SHELL_NAMESPACE,
