@@ -27,6 +27,7 @@ rust_defaults {
     srcs: ["src/lib.rs"],
     defaults: [
         "keymint_use_latest_hal_aidl_rust",
+        "keystore2_use_latest_aidl_rust",
     ],
 
     rustlibs: [
@@ -39,7 +40,6 @@ rust_defaults {
         "android.security.maintenance-rust",
         "android.security.metrics-rust",
         "android.security.remoteprovisioning-rust",
-        "android.system.keystore2-V2-rust",
         "libanyhow",
         "libbinder_rs",
         "libkeystore2_aaid-rust",
@@ -79,9 +79,11 @@ rust_library {
     name: "libkeystore2_test_utils",
     crate_name: "keystore2_test_utils",
     srcs: ["test_utils/lib.rs"],
-    defaults: ["keymint_use_latest_hal_aidl_rust"],
+    defaults: [
+        "keymint_use_latest_hal_aidl_rust",
+        "keystore2_use_latest_aidl_rust",
+    ],
     rustlibs: [
-        "android.system.keystore2-V2-rust",
         "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
@@ -89,8 +91,8 @@ rust_library {
         "librand",
         "libserde",
         "libserde_cbor",
-	"libthiserror",
-	"libanyhow",
+        "libthiserror",
+        "libanyhow",
     ],
 }
 
@@ -110,13 +112,15 @@ rust_library {
 rust_test {
     name: "keystore2_test_utils_test",
     srcs: ["test_utils/lib.rs"],
-    defaults: ["keymint_use_latest_hal_aidl_rust"],
+    defaults: [
+        "keymint_use_latest_hal_aidl_rust",
+        "keystore2_use_latest_aidl_rust",
+    ],
     test_suites: ["general-tests"],
     require_root: true,
     auto_gen_config: true,
     compile_multilib: "first",
     rustlibs: [
-        "android.system.keystore2-V2-rust",
         "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
@@ -124,8 +128,8 @@ rust_test {
         "librand",
         "libserde",
         "libserde_cbor",
-	"libthiserror",
-	"libanyhow",
+        "libthiserror",
+        "libanyhow",
     ],
 }
 
