@@ -1130,6 +1130,46 @@ Certificate:
         Log.e(TAG, name + ": dumping " + data.length + " bytes\n" + fmt.toString());
     }
 
+    // Convert EC P256 public key to DER format binary format
+    public static byte[] convertP256PublicKeyToDERFormat(ECPoint w) {
+        byte[] ret = new byte[64];
+
+        // Each coordinate may be encoded in 33*, 32, or fewer bytes.
+        //
+        //  * : it can be 33 bytes because toByteArray() guarantees "The array will contain the
+        //      minimum number of bytes required to represent this BigInteger, including at
+        //      least one sign bit, which is (ceil((this.bitLength() + 1)/8))" which means that
+        //      the MSB is always 0x00. This is taken care of by calling calling
+        //      stripLeadingZeroes().
+        //
+        // We need the encoding to be exactly 32 bytes since according to RFC 5480 section 2.2
+        // and SEC 1: Elliptic Curve Cryptography section 2.3.3 the encoding is 0x04 | X | Y
+        // where X and Y are encoded in exactly 32 byte, big endian integer values each.
+        //
+        byte[] xBytes = stripLeadingZeroes(w.getAffineX().toByteArray());
+        if (xBytes.length > 32) {
+            throw new RuntimeException("xBytes is " + xBytes.length + " which is unexpected");
+        }
+        for (int n = 0; n < 32 - xBytes.length; n++) {
+            ret[n] = 0x00;
+        }
+        for (int n = 32 - xBytes.length; n < xBytes.length; n++) {
+            ret[n] = xBytes[n];
+        }
+
+        byte[] yBytes = stripLeadingZeroes(w.getAffineY().toByteArray());
+        if (yBytes.length > 32) {
+            throw new RuntimeException("yBytes is " + yBytes.length + " which is unexpected");
+        }
+        for (int n = 0; n < 32 - yBytes.length; n++) {
+            ret[32 + n] = 0x00;
+        }
+        for (int n = 32 - yBytes.length; n < yBytes.length; n++) {
+            ret[32 + n] = yBytes[n];
+        }
+
+        return ret;
+    }
 
     // This returns a SessionTranscript which satisfy the requirement
     // that the uncompressed X and Y coordinates of the public key for the
@@ -1142,36 +1182,9 @@ Certificate:
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try {
             baos.write(new byte[]{42});
-            ECPoint w = ((ECPublicKey) ephemeralKeyPair.getPublic()).getW();
-            // Each coordinate may be encoded in 33*, 32, or fewer bytes.
-            //
-            //  * : it can be 33 bytes because toByteArray() guarantees "The array will contain the
-            //      minimum number of bytes required to represent this BigInteger, including at
-            //      least one sign bit, which is (ceil((this.bitLength() + 1)/8))" which means that
-            //      the MSB is always 0x00. This is taken care of by calling calling
-            //      stripLeadingZeroes().
-            //
-            // We need the encoding to be exactly 32 bytes since according to RFC 5480 section 2.2
-            // and SEC 1: Elliptic Curve Cryptography section 2.3.3 the encoding is 0x04 | X | Y
-            // where X and Y are encoded in exactly 32 byte, big endian integer values each.
-            //
-            byte[] xBytes = stripLeadingZeroes(w.getAffineX().toByteArray());
-            if (xBytes.length > 32) {
-                throw new RuntimeException("xBytes is " + xBytes.length + " which is unexpected");
-            }
-            for (int n = 0; n < 32 - xBytes.length; n++) {
-                baos.write(0x00);
-            }
-            baos.write(xBytes);
 
-            byte[] yBytes = stripLeadingZeroes(w.getAffineY().toByteArray());
-            if (yBytes.length > 32) {
-                throw new RuntimeException("yBytes is " + yBytes.length + " which is unexpected");
-            }
-            for (int n = 0; n < 32 - yBytes.length; n++) {
-                baos.write(0x00);
-            }
-            baos.write(yBytes);
+            ECPoint w = ((ECPublicKey) ephemeralKeyPair.getPublic()).getW();
+            baos.write(convertP256PublicKeyToDERFormat(w));
 
             baos.write(new byte[]{43, 44});
         } catch (IOException e) {
