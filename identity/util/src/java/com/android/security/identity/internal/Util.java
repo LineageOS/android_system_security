@@ -1150,22 +1150,24 @@ Certificate:
         if (xBytes.length > 32) {
             throw new RuntimeException("xBytes is " + xBytes.length + " which is unexpected");
         }
-        for (int n = 0; n < 32 - xBytes.length; n++) {
+        int numLeadingZeroBytes = 32 - xBytes.length;
+        for (int n = 0; n < numLeadingZeroBytes; n++) {
             ret[n] = 0x00;
         }
-        for (int n = 32 - xBytes.length; n < xBytes.length; n++) {
-            ret[n] = xBytes[n];
+        for (int n = 0; n < xBytes.length; n++) {
+            ret[numLeadingZeroBytes + n] = xBytes[n];
         }
 
         byte[] yBytes = stripLeadingZeroes(w.getAffineY().toByteArray());
         if (yBytes.length > 32) {
             throw new RuntimeException("yBytes is " + yBytes.length + " which is unexpected");
         }
-        for (int n = 0; n < 32 - yBytes.length; n++) {
+        numLeadingZeroBytes = 32 - yBytes.length;
+        for (int n = 0; n < numLeadingZeroBytes; n++) {
             ret[32 + n] = 0x00;
         }
-        for (int n = 32 - yBytes.length; n < yBytes.length; n++) {
-            ret[32 + n] = yBytes[n];
+        for (int n = 0; n < yBytes.length; n++) {
+            ret[32 + numLeadingZeroBytes + n] = yBytes[n];
         }
 
         return ret;
