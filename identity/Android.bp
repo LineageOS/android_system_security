@@ -26,6 +26,7 @@ cc_binary {
     name: "credstore",
     defaults: [
         "identity_defaults",
+        "identity_use_latest_hal_aidl_cpp_static",
         "keymint_use_latest_hal_aidl_ndk_shared",
         "keymint_use_latest_hal_aidl_cpp_static",
     ],
@@ -58,7 +59,6 @@ cc_binary {
         "libutilscallstack",
     ],
     static_libs: [
-        "android.hardware.identity-V4-cpp",
         "android.hardware.keymaster-V3-cpp",
         "libcppbor_external",
     ],
