@@ -146,36 +146,9 @@ public class Iso18013 {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try {
             baos.write(new byte[]{41});
-            ECPoint w = ((ECPublicKey) ephemeralKeyPair.getPublic()).getW();
-            // Each coordinate may be encoded in 33*, 32, or fewer bytes.
-            //
-            //  * : it can be 33 bytes because toByteArray() guarantees "The array will contain the
-            //      minimum number of bytes required to represent this BigInteger, including at
-            //      least one sign bit, which is (ceil((this.bitLength() + 1)/8))" which means that
-            //      the MSB is always 0x00. This is taken care of by calling calling
-            //      stripLeadingZeroes().
-            //
-            // We need the encoding to be exactly 32 bytes since according to RFC 5480 section 2.2
-            // and SEC 1: Elliptic Curve Cryptography section 2.3.3 the encoding is 0x04 | X | Y
-            // where X and Y are encoded in exactly 32 byte, big endian integer values each.
-            //
-            byte[] xBytes = stripLeadingZeroes(w.getAffineX().toByteArray());
-            if (xBytes.length > 32) {
-                throw new RuntimeException("xBytes is " + xBytes.length + " which is unexpected");
-            }
-            for (int n = 0; n < 32 - xBytes.length; n++) {
-                baos.write(0x00);
-            }
-            baos.write(xBytes);
 
-            byte[] yBytes = stripLeadingZeroes(w.getAffineY().toByteArray());
-            if (yBytes.length > 32) {
-                throw new RuntimeException("yBytes is " + yBytes.length + " which is unexpected");
-            }
-            for (int n = 0; n < 32 - yBytes.length; n++) {
-                baos.write(0x00);
-            }
-            baos.write(yBytes);
+            ECPoint w = ((ECPublicKey) ephemeralKeyPair.getPublic()).getW();
+            baos.write(Util.convertP256PublicKeyToDERFormat(w));
 
             baos.write(new byte[]{42, 44});
         } catch (IOException e) {
@@ -302,19 +275,5 @@ public class Iso18013 {
                 | NoSuchAlgorithmException e) {
             throw new IllegalStateException("Error performing key agreement", e);
         }
-    }
-
-    private static byte[] stripLeadingZeroes(byte[] value) {
-        int n = 0;
-        while (n < value.length && value[n] == 0) {
-            n++;
-        }
-        int newLen = value.length - n;
-        byte[] ret = new byte[newLen];
-        int m = 0;
-        while (n < value.length) {
-            ret[m++] = value[n++];
-        }
-        return ret;
     }
 }
