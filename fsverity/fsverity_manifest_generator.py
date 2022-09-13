@@ -58,7 +58,6 @@ if __name__ == '__main__':
   for f in sorted(args.inputs):
     # f is a full path for now; make it relative so it starts with {mount_point}/
     digest = digests.digests[os.path.relpath(f, args.base_dir)]
-    print(f"{os.path.relpath(f, args.base_dir)}")
     digest.digest = _digest(args.fsverity_path, f)
     digest.hash_alg = HASH_ALGORITHM
 
