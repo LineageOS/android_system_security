@@ -34,7 +34,11 @@ using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWith
 using namespace cppbor;
 using namespace cppcose;
 
-DEFINE_string(output_format, "csr", "How to format the output. Defaults to 'csr'.");
+DEFINE_string(output_format, "build+csr", "How to format the output. Defaults to 'build+csr'.");
+DEFINE_bool(self_test, false,
+            "If true, the tool does not output CSR data, but instead performs a self-test, "
+            "validating a test payload for correctness. This may be used to verify a device on the "
+            "factory line before attempting to upload the output to the device info service.");
 
 namespace {
 
@@ -79,13 +83,17 @@ void getCsrForInstance(const char* name, void* /*context*/) {
         exit(-1);
     }
 
-    auto [request, errMsg] = getCsr(name, rkp_service.get());
-    if (!request) {
-        std::cerr << "Unable to build CSR for '" << fullName << ": " << errMsg << std::endl;
-        exit(-1);
-    }
+    if (FLAGS_self_test) {
+        selfTestGetCsr(name, rkp_service.get());
+    } else {
+        auto [request, errMsg] = getCsr(name, rkp_service.get());
+        if (!request) {
+            std::cerr << "Unable to build CSR for '" << fullName << ": " << errMsg << std::endl;
+            exit(-1);
+        }
 
-    writeOutput(std::string(name), *request);
+        writeOutput(std::string(name), *request);
+    }
 }
 
 }  // namespace

@@ -41,9 +41,12 @@ using aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using aidl::android::hardware::security::keymint::MacedPublicKey;
 using aidl::android::hardware::security::keymint::ProtectedData;
 using aidl::android::hardware::security::keymint::RpcHardwareInfo;
+using aidl::android::hardware::security::keymint::remote_prov::EekChain;
+using aidl::android::hardware::security::keymint::remote_prov::generateEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::getProdEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
-using aidl::android::hardware::security::keymint::remote_prov::parseAndValidateDeviceInfo;
+using aidl::android::hardware::security::keymint::remote_prov::parseAndValidateFactoryDeviceInfo;
+using aidl::android::hardware::security::keymint::remote_prov::verifyFactoryProtectedData;
 
 using namespace cppbor;
 using namespace cppcose;
@@ -106,7 +109,7 @@ CborResult<Array> composeCertificateRequest(const ProtectedData& protectedData,
                                 .add(keysToSignMac);            // MAC as returned from the HAL
 
     ErrMsgOr<std::unique_ptr<Map>> parsedVerifiedDeviceInfo =
-        parseAndValidateDeviceInfo(verifiedDeviceInfo.deviceInfo, provisionable);
+        parseAndValidateFactoryDeviceInfo(verifiedDeviceInfo.deviceInfo, provisionable);
     if (!parsedVerifiedDeviceInfo) {
         return {nullptr, parsedVerifiedDeviceInfo.moveMessage()};
     }
@@ -153,4 +156,40 @@ CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedCom
     }
     return composeCertificateRequest(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
                                      irpc);
+}
+
+void selfTestGetCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+    std::vector<uint8_t> keysToSignMac;
+    std::vector<MacedPublicKey> emptyKeys;
+    DeviceInfo verifiedDeviceInfo;
+    ProtectedData protectedData;
+    RpcHardwareInfo hwInfo;
+    ::ndk::ScopedAStatus status = irpc->getHardwareInfo(&hwInfo);
+    if (!status.isOk()) {
+        std::cerr << "Failed to get hardware info for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    const std::vector<uint8_t> eekId = {0, 1, 2, 3, 4, 5, 6, 7};
+    ErrMsgOr<EekChain> eekChain = generateEekChain(hwInfo.supportedEekCurve, /*length=*/3, eekId);
+    if (!eekChain) {
+        std::cerr << "Error generating test EEK certificate chain: " << eekChain.message();
+        exit(-1);
+    }
+    const std::vector<uint8_t> challenge = generateChallenge();
+    status = irpc->generateCertificateRequest(
+        /*test_mode=*/true, emptyKeys, eekChain->chain, challenge, &verifiedDeviceInfo,
+        &protectedData, &keysToSignMac);
+    if (!status.isOk()) {
+        std::cerr << "Error generating test cert chain for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    auto result = verifyFactoryProtectedData(verifiedDeviceInfo, /*keysToSign=*/{}, keysToSignMac,
+                                             protectedData, *eekChain, eekId,
+                                             hwInfo.supportedEekCurve, irpc, challenge);
+
+    std::cout << "Self test successful." << std::endl;
 }
