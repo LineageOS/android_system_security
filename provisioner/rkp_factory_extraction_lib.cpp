@@ -19,6 +19,10 @@
 #include <aidl/android/hardware/security/keymint/IRemotelyProvisionedComponent.h>
 #include <android/binder_manager.h>
 #include <cppbor.h>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <iterator>
 #include <keymaster/cppcose/cppcose.h>
 #include <openssl/base64.h>
 #include <remote_prov/remote_prov_utils.h>
@@ -39,6 +43,7 @@ using aidl::android::hardware::security::keymint::ProtectedData;
 using aidl::android::hardware::security::keymint::RpcHardwareInfo;
 using aidl::android::hardware::security::keymint::remote_prov::getProdEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
+using aidl::android::hardware::security::keymint::remote_prov::parseAndValidateDeviceInfo;
 
 using namespace cppbor;
 using namespace cppcose;
@@ -89,29 +94,30 @@ std::vector<uint8_t> generateChallenge() {
     return challenge;
 }
 
-CsrResult composeCertificateRequest(const ProtectedData& protectedData,
-                                    const DeviceInfo& verifiedDeviceInfo,
-                                    const std::vector<uint8_t>& challenge,
-                                    const std::vector<uint8_t>& keysToSignMac) {
+CborResult<Array> composeCertificateRequest(const ProtectedData& protectedData,
+                                            const DeviceInfo& verifiedDeviceInfo,
+                                            const std::vector<uint8_t>& challenge,
+                                            const std::vector<uint8_t>& keysToSignMac,
+                                            IRemotelyProvisionedComponent* provisionable) {
     Array macedKeysToSign = Array()
                                 .add(Map().add(1, 5).encode())  // alg: hmac-sha256
                                 .add(Map())                     // empty unprotected headers
                                 .add(Null())                    // nil for the payload
                                 .add(keysToSignMac);            // MAC as returned from the HAL
 
-    auto [parsedVerifiedDeviceInfo, ignore1, errMsg] = parse(verifiedDeviceInfo.deviceInfo);
+    ErrMsgOr<std::unique_ptr<Map>> parsedVerifiedDeviceInfo =
+        parseAndValidateDeviceInfo(verifiedDeviceInfo.deviceInfo, provisionable);
     if (!parsedVerifiedDeviceInfo) {
-        std::cerr << "Error parsing device info: '" << errMsg << "'" << std::endl;
-        return {nullptr, errMsg};
+        return {nullptr, parsedVerifiedDeviceInfo.moveMessage()};
     }
 
-    auto [parsedProtectedData, ignore2, errMsg2] = parse(protectedData.protectedData);
+    auto [parsedProtectedData, ignore2, errMsg] = parse(protectedData.protectedData);
     if (!parsedProtectedData) {
-        std::cerr << "Error parsing protected data: '" << errMsg2 << "'" << std::endl;
+        std::cerr << "Error parsing protected data: '" << errMsg << "'" << std::endl;
         return {nullptr, errMsg};
     }
 
-    Array deviceInfo = Array().add(std::move(parsedVerifiedDeviceInfo)).add(Map());
+    Array deviceInfo = Array().add(parsedVerifiedDeviceInfo.moveValue()).add(Map());
 
     auto certificateRequest = std::make_unique<Array>();
     (*certificateRequest)
@@ -119,10 +125,10 @@ CsrResult composeCertificateRequest(const ProtectedData& protectedData,
         .add(challenge)
         .add(std::move(parsedProtectedData))
         .add(std::move(macedKeysToSign));
-    return {std::move(certificateRequest), std::nullopt};
+    return {std::move(certificateRequest), ""};
 }
 
-CsrResult getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
     std::vector<uint8_t> keysToSignMac;
     std::vector<MacedPublicKey> emptyKeys;
     DeviceInfo verifiedDeviceInfo;
@@ -145,5 +151,6 @@ CsrResult getCsr(std::string_view componentName, IRemotelyProvisionedComponent* 
                   << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
         exit(-1);
     }
-    return composeCertificateRequest(protectedData, verifiedDeviceInfo, challenge, keysToSignMac);
+    return composeCertificateRequest(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
+                                     irpc);
 }

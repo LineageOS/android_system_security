@@ -81,8 +81,7 @@ void getCsrForInstance(const char* name, void* /*context*/) {
 
     auto [request, errMsg] = getCsr(name, rkp_service.get());
     if (!request) {
-        std::cerr << "Unable to build CSR for '" << fullName << ": "
-                  << errMsg.value_or("<Unknown Error>") << std::endl;
+        std::cerr << "Unable to build CSR for '" << fullName << ": " << errMsg << std::endl;
         exit(-1);
     }
 
