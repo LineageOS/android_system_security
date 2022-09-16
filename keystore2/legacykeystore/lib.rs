@@ -393,7 +393,7 @@ impl LegacyKeystore {
         let uid = Self::get_effective_uid(uid).context("In list.")?;
         let mut result = self.list_legacy(uid).context("In list.")?;
         result.append(&mut db.list(uid).context("In list: Trying to get list of entries.")?);
-        result = result.into_iter().filter(|s| s.starts_with(prefix)).collect();
+        result.retain(|s| s.starts_with(prefix));
         result.sort_unstable();
         result.dedup();
         Ok(result)
