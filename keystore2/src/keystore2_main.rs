@@ -47,7 +47,16 @@ fn main() {
         android_logger::Config::default()
             .with_tag("keystore2")
             .with_min_level(log::Level::Debug)
-            .with_log_id(android_logger::LogId::System),
+            .with_log_id(android_logger::LogId::System)
+            .format(|buf, record| {
+                writeln!(
+                    buf,
+                    "{}:{} - {}",
+                    record.file().unwrap_or("unknown"),
+                    record.line().unwrap_or(0),
+                    record.args()
+                )
+            }),
     );
     // Redirect panic messages to logcat.
     panic::set_hook(Box::new(|panic_info| {
