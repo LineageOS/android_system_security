@@ -16,6 +16,8 @@
 
 #include "rkp_factory_extraction_lib.h"
 
+#include "gmock/gmock-matchers.h"
+#include "gmock/gmock-more-matchers.h"
 #include <aidl/android/hardware/security/keymint/DeviceInfo.h>
 #include <aidl/android/hardware/security/keymint/IRemotelyProvisionedComponent.h>
 #include <aidl/android/hardware/security/keymint/MacedPublicKey.h>
@@ -24,6 +26,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <set>
 #include <vector>
@@ -126,7 +129,20 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
     Map cborDeviceInfo;
     cborDeviceInfo.add("product", "gShoe");
     cborDeviceInfo.add("version", 2);
-    const DeviceInfo kVerifiedDeviceInfo = {cborDeviceInfo.encode()};
+    cborDeviceInfo.add("brand", "Fake Brand");
+    cborDeviceInfo.add("manufacturer", "Fake Mfr");
+    cborDeviceInfo.add("model", "Fake Model");
+    cborDeviceInfo.add("device", "Fake Device");
+    cborDeviceInfo.add("vb_state", "orange");
+    cborDeviceInfo.add("bootloader_state", "unlocked");
+    cborDeviceInfo.add("vbmeta_digest", std::vector<uint8_t>{1, 2, 3, 4});
+    cborDeviceInfo.add("system_patch_level", 42);
+    cborDeviceInfo.add("boot_patch_level", 31415);
+    cborDeviceInfo.add("vendor_patch_level", 0);
+    cborDeviceInfo.add("fused", 0);
+    cborDeviceInfo.add("security_level", "tee");
+    cborDeviceInfo.add("os_version", "the best version");
+    const DeviceInfo kVerifiedDeviceInfo = {cborDeviceInfo.canonicalize().encode()};
 
     Array cborProtectedData;
     cborProtectedData.add(Bstr());   // protected
@@ -140,7 +156,10 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
 
     // Set up mock, then call getSCsr
     auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
-    EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillOnce(Return(ByMove(ScopedAStatus::ok())));
+    EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
+        hwInfo->versionNumber = 2;
+        return ScopedAStatus::ok();
+    });
     EXPECT_CALL(*mockRpc,
                 generateCertificateRequest(false,               // testMode
                                            IsEmpty(),           // keysToSign
@@ -157,7 +176,7 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
                         Return(ByMove(ScopedAStatus::ok()))));  //
 
     auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get());
-    ASSERT_THAT(csr, NotNull()) << csrErrMsg.value_or("");
+    ASSERT_THAT(csr, NotNull()) << csrErrMsg;
     ASSERT_THAT(csr->asArray(), Pointee(Property(&Array::size, Eq(4))));
 
     // Verify the input parameters that we received
@@ -172,7 +191,7 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
 
     // Verified device info must match our mock value
     const Map* actualVerifiedDeviceInfo = deviceInfoArray->get(0)->asMap();
-    EXPECT_THAT(actualVerifiedDeviceInfo, Pointee(Property(&Map::size, Eq(2))));
+    EXPECT_THAT(actualVerifiedDeviceInfo, Pointee(Property(&Map::size, Eq(cborDeviceInfo.size()))));
     EXPECT_THAT(actualVerifiedDeviceInfo->get("product"), Pointee(Eq(Tstr("gShoe"))));
     EXPECT_THAT(actualVerifiedDeviceInfo->get("version"), Pointee(Eq(Uint(2))));
 
