@@ -21,17 +21,17 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 constexpr size_t kChallengeSize = 16;
 
-// Contains the result of CSR generation, bundling up the result (on success)
-// with an error message (on failure).
-struct CsrResult {
-    std::unique_ptr<cppbor::Array> csr;
-    std::optional<std::string> errMsg;
+// Contains a the result of an operation that should return cborData on success.
+// Returns an an error message and null cborData on error.
+template <typename T> struct CborResult {
+    std::unique_ptr<T> cborData;
+    std::string errMsg;
 };
 
 // Return `buffer` encoded as a base64 string.
@@ -43,5 +43,11 @@ std::vector<uint8_t> generateChallenge();
 // Get a certificate signing request for the given IRemotelyProvisionedComponent.
 // On error, the csr Array is null, and the string field contains a description of
 // what went wrong.
-CsrResult getCsr(std::string_view componentName,
-                 aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent* irpc);
+CborResult<cppbor::Array>
+getCsr(std::string_view componentName,
+       aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent* irpc);
+
+// Generates a test certificate chain and validates it, exiting the process on error.
+void selfTestGetCsr(
+    std::string_view componentName,
+    aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent* irpc);
