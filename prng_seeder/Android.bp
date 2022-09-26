@@ -48,4 +48,6 @@ rust_binary {
         "libnix",
         "libtokio",
     ],
+
+    init_rc: ["prng_seeder.rc"],
 }
