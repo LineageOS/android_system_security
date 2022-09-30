@@ -23,22 +23,19 @@ mod drbg;
 
 use std::{
     convert::Infallible,
-    fs::{remove_file, File},
+    fs::remove_file,
     io::ErrorKind,
-    os::unix::{net::UnixListener, prelude::AsRawFd},
+    os::unix::net::UnixListener,
     path::{Path, PathBuf},
 };
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 use clap::Parser;
-use log::{error, info};
-use nix::{
-    fcntl::{fcntl, FcntlArg::F_SETFL, OFlag},
-    sys::signal,
-};
+use log::{error, info, Level};
+use nix::sys::signal;
 use tokio::{io::AsyncWriteExt, net::UnixListener as TokioUnixListener};
 
-use crate::conditioner::Conditioner;
+use crate::conditioner::ConditionerBuilder;
 
 #[derive(Debug, clap::Parser)]
 struct Cli {
@@ -48,24 +45,50 @@ struct Cli {
     socket: Option<PathBuf>,
 }
 
-fn configure_logging() {
-    logger::init(Default::default());
+fn configure_logging() -> Result<()> {
+    ensure!(
+        logger::init(
+            logger::Config::default().with_tag_on_device("prng_seeder").with_min_level(Level::Info)
+        ),
+        "log configuration failed"
+    );
+    Ok(())
 }
 
 fn get_socket(path: &Path) -> Result<UnixListener> {
     if let Err(e) = remove_file(path) {
         if e.kind() != ErrorKind::NotFound {
-            return Err(e.into());
+            return Err(e).context(format!("Removing old socket: {}", path.display()));
         }
     } else {
-        info!("Deleted old {}", path.to_string_lossy());
+        info!("Deleted old {}", path.display());
     }
-    Ok(UnixListener::bind(path)?)
+    UnixListener::bind(path)
+        .with_context(|| format!("In get_socket: binding socket to {}", path.display()))
 }
 
-async fn listen_loop(hwrng: File, listener: UnixListener) -> Result<Infallible> {
-    let mut conditioner = Conditioner::new(hwrng)?;
-    let listener = TokioUnixListener::from_std(listener)?;
+fn setup() -> Result<(ConditionerBuilder, UnixListener)> {
+    configure_logging()?;
+    let cli = Cli::try_parse()?;
+    unsafe { signal::signal(signal::Signal::SIGPIPE, signal::SigHandler::SigIgn) }
+        .context("In setup, setting SIGPIPE to SIG_IGN")?;
+
+    let listener = match cli.socket {
+        Some(path) => get_socket(path.as_path())?,
+        None => cutils_socket::android_get_control_socket("prng_seeder")
+            .context("In setup, calling android_get_control_socket")?,
+    };
+    let hwrng = std::fs::File::open(&cli.source)
+        .with_context(|| format!("Unable to open hwrng {}", cli.source.display()))?;
+    let cb = ConditionerBuilder::new(hwrng)?;
+    Ok((cb, listener))
+}
+
+async fn listen_loop(cb: ConditionerBuilder, listener: UnixListener) -> Result<Infallible> {
+    let mut conditioner = cb.build();
+    listener.set_nonblocking(true).context("In listen_loop, on set_nonblocking")?;
+    let listener = TokioUnixListener::from_std(listener).context("In listen_loop, on from_std")?;
+    info!("Starting listen loop");
     loop {
         match listener.accept().await {
             Ok((mut stream, _)) => {
@@ -78,35 +101,37 @@ async fn listen_loop(hwrng: File, listener: UnixListener) -> Result<Infallible> 
                 conditioner.reseed_if_necessary().await?;
             }
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e).context("accept on socket failed"),
         }
     }
 }
 
-fn run(cli: Cli) -> Result<Infallible> {
-    let hwrng = std::fs::File::open(&cli.source)?;
-    fcntl(hwrng.as_raw_fd(), F_SETFL(OFlag::O_NONBLOCK))?;
-    let listener = match cli.socket {
-        Some(path) => get_socket(path.as_path())?,
-        None => cutils_socket::android_get_control_socket("prng_seeder")?,
+fn run() -> Result<Infallible> {
+    let (cb, listener) = match setup() {
+        Ok(t) => t,
+        Err(e) => {
+            // If setup fails, just hang forever. That way init doesn't respawn us.
+            error!("Hanging forever because setup failed: {:?}", e);
+            // Logs are sometimes mysteriously not being logged, so print too
+            println!("prng_seeder: Hanging forever because setup failed: {:?}", e);
+            loop {
+                std::thread::park();
+                error!("std::thread::park() finished unexpectedly, re-parking thread");
+            }
+        }
     };
-    listener.set_nonblocking(true)?;
-
-    unsafe { signal::signal(signal::Signal::SIGPIPE, signal::SigHandler::SigIgn) }?;
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?
-        .block_on(async { listen_loop(hwrng, listener).await })
+        .build()
+        .context("In run, building reactor")?
+        .block_on(async { listen_loop(cb, listener).await })
 }
 
 fn main() {
-    let cli = Cli::parse();
-    configure_logging();
-    if let Err(e) = run(cli) {
-        error!("Launch failed: {}", e);
-    } else {
-        error!("Loop terminated without an error")
-    }
+    let e = run();
+    error!("Launch terminated: {:?}", e);
+    // Logs are sometimes mysteriously not being logged, so print too
+    println!("prng_seeder: launch terminated: {:?}", e);
     std::process::exit(-1);
 }
