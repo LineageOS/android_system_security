@@ -12,16 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, os::unix::io::AsRawFd};
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use log::debug;
+use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
 use tokio::io::AsyncReadExt;
 
 use crate::drbg;
 
 const SEED_FOR_CLIENT_LEN: usize = 496;
 const NUM_REQUESTS_PER_RESEED: u32 = 256;
+
+pub struct ConditionerBuilder {
+    hwrng: File,
+    rg: drbg::Drbg,
+}
+
+impl ConditionerBuilder {
+    pub fn new(mut hwrng: File) -> Result<ConditionerBuilder> {
+        let mut et: drbg::Entropy = [0; drbg::ENTROPY_LEN];
+        hwrng.read_exact(&mut et).context("hwrng.read_exact in new")?;
+        let rg = drbg::Drbg::new(&et)?;
+        fcntl(hwrng.as_raw_fd(), F_SETFL(OFlag::O_NONBLOCK))
+            .context("setting O_NONBLOCK on hwrng")?;
+        Ok(ConditionerBuilder { hwrng, rg })
+    }
+
+    pub fn build(self) -> Conditioner {
+        Conditioner {
+            hwrng: tokio::fs::File::from_std(self.hwrng),
+            rg: self.rg,
+            requests_since_reseed: 0,
+        }
+    }
+}
 
 pub struct Conditioner {
     hwrng: tokio::fs::File,
@@ -30,18 +55,11 @@ pub struct Conditioner {
 }
 
 impl Conditioner {
-    pub fn new(mut hwrng: File) -> Result<Conditioner> {
-        let mut et: drbg::Entropy = [0; drbg::ENTROPY_LEN];
-        hwrng.read_exact(&mut et)?;
-        let rg = drbg::Drbg::new(&et)?;
-        Ok(Conditioner { hwrng: tokio::fs::File::from_std(hwrng), rg, requests_since_reseed: 0 })
-    }
-
     pub async fn reseed_if_necessary(&mut self) -> Result<()> {
         if self.requests_since_reseed >= NUM_REQUESTS_PER_RESEED {
             debug!("Reseeding DRBG");
             let mut et: drbg::Entropy = [0; drbg::ENTROPY_LEN];
-            self.hwrng.read_exact(&mut et).await?;
+            self.hwrng.read_exact(&mut et).await.context("hwrng.read_exact in reseed")?;
             self.rg.reseed(&et)?;
             self.requests_since_reseed = 0;
         }
