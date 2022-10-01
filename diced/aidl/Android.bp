@@ -23,6 +23,7 @@ package {
 
 aidl_interface {
     name: "android.security.dice",
+    system_ext_specific: true,
     srcs: [ "android/security/dice/*.aidl" ],
     unstable: true,
     imports: ["android.hardware.security.dice-V1"],
