@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "558297ab_c62c156f",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 16185
+      },
+      "writtenOn": "2022-10-03T20:37:50Z",
+      "side": 1,
+      "message": "All good on TP1803 upgraded from 19.1, and on fresh wipe of TP1803",
+      "revId": "4018ce72ba8d8642e0270bbcab43768bd700f682",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    }
+  ]
+}
