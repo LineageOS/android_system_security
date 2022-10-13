@@ -112,6 +112,7 @@ pub fn generate_ec_p256_signing_key(
 ) -> binder::Result<KeyMetadata> {
     let mut key_attest = false;
     let mut gen_params = AuthSetBuilder::new()
+        .no_auth_required()
         .algorithm(Algorithm::EC)
         .purpose(KeyPurpose::SIGN)
         .purpose(KeyPurpose::VERIFY)
@@ -151,8 +152,8 @@ pub fn generate_ec_p256_signing_key(
 }
 
 /// Generate EC signing key.
-pub fn generate_ec_key<S: IKeystoreSecurityLevel + ?Sized>(
-    sec_level: &S,
+pub fn generate_ec_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     domain: Domain,
     nspace: i64,
     alias: Option<String>,
