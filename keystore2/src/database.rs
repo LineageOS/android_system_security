@@ -3518,15 +3518,15 @@ pub mod tests {
         // Test that we must pass in a valid Domain.
         check_result_is_error_containing_string(
             db.create_key_entry(&Domain::GRANT, &102, KeyType::Client, &KEYSTORE_UUID),
-            "Domain Domain(1) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::GRANT),
         );
         check_result_is_error_containing_string(
             db.create_key_entry(&Domain::BLOB, &103, KeyType::Client, &KEYSTORE_UUID),
-            "Domain Domain(3) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::BLOB),
         );
         check_result_is_error_containing_string(
             db.create_key_entry(&Domain::KEY_ID, &104, KeyType::Client, &KEYSTORE_UUID),
-            "Domain Domain(4) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::KEY_ID),
         );
 
         Ok(())
@@ -3825,15 +3825,15 @@ pub mod tests {
         // Test that we must pass in a valid Domain.
         check_result_is_error_containing_string(
             rebind_alias(&mut db, &KEY_ID_LOCK.get(0), "foo", Domain::GRANT, 42),
-            "Domain Domain(1) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::GRANT),
         );
         check_result_is_error_containing_string(
             rebind_alias(&mut db, &KEY_ID_LOCK.get(0), "foo", Domain::BLOB, 42),
-            "Domain Domain(3) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::BLOB),
         );
         check_result_is_error_containing_string(
             rebind_alias(&mut db, &KEY_ID_LOCK.get(0), "foo", Domain::KEY_ID, 42),
-            "Domain Domain(4) must be either App or SELinux.",
+            &format!("Domain {:?} must be either App or SELinux.", Domain::KEY_ID),
         );
 
         // Test that we correctly handle setting an alias for something that does not exist.
