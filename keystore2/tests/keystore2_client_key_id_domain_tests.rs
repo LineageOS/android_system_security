@@ -37,7 +37,7 @@ fn keystore2_generate_key_with_key_id_domain_expect_sys_error() {
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
     let result = key_generations::map_ks_error(key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::KEY_ID,
         key_generations::SELINUX_SHELL_NAMESPACE,
         Some(alias.to_string()),
@@ -58,7 +58,7 @@ fn keystore2_find_key_with_key_id_as_domain() {
     let alias = "ks_key_id_test_key";
 
     let key_metadata = key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::APP,
         -1,
         Some(alias.to_string()),
@@ -115,7 +115,7 @@ fn keystore2_key_id_alias_rebind_verify_by_alias() {
     let alias = format!("ks_key_id_test_alias_rebind_1_{}", getuid());
 
     let key_metadata = key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::APP,
         -1,
         Some(alias.to_string()),
@@ -127,7 +127,7 @@ fn keystore2_key_id_alias_rebind_verify_by_alias() {
     // Generate a key with same alias as above generated key, so that alias will be rebound
     // to this key.
     let new_key_metadata = key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::APP,
         -1,
         Some(alias),
@@ -182,7 +182,7 @@ fn keystore2_key_id_alias_rebind_verify_by_key_id() {
     let alias = format!("ks_key_id_test_alias_rebind_2_{}", getuid());
 
     let key_metadata = key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::APP,
         -1,
         Some(alias.to_string()),
@@ -210,7 +210,7 @@ fn keystore2_key_id_alias_rebind_verify_by_key_id() {
     // Generate another key with same alias as above generated key, so that alias will be rebound
     // to this key.
     let new_key_metadata = key_generations::generate_ec_key(
-        &*sec_level,
+        &sec_level,
         Domain::APP,
         -1,
         Some(alias),
