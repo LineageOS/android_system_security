@@ -26,7 +26,8 @@ use keystore2_test_utils::{
 };
 
 use crate::keystore2_client_test_utils::{
-    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
+    has_trusty_keymint, perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op,
+    SAMPLE_PLAIN_TEXT,
 };
 
 /// Generate a AES key. Create encrypt and decrypt operations using the generated key.
@@ -391,7 +392,12 @@ fn keystore2_aes_gcm_op_fails_missing_mac_len() {
         &mut None,
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::MISSING_MAC_LENGTH), result.unwrap_err());
+
+    if has_trusty_keymint() {
+        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::MISSING_MAC_LENGTH));
+    } else {
+        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::UNSUPPORTED_MAC_LENGTH));
+    }
 }
 
 /// Generate a AES-GCM key with `MIN_MAC_LENGTH`. Try to create an operation using this
