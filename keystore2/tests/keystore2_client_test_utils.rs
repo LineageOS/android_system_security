@@ -23,7 +23,8 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 use android_system_keystore2::aidl::android::system::keystore2::{
     CreateOperationResponse::CreateOperationResponse, Domain::Domain,
     IKeystoreOperation::IKeystoreOperation, IKeystoreSecurityLevel::IKeystoreSecurityLevel,
-    KeyDescriptor::KeyDescriptor, KeyParameters::KeyParameters, ResponseCode::ResponseCode,
+    IKeystoreService::IKeystoreService, KeyDescriptor::KeyDescriptor, KeyParameters::KeyParameters,
+    ResponseCode::ResponseCode,
 };
 
 use keystore2_test_utils::{
@@ -49,6 +50,11 @@ pub struct ForcedOp(pub bool);
 
 /// Sample plain text input for encrypt operation.
 pub const SAMPLE_PLAIN_TEXT: &[u8] = b"my message 11111";
+
+pub fn has_trusty_keymint() -> bool {
+    binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
+        .expect("Could not check for declared keymint interface")
+}
 
 /// Generate a EC_P256 key using given domain, namespace and alias.
 /// Create an operation using the generated key and perform sample signing operation.
@@ -201,4 +207,17 @@ pub fn perform_sample_sym_key_decrypt_op(
     assert!(op_response.iOperation.is_some());
     let op = op_response.iOperation.unwrap();
     op.finish(Some(input), None)
+}
+
+/// Delete a key with domain APP.
+pub fn delete_app_key(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+    alias: &str,
+) -> binder::Result<()> {
+    keystore2.deleteKey(&KeyDescriptor {
+        domain: Domain::APP,
+        nspace: -1,
+        alias: Some(alias.to_string()),
+        blob: None,
+    })
 }
