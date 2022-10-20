@@ -23,6 +23,7 @@ use crate::error::{self, map_km_error, map_or_log_err, Error, ErrorCode};
 use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
 use crate::key_parameter::KeyParameter as KsKeyParam;
 use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
+use crate::ks_err;
 use crate::metrics_store::log_key_creation_event_stats;
 use crate::remote_provisioning::RemProvState;
 use crate::super_key::{KeyBlob, SuperKeyManager};
@@ -89,7 +90,7 @@ impl KeystoreSecurityLevel {
         id_rotation_state: IdRotationState,
     ) -> Result<(Strong<dyn IKeystoreSecurityLevel>, Uuid)> {
         let (dev, hw_info, km_uuid) = get_keymint_device(&security_level)
-            .context("In KeystoreSecurityLevel::new_native_binder.")?;
+            .context(ks_err!("KeystoreSecurityLevel::new_native_binder."))?;
         let result = BnKeystoreSecurityLevel::new_binder(
             Self {
                 security_level,
@@ -171,7 +172,7 @@ impl KeystoreSecurityLevel {
                             user_id,
                             &key_blob,
                         )
-                        .context("In store_new_key. Failed to handle super encryption.")?;
+                        .context(ks_err!("Failed to handle super encryption."))?;
 
                     let mut key_metadata = KeyMetaData::new();
                     key_metadata.add(KeyMetaEntry::CreationDate(creation_date));
@@ -187,14 +188,14 @@ impl KeystoreSecurityLevel {
                             &key_metadata,
                             &self.km_uuid,
                         )
-                        .context("In store_new_key.")?;
+                        .context(ks_err!())?;
                     Ok(KeyDescriptor {
                         domain: Domain::KEY_ID,
                         nspace: key_id.id(),
                         ..Default::default()
                     })
                 })
-                .context("In store_new_key.")?,
+                .context(ks_err!())?,
         };
 
         Ok(KeyMetadata {
@@ -221,20 +222,19 @@ impl KeystoreSecurityLevel {
         let (km_blob, key_properties, key_id_guard, blob_metadata) = match key.domain {
             Domain::BLOB => {
                 check_key_permission(KeyPerm::Use, key, &None)
-                    .context("In create_operation: checking use permission for Domain::BLOB.")?;
+                    .context(ks_err!("checking use permission for Domain::BLOB."))?;
                 if forced {
-                    check_key_permission(KeyPerm::ReqForcedOp, key, &None).context(
-                        "In create_operation: checking forced permission for Domain::BLOB.",
-                    )?;
+                    check_key_permission(KeyPerm::ReqForcedOp, key, &None)
+                        .context(ks_err!("checking forced permission for Domain::BLOB."))?;
                 }
                 (
                     match &key.blob {
                         Some(blob) => blob,
                         None => {
-                            return Err(Error::sys()).context(concat!(
-                                "In create_operation: Key blob must be specified when",
-                                " using Domain::BLOB."
-                            ))
+                            return Err(Error::sys()).context(ks_err!(
+                                "Key blob must be specified when \
+                                using Domain::BLOB."
+                            ));
                         }
                     },
                     None,
@@ -265,12 +265,12 @@ impl KeystoreSecurityLevel {
                             )
                         })
                     })
-                    .context("In create_operation: Failed to load key blob.")?;
+                    .context(ks_err!("Failed to load key blob."))?;
 
                 let (blob, blob_metadata) =
-                    key_entry.take_key_blob_info().ok_or_else(Error::sys).context(concat!(
-                        "In create_operation: Successfully loaded key entry, ",
-                        "but KM blob was missing."
+                    key_entry.take_key_blob_info().ok_or_else(Error::sys).context(ks_err!(
+                        "Successfully loaded key entry, \
+                        but KM blob was missing."
                     ))?;
                 scoping_blob = blob;
 
@@ -285,11 +285,11 @@ impl KeystoreSecurityLevel {
 
         let purpose = operation_parameters.iter().find(|p| p.tag == Tag::PURPOSE).map_or(
             Err(Error::Km(ErrorCode::INVALID_ARGUMENT))
-                .context("In create_operation: No operation purpose specified."),
+                .context(ks_err!("No operation purpose specified.")),
             |kp| match kp.value {
                 KeyParameterValue::KeyPurpose(p) => Ok(p),
                 _ => Err(Error::Km(ErrorCode::INVALID_ARGUMENT))
-                    .context("In create_operation: Malformed KeyParameter."),
+                    .context(ks_err!("Malformed KeyParameter.")),
             },
         )?;
 
@@ -306,13 +306,13 @@ impl KeystoreSecurityLevel {
                 operation_parameters.as_ref(),
                 self.hw_info.timestampTokenRequired,
             )
-            .context("In create_operation.")?;
+            .context(ks_err!())?;
 
         let km_blob = SUPER_KEY
             .read()
             .unwrap()
             .unwrap_key_if_required(&blob_metadata, km_blob)
-            .context("In create_operation. Failed to handle super encryption.")?;
+            .context(ks_err!("Failed to handle super encryption."))?;
 
         let (begin_result, upgraded_blob) = self
             .upgrade_keyblob_if_required_with(
@@ -354,7 +354,7 @@ impl KeystoreSecurityLevel {
                     }
                 },
             )
-            .context("In create_operation: Failed to begin operation.")?;
+            .context(ks_err!("Failed to begin operation."))?;
 
         let operation_challenge = auth_info.finalize_create_authorization(begin_result.challenge);
 
@@ -369,10 +369,10 @@ impl KeystoreSecurityLevel {
                 LoggingInfo::new(self.security_level, purpose, op_params, upgraded_blob.is_some()),
             ),
             None => {
-                return Err(Error::sys()).context(concat!(
-                    "In create_operation: Begin operation returned successfully, ",
-                    "but did not return a valid operation."
-                ))
+                return Err(Error::sys()).context(ks_err!(
+                    "Begin operation returned successfully, \
+                    but did not return a valid operation."
+                ));
             }
         };
 
@@ -380,7 +380,7 @@ impl KeystoreSecurityLevel {
             KeystoreOperation::new_native_binder(operation)
                 .as_binder()
                 .into_interface()
-                .context("In create_operation: Failed to create IKeystoreOperation.")?;
+                .context(ks_err!("Failed to create IKeystoreOperation."))?;
 
         Ok(CreateOperationResponse {
             iOperation: Some(op_binder),
@@ -407,10 +407,10 @@ impl KeystoreSecurityLevel {
         // Unconditionally add the CREATION_DATETIME tag and prevent callers from
         // specifying it.
         if params.iter().any(|kp| kp.tag == Tag::CREATION_DATETIME) {
-            return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                "In KeystoreSecurityLevel::add_required_parameters: \
-                Specifying Tag::CREATION_DATETIME is not allowed.",
-            );
+            return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!(
+                "KeystoreSecurityLevel::add_required_parameters: \
+                Specifying Tag::CREATION_DATETIME is not allowed."
+            ));
         }
 
         // Add CREATION_DATETIME only if the backend version Keymint V1 (100) or newer.
@@ -420,16 +420,16 @@ impl KeystoreSecurityLevel {
                 value: KeyParameterValue::DateTime(
                     SystemTime::now()
                         .duration_since(SystemTime::UNIX_EPOCH)
-                        .context(
-                            "In KeystoreSecurityLevel::add_required_parameters: \
-                        Failed to get epoch time.",
-                        )?
+                        .context(ks_err!(
+                            "KeystoreSecurityLevel::add_required_parameters: \
+                                Failed to get epoch time."
+                        ))?
                         .as_millis()
                         .try_into()
-                        .context(
-                            "In KeystoreSecurityLevel::add_required_parameters: \
-                        Failed to convert epoch time.",
-                        )?,
+                        .context(ks_err!(
+                            "KeystoreSecurityLevel::add_required_parameters: \
+                                Failed to convert epoch time."
+                        ))?,
                 ),
             });
         }
@@ -441,9 +441,8 @@ impl KeystoreSecurityLevel {
                     "In KeystoreSecurityLevel::add_required_parameters calling: get_aaid",
                     500,
                 );
-                keystore2_aaid::get_aaid(uid).map_err(|e| {
-                    anyhow!(format!("In add_required_parameters: get_aaid returned status {}.", e))
-                })
+                keystore2_aaid::get_aaid(uid)
+                    .map_err(|e| anyhow!(ks_err!("get_aaid returned status {}.", e)))
             }?;
 
             result.push(KeyParameter {
@@ -456,14 +455,15 @@ impl KeystoreSecurityLevel {
             if check_key_permission(KeyPerm::GenUniqueId, key, &None).is_err()
                 && check_unique_id_attestation_permissions().is_err()
             {
-                return Err(Error::perm()).context(
-                    "In add_required_parameters: \
-                    Caller does not have the permission to generate a unique ID",
-                );
+                return Err(Error::perm()).context(ks_err!(
+                    "Caller does not have the permission to generate a unique ID"
+                ));
             }
-            if self.id_rotation_state.had_factory_reset_since_id_rotation().context(
-                "In add_required_parameters: Call to had_factory_reset_since_id_rotation failed.",
-            )? {
+            if self
+                .id_rotation_state
+                .had_factory_reset_since_id_rotation()
+                .context(ks_err!("Call to had_factory_reset_since_id_rotation failed."))?
+            {
                 result.push(KeyParameter {
                     tag: Tag::RESET_SINCE_ID_ROTATION,
                     value: KeyParameterValue::BoolValue(true),
@@ -474,8 +474,7 @@ impl KeystoreSecurityLevel {
         // If the caller requests any device identifier attestation tag, check that they hold the
         // correct Android permission.
         if params.iter().any(|kp| is_device_id_attestation_tag(kp.tag)) {
-            check_device_attestation_permissions().context(concat!(
-                "In add_required_parameters: ",
+            check_device_attestation_permissions().context(ks_err!(
                 "Caller does not have the permission to attest device identifiers."
             ))?;
         }
@@ -513,7 +512,7 @@ impl KeystoreSecurityLevel {
     ) -> Result<KeyMetadata> {
         if key.domain != Domain::BLOB && key.alias.is_none() {
             return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-                .context("In generate_key: Alias must be specified");
+                .context(ks_err!("Alias must be specified"));
         }
         let caller_uid = ThreadState::get_calling_uid();
 
@@ -529,7 +528,7 @@ impl KeystoreSecurityLevel {
 
         // generate_key requires the rebind permission.
         // Must return on error for security reasons.
-        check_key_permission(KeyPerm::Rebind, &key, &None).context("In generate_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context(ks_err!())?;
 
         let attestation_key_info = match (key.domain, attest_key_descriptor) {
             (Domain::BLOB, _) => None,
@@ -544,11 +543,11 @@ impl KeystoreSecurityLevel {
                         &mut db.borrow_mut(),
                     )
                 })
-                .context("In generate_key: Trying to get an attestation key")?,
+                .context(ks_err!("Trying to get an attestation key"))?,
         };
         let params = self
             .add_required_parameters(caller_uid, params, &key)
-            .context("In generate_key: Trying to get aaid.")?;
+            .context(ks_err!("Trying to get aaid."))?;
 
         let creation_result = match attestation_key_info {
             Some(AttestationKeyInfo::UserGenerated {
@@ -581,7 +580,7 @@ impl KeystoreSecurityLevel {
                         })
                     },
                 )
-                .context("In generate_key: Using user generated attestation key.")
+                .context(ks_err!("Using user generated attestation key."))
                 .map(|(result, _)| result),
             Some(AttestationKeyInfo::RemoteProvisioned {
                 key_id_guard,
@@ -629,10 +628,10 @@ impl KeystoreSecurityLevel {
             })
             .context("While generating Key without explicit attestation key."),
         }
-        .context("In generate_key.")?;
+        .context(ks_err!())?;
 
         let user_id = uid_to_android_user(caller_uid);
-        self.store_new_key(key, creation_result, user_id, Some(flags)).context("In generate_key.")
+        self.store_new_key(key, creation_result, user_id, Some(flags)).context(ks_err!())
     }
 
     fn import_key(
@@ -645,7 +644,7 @@ impl KeystoreSecurityLevel {
     ) -> Result<KeyMetadata> {
         if key.domain != Domain::BLOB && key.alias.is_none() {
             return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-                .context("In import_key: Alias must be specified");
+                .context(ks_err!("Alias must be specified"));
         }
         let caller_uid = ThreadState::get_calling_uid();
 
@@ -664,7 +663,7 @@ impl KeystoreSecurityLevel {
 
         let params = self
             .add_required_parameters(caller_uid, params, &key)
-            .context("In import_key: Trying to get aaid.")?;
+            .context(ks_err!("Trying to get aaid."))?;
 
         let format = params
             .iter()
@@ -680,7 +679,7 @@ impl KeystoreSecurityLevel {
                 v => Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
                     .context(format!("Unknown Algorithm {:?}.", v)),
             })
-            .context("In import_key.")?;
+            .context(ks_err!())?;
 
         let km_dev = &self.keymint;
         let creation_result = map_km_error({
@@ -688,10 +687,10 @@ impl KeystoreSecurityLevel {
                 self.watch_millis("In KeystoreSecurityLevel::import_key: calling importKey.", 500);
             km_dev.importKey(&params, format, key_data, None /* attestKey */)
         })
-        .context("In import_key: Trying to call importKey")?;
+        .context(ks_err!("Trying to call importKey"))?;
 
         let user_id = uid_to_android_user(caller_uid);
-        self.store_new_key(key, creation_result, user_id, Some(flags)).context("In import_key.")
+        self.store_new_key(key, creation_result, user_id, Some(flags)).context(ks_err!())
     }
 
     fn import_wrapped_key(
@@ -708,20 +707,16 @@ impl KeystoreSecurityLevel {
                 domain: Domain::SELINUX, blob: Some(ref blob), alias: Some(_), ..
             } => blob,
             _ => {
-                return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT)).context(format!(
-                    concat!(
-                        "In import_wrapped_key: Alias and blob must be specified ",
-                        "and domain must be APP or SELINUX. {:?}"
-                    ),
+                return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT)).context(ks_err!(
+                    "Alias and blob must be specified and domain must be APP or SELINUX. {:?}",
                     key
-                ))
+                ));
             }
         };
 
         if wrapping_key.domain == Domain::BLOB {
-            return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT)).context(
-                "In import_wrapped_key: Import wrapped key not supported for self managed blobs.",
-            );
+            return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
+                .context(ks_err!("Import wrapped key not supported for self managed blobs."));
         }
 
         let caller_uid = ThreadState::get_calling_uid();
@@ -744,7 +739,7 @@ impl KeystoreSecurityLevel {
         };
 
         // Import_wrapped_key requires the rebind permission for the new key.
-        check_key_permission(KeyPerm::Rebind, &key, &None).context("In import_wrapped_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context(ks_err!())?;
 
         let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
 
@@ -771,9 +766,7 @@ impl KeystoreSecurityLevel {
             .read()
             .unwrap()
             .unwrap_key_if_required(&wrapping_blob_metadata, &wrapping_key_blob)
-            .context(
-                "In import_wrapped_key. Failed to handle super encryption for wrapping key.",
-            )?;
+            .context(ks_err!("Failed to handle super encryption for wrapping key."))?;
 
         // km_dev.importWrappedKey does not return a certificate chain.
         // TODO Do we assume that all wrapped keys are symmetric?
@@ -820,10 +813,10 @@ impl KeystoreSecurityLevel {
                     Ok(creation_result)
                 },
             )
-            .context("In import_wrapped_key.")?;
+            .context(ks_err!())?;
 
         self.store_new_key(key, creation_result, user_id, None)
-            .context("In import_wrapped_key: Trying to store the new key.")
+            .context(ks_err!("Trying to store the new key."))
     }
 
     fn store_upgraded_keyblob(
@@ -834,7 +827,7 @@ impl KeystoreSecurityLevel {
     ) -> Result<()> {
         let (upgraded_blob_to_be_stored, new_blob_metadata) =
             SuperKeyManager::reencrypt_if_required(key_blob, upgraded_blob)
-                .context("In store_upgraded_keyblob: Failed to handle super encryption.")?;
+                .context(ks_err!("Failed to handle super encryption."))?;
 
         let mut new_blob_metadata = new_blob_metadata.unwrap_or_default();
         if let Some(uuid) = km_uuid {
@@ -850,7 +843,7 @@ impl KeystoreSecurityLevel {
                 Some(&new_blob_metadata),
             )
         })
-        .context("In store_upgraded_keyblob: Failed to insert upgraded blob into the database.")
+        .context(ks_err!("Failed to insert upgraded blob into the database."))
     }
 
     fn upgrade_keyblob_if_required_with<T, F>(
@@ -874,25 +867,22 @@ impl KeystoreSecurityLevel {
                 if key_id_guard.is_some() {
                     // Unwrap cannot panic, because the is_some was true.
                     let kid = key_id_guard.take().unwrap();
-                    Self::store_upgraded_keyblob(kid, km_uuid, key_blob, upgraded_blob).context(
-                        "In upgrade_keyblob_if_required_with: store_upgraded_keyblob failed",
-                    )
+                    Self::store_upgraded_keyblob(kid, km_uuid, key_blob, upgraded_blob)
+                        .context(ks_err!("store_upgraded_keyblob failed"))
                 } else {
                     Ok(())
                 }
             },
         )
-        .context("In KeystoreSecurityLevel::upgrade_keyblob_if_required_with.")?;
+        .context(ks_err!())?;
 
         // If no upgrade was needed, use the opportunity to reencrypt the blob if required
         // and if the a key_id_guard is held. Note: key_id_guard can only be Some if no
         // upgrade was performed above and if one was given in the first place.
         if key_blob.force_reencrypt() {
             if let Some(kid) = key_id_guard {
-                Self::store_upgraded_keyblob(kid, km_uuid, key_blob, key_blob).context(concat!(
-                    "In upgrade_keyblob_if_required_with: ",
-                    "store_upgraded_keyblob failed in forced reencrypt"
-                ))?;
+                Self::store_upgraded_keyblob(kid, km_uuid, key_blob, key_blob)
+                    .context(ks_err!("store_upgraded_keyblob failed in forced reencrypt"))?;
             }
         }
         Ok((v, upgraded_blob))
@@ -903,22 +893,18 @@ impl KeystoreSecurityLevel {
         storage_key: &KeyDescriptor,
     ) -> Result<EphemeralStorageKeyResponse> {
         if storage_key.domain != Domain::BLOB {
-            return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT)).context(concat!(
-                "In IKeystoreSecurityLevel convert_storage_key_to_ephemeral: ",
-                "Key must be of Domain::BLOB"
-            ));
+            return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
+                .context(ks_err!("Key must be of Domain::BLOB"));
         }
         let key_blob = storage_key
             .blob
             .as_ref()
             .ok_or(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-            .context(
-                "In IKeystoreSecurityLevel convert_storage_key_to_ephemeral: No key blob specified",
-            )?;
+            .context(ks_err!("No key blob specified"))?;
 
         // convert_storage_key_to_ephemeral requires the associated permission
         check_key_permission(KeyPerm::ConvertStorageKeyToEphemeral, storage_key, &None)
-            .context("In convert_storage_key_to_ephemeral: Check permission")?;
+            .context(ks_err!("Check permission"))?;
 
         let km_dev = &self.keymint;
         match {
@@ -942,7 +928,7 @@ impl KeystoreSecurityLevel {
                     );
                     map_km_error(km_dev.upgradeKey(key_blob, &[]))
                 }
-                .context("In convert_storage_key_to_ephemeral: Failed to upgrade key blob.")?;
+                .context(ks_err!("Failed to upgrade key blob."))?;
                 let ephemeral_key = {
                     let _wp = self.watch_millis(
                         "In convert_storage_key_to_ephemeral: calling convertStorageKeyToEphemeral (2)",
@@ -950,8 +936,7 @@ impl KeystoreSecurityLevel {
                     );
                     map_km_error(km_dev.convertStorageKeyToEphemeral(&upgraded_blob))
                 }
-                    .context(concat!(
-                        "In convert_storage_key_to_ephemeral: ",
+                    .context(ks_err!(
                         "Failed to retrieve ephemeral key (after upgrade)."
                     ))?;
                 Ok(EphemeralStorageKeyResponse {
@@ -959,31 +944,30 @@ impl KeystoreSecurityLevel {
                     upgradedBlob: Some(upgraded_blob),
                 })
             }
-            Err(e) => Err(e)
-                .context("In convert_storage_key_to_ephemeral: Failed to retrieve ephemeral key."),
+            Err(e) => Err(e).context(ks_err!("Failed to retrieve ephemeral key.")),
         }
     }
 
     fn delete_key(&self, key: &KeyDescriptor) -> Result<()> {
         if key.domain != Domain::BLOB {
             return Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-                .context("In IKeystoreSecurityLevel delete_key: Key must be of Domain::BLOB");
+                .context(ks_err!("delete_key: Key must be of Domain::BLOB"));
         }
 
         let key_blob = key
             .blob
             .as_ref()
             .ok_or(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-            .context("In IKeystoreSecurityLevel delete_key: No key blob specified")?;
+            .context(ks_err!("delete_key: No key blob specified"))?;
 
         check_key_permission(KeyPerm::Delete, key, &None)
-            .context("In IKeystoreSecurityLevel delete_key: Checking delete permissions")?;
+            .context(ks_err!("delete_key: Checking delete permissions"))?;
 
         let km_dev = &self.keymint;
         {
             let _wp =
                 self.watch_millis("In KeystoreSecuritylevel::delete_key: calling deleteKey", 500);
-            map_km_error(km_dev.deleteKey(key_blob)).context("In keymint device deleteKey")
+            map_km_error(km_dev.deleteKey(key_blob)).context(ks_err!("keymint device deleteKey"))
         }
     }
 }

@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use crate::audit_log::log_key_deleted;
+use crate::ks_err;
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::security_level::KeystoreSecurityLevel;
 use crate::utils::{
@@ -265,10 +266,12 @@ impl KeystoreService {
                 nspace: ThreadState::get_calling_uid() as u64 as i64,
                 ..Default::default()
             },
-            Domain::SELINUX => KeyDescriptor{domain, nspace: namespace, ..Default::default()},
-            _ => return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(
-                "In list_entries: List entries is only supported for Domain::APP and Domain::SELINUX."
-            ),
+            Domain::SELINUX => KeyDescriptor { domain, nspace: namespace, ..Default::default() },
+            _ => {
+                return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!(
+                    "List entries is only supported for Domain::APP and Domain::SELINUX."
+                ))
+            }
         };
 
         // First we check if the caller has the info permission for the selected domain/namespace.
@@ -281,12 +284,12 @@ impl KeystoreService {
                 e.root_cause().downcast_ref::<selinux::Error>()
             {
                 check_keystore_permission(KeystorePerm::List)
-                    .context("In list_entries: While checking keystore permission.")?;
+                    .context(ks_err!("While checking keystore permission."))?;
                 if namespace != -1 {
                     k.nspace = namespace;
                 }
             } else {
-                return Err(e).context("In list_entries: While checking key permission.")?;
+                return Err(e).context(ks_err!("While checking key permission."))?;
             }
         }
 
@@ -305,7 +308,7 @@ impl KeystoreService {
                 })
             })
         })
-        .context("In delete_key: Trying to unbind the key.")?;
+        .context(ks_err!("Trying to unbind the key."))?;
         Ok(())
     }
 
@@ -330,7 +333,7 @@ impl KeystoreService {
                 )
             })
         })
-        .context("In KeystoreService::grant.")
+        .context(ks_err!("KeystoreService::grant."))
     }
 
     fn ungrant(&self, key: &KeyDescriptor, grantee_uid: i32) -> Result<()> {
@@ -339,7 +342,7 @@ impl KeystoreService {
                 check_key_permission(KeyPerm::Grant, k, &None)
             })
         })
-        .context("In KeystoreService::ungrant.")
+        .context(ks_err!("KeystoreService::ungrant."))
     }
 }
 
