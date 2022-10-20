@@ -20,6 +20,7 @@
 
 use crate::error::Error as KsError;
 use crate::error::ResponseCode;
+use crate::ks_err;
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor, KeyPermission::KeyPermission,
 };
@@ -302,8 +303,8 @@ pub fn check_grant_permission(
     }
 
     for p in access_vec.into_iter() {
-        selinux::check_permission(caller_ctx, &target_context, p).context(format!(
-            "check_grant_permission: check_permission failed. \
+        selinux::check_permission(caller_ctx, &target_context, p).context(ks_err!(
+            "check_permission failed. \
             The caller may have tried to grant a permission that they don't possess. {:?}",
             p
         ))?
@@ -357,10 +358,10 @@ pub fn check_key_permission(
                 return Err(selinux::Error::perm())
                     .context("Trying to access key without ownership.");
             }
-            getcon().context("check_key_permission: getcon failed.")?
+            getcon().context(ks_err!("getcon failed."))?
         }
         Domain::SELINUX => lookup_keystore2_key_context(key.nspace)
-            .context("check_key_permission: Domain::SELINUX: Failed to lookup namespace.")?,
+            .context(ks_err!("Domain::SELINUX: Failed to lookup namespace."))?,
         Domain::GRANT => {
             match access_vector {
                 Some(_) => {
@@ -369,9 +370,9 @@ pub fn check_key_permission(
                 }
                 None => {
                     // If DOMAIN_GRANT was selected an access vector must be supplied.
-                    return Err(KsError::sys()).context(
+                    return Err(KsError::sys()).context(ks_err!(
                         "Cannot check permission for Domain::GRANT without access vector.",
-                    );
+                    ));
                 }
             }
         }
@@ -379,11 +380,12 @@ pub fn check_key_permission(
             // We should never be called with `Domain::KEY_ID. The database
             // lookup should have converted this into one of `Domain::APP`
             // or `Domain::SELINUX`.
-            return Err(KsError::sys()).context("Cannot check permission for Domain::KEY_ID.");
+            return Err(KsError::sys())
+                .context(ks_err!("Cannot check permission for Domain::KEY_ID.",));
         }
         Domain::BLOB => {
             let tctx = lookup_keystore2_key_context(key.nspace)
-                .context("Domain::BLOB: Failed to lookup namespace.")?;
+                .context(ks_err!("Domain::BLOB: Failed to lookup namespace."))?;
             // If DOMAIN_KEY_BLOB was specified, we check for the "manage_blob"
             // permission in addition to the requested permission.
             selinux::check_permission(caller_ctx, &tctx, KeyPerm::ManageBlob)?;
