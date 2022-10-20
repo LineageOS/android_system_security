@@ -24,7 +24,7 @@ package {
 aidl_interface {
     name: "android.security.attestationmanager",
     srcs: [ "android/security/attestationmanager/*.aidl", ],
-    imports: [ "android.hardware.security.keymint-V2" ],
+    imports: [ "android.hardware.security.keymint-V3" ],
     unstable: true,
     backend: {
         java: {
@@ -44,7 +44,7 @@ aidl_interface {
     name: "android.security.authorization",
     srcs: [ "android/security/authorization/*.aidl" ],
     imports: [
-        "android.hardware.security.keymint-V2",
+        "android.hardware.security.keymint-V3",
         "android.hardware.security.secureclock-V1",
     ],
     unstable: true,
@@ -83,7 +83,7 @@ aidl_interface {
     name: "android.security.compat",
     srcs: [ "android/security/compat/*.aidl" ],
     imports: [
-        "android.hardware.security.keymint-V2",
+        "android.hardware.security.keymint-V3",
         "android.hardware.security.secureclock-V1",
         "android.hardware.security.sharedsecret-V1",
     ],
@@ -106,7 +106,7 @@ aidl_interface {
     name: "android.security.remoteprovisioning",
     srcs: [ "android/security/remoteprovisioning/*.aidl" ],
     imports: [
-        "android.hardware.security.keymint-V2",
+        "android.hardware.security.keymint-V3",
     ],
     unstable: true,
     backend: {
