@@ -18,6 +18,7 @@
 use crate::database::{BlobMetaData, KeyEntryLoadBits, KeyType};
 use crate::database::{KeyIdGuard, KeystoreDB};
 use crate::error::{Error, ErrorCode};
+use crate::ks_err;
 use crate::permission::KeyPerm;
 use crate::remote_provisioning::RemProvState;
 use crate::utils::check_key_permission;
@@ -65,10 +66,7 @@ pub fn get_attest_key_info(
         // Do not select an RKP key if DEVICE_UNIQUE_ATTESTATION is present.
         None if challenge_present && !is_device_unique_attestation => rem_prov_state
             .get_remotely_provisioned_attestation_key_and_certs(key, caller_uid, params, db)
-            .context(concat!(
-                "In get_attest_key_and_cert_chain: ",
-                "Trying to get remotely provisioned attestation key."
-            ))
+            .context(ks_err!("Trying to get remotely provisioned attestation key."))
             .map(|result| {
                 result.map(|(key_id_guard, attestation_key, attestation_certs)| {
                     AttestationKeyInfo::RemoteProvisioned {
@@ -80,7 +78,7 @@ pub fn get_attest_key_info(
             }),
         None => Ok(None),
         Some(attest_key) => get_user_generated_attestation_key(attest_key, caller_uid, db)
-            .context("In get_attest_key_and_cert_chain: Trying to load attest key")
+            .context(ks_err!("Trying to load attest key"))
             .map(Some),
     }
 }
@@ -92,11 +90,10 @@ fn get_user_generated_attestation_key(
 ) -> Result<AttestationKeyInfo> {
     let (key_id_guard, blob, cert, blob_metadata) =
         load_attest_key_blob_and_cert(key, caller_uid, db)
-            .context("In get_user_generated_attestation_key: Failed to load blob and cert")?;
+            .context(ks_err!("Failed to load blob and cert"))?;
 
-    let issuer_subject: Vec<u8> = parse_subject_from_certificate(&cert).context(
-        "In get_user_generated_attestation_key: Failed to parse subject from certificate.",
-    )?;
+    let issuer_subject: Vec<u8> = parse_subject_from_certificate(&cert)
+        .context(ks_err!("Failed to parse subject from certificate"))?;
 
     Ok(AttestationKeyInfo::UserGenerated { key_id_guard, blob, issuer_subject, blob_metadata })
 }
@@ -107,9 +104,8 @@ fn load_attest_key_blob_and_cert(
     db: &mut KeystoreDB,
 ) -> Result<(KeyIdGuard, Vec<u8>, Vec<u8>, BlobMetaData)> {
     match key.domain {
-        Domain::BLOB => Err(Error::Km(ErrorCode::INVALID_ARGUMENT)).context(
-            "In load_attest_key_blob_and_cert: Domain::BLOB attestation keys not supported",
-        ),
+        Domain::BLOB => Err(Error::Km(ErrorCode::INVALID_ARGUMENT))
+            .context(ks_err!("Domain::BLOB attestation keys not supported")),
         _ => {
             let (key_id_guard, mut key_entry) = db
                 .load_key_entry(
@@ -119,17 +115,16 @@ fn load_attest_key_blob_and_cert(
                     caller_uid,
                     |k, av| check_key_permission(KeyPerm::Use, k, &av),
                 )
-                .context("In load_attest_key_blob_and_cert: Failed to load key.")?;
+                .context(ks_err!("Failed to load key."))?;
 
-            let (blob, blob_metadata) =
-                key_entry.take_key_blob_info().ok_or_else(Error::sys).context(concat!(
-                    "In load_attest_key_blob_and_cert: Successfully loaded key entry,",
-                    " but KM blob was missing."
-                ))?;
-            let cert = key_entry.take_cert().ok_or_else(Error::sys).context(concat!(
-                "In load_attest_key_blob_and_cert: Successfully loaded key entry,",
-                " but cert was missing."
-            ))?;
+            let (blob, blob_metadata) = key_entry
+                .take_key_blob_info()
+                .ok_or_else(Error::sys)
+                .context(ks_err!("Successfully loaded key entry, but KM blob was missing"))?;
+            let cert = key_entry
+                .take_cert()
+                .ok_or_else(Error::sys)
+                .context(ks_err!("Successfully loaded key entry, but cert was missing"))?;
             Ok((key_id_guard, blob, cert, blob_metadata))
         }
     }
