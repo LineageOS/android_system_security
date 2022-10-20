@@ -741,6 +741,14 @@ mod tests {
         ) -> binder::Result<Vec<u8>> {
             Err(binder::StatusCode::INVALID_OPERATION.into())
         }
+
+        fn generateCertificateRequestV2(
+            &self,
+            _keys_to_sign: &[MacedPublicKey],
+            _challenge: &[u8],
+        ) -> binder::Result<Vec<u8>> {
+            Err(binder::StatusCode::INVALID_OPERATION.into())
+        }
     }
 
     // Hard coded cert that can be parsed -- the content doesn't matter for testing, only that it's valid.
