@@ -14,6 +14,7 @@
 
 //! Offer keys based on the "boot level" for superencryption.
 
+use crate::ks_err;
 use crate::{
     database::{KeyType, KeystoreDB},
     key_parameter::KeyParameterValue,
@@ -47,9 +48,8 @@ enum DenyLaterStrategy {
 const PROPERTY_NAME: &str = "ro.keystore.boot_level_key.strategy";
 
 fn lookup_level_zero_km_and_strategy() -> Result<Option<(SecurityLevel, DenyLaterStrategy)>> {
-    let property_val = rustutils::system_properties::read(PROPERTY_NAME).with_context(|| {
-        format!("In lookup_level_zero_km_and_strategy: property read failed: {}", PROPERTY_NAME)
-    })?;
+    let property_val = rustutils::system_properties::read(PROPERTY_NAME)
+        .with_context(|| ks_err!("property read failed: {}", PROPERTY_NAME))?;
     // TODO: use feature(let_else) when that's stabilized.
     let property_val = if let Some(p) = property_val {
         p
@@ -86,18 +86,17 @@ fn lookup_level_zero_km_and_strategy() -> Result<Option<(SecurityLevel, DenyLate
 fn get_level_zero_key_km_and_strategy() -> Result<(KeyMintDevice, DenyLaterStrategy)> {
     if let Some((level, strategy)) = lookup_level_zero_km_and_strategy()? {
         return Ok((
-            KeyMintDevice::get(level)
-                .context("In get_level_zero_key_km_and_strategy: Get KM instance failed.")?,
+            KeyMintDevice::get(level).context(ks_err!("Get KM instance failed."))?,
             strategy,
         ));
     }
     let tee = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
-        .context("In get_level_zero_key_km_and_strategy: Get TEE instance failed.")?;
+        .context(ks_err!("Get TEE instance failed."))?;
     if tee.version() >= KeyMintDevice::KEY_MASTER_V4_1 {
         Ok((tee, DenyLaterStrategy::EarlyBootOnly))
     } else {
         match KeyMintDevice::get_or_none(SecurityLevel::STRONGBOX)
-            .context("In get_level_zero_key_km_and_strategy: Get Strongbox instance failed.")?
+            .context(ks_err!("Get Strongbox instance failed."))?
         {
             Some(strongbox) if strongbox.version() >= KeyMintDevice::KEY_MASTER_V4_1 => {
                 Ok((strongbox, DenyLaterStrategy::EarlyBootOnly))
@@ -112,7 +111,7 @@ fn get_level_zero_key_km_and_strategy() -> Result<(KeyMintDevice, DenyLaterStrat
 /// Mutex on its internal state.
 pub fn get_level_zero_key(db: &mut KeystoreDB) -> Result<ZVec> {
     let (km_dev, deny_later_strategy) = get_level_zero_key_km_and_strategy()
-        .context("In get_level_zero_key: get preferred KM instance failed")?;
+        .context(ks_err!("get preferred KM instance failed"))?;
     log::info!(
         "In get_level_zero_key: security_level={:?}, deny_later_strategy={:?}",
         km_dev.security_level(),
@@ -156,7 +155,7 @@ pub fn get_level_zero_key(db: &mut KeystoreDB) -> Result<ZVec> {
                 true
             })
         })
-        .context("In get_level_zero_key: lookup_or_generate_key failed")?;
+        .context(ks_err!("lookup_or_generate_key failed"))?;
 
     let params = [
         KeyParameterValue::MacLength(256).into(),
@@ -172,11 +171,11 @@ pub fn get_level_zero_key(db: &mut KeystoreDB) -> Result<ZVec> {
             None,
             b"Create boot level key",
         )
-        .context("In get_level_zero_key: use_key_in_one_step failed")?;
+        .context(ks_err!("use_key_in_one_step failed"))?;
     // TODO: this is rather unsatisfactory, we need a better way to handle
     // sensitive binder returns.
-    let level_zero_key = ZVec::try_from(level_zero_key)
-        .context("In get_level_zero_key: conversion to ZVec failed")?;
+    let level_zero_key =
+        ZVec::try_from(level_zero_key).context(ks_err!("conversion to ZVec failed"))?;
     Ok(level_zero_key)
 }
 
@@ -228,7 +227,7 @@ impl BootLevelKeyCache {
             // so this must unwrap.
             let highest_key = self.cache.back().unwrap();
             let next_key = hkdf_expand(Self::HKDF_KEY_SIZE, highest_key, Self::HKDF_ADVANCE)
-                .context("In BootLevelKeyCache::get_hkdf_key: Advancing key one step")?;
+                .context(ks_err!("Advancing key one step"))?;
             self.cache.push_back(next_key);
         }
 
@@ -241,10 +240,7 @@ impl BootLevelKeyCache {
     pub fn advance_boot_level(&mut self, new_boot_level: usize) -> Result<()> {
         if !self.level_accessible(new_boot_level) {
             log::error!(
-                concat!(
-                    "In BootLevelKeyCache::advance_boot_level: ",
-                    "Failed to advance boot level to {}, current is {}, cache size {}"
-                ),
+                "Failed to advance boot level to {}, current is {}, cache size {}",
                 new_boot_level,
                 self.current,
                 self.cache.len()
@@ -254,8 +250,7 @@ impl BootLevelKeyCache {
 
         // We `get` the new boot level for the side effect of advancing the cache to a point
         // where the new boot level is present.
-        self.get_hkdf_key(new_boot_level)
-            .context("In BootLevelKeyCache::advance_boot_level: Advancing cache")?;
+        self.get_hkdf_key(new_boot_level).context(ks_err!("Advancing cache"))?;
 
         // Then we split the queue at the index of the new boot level and discard the front,
         // keeping only the keys with the current boot level or higher.
@@ -281,16 +276,16 @@ impl BootLevelKeyCache {
         info: &[u8],
     ) -> Result<Option<ZVec>> {
         self.get_hkdf_key(boot_level)
-            .context("In BootLevelKeyCache::expand_key: Looking up HKDF key")?
+            .context(ks_err!("Looking up HKDF key"))?
             .map(|k| hkdf_expand(out_len, k, info))
             .transpose()
-            .context("In BootLevelKeyCache::expand_key: Calling hkdf_expand")
+            .context(ks_err!("Calling hkdf_expand"))
     }
 
     /// Return the AES-256-GCM key for the current boot level.
     pub fn aes_key(&mut self, boot_level: usize) -> Result<Option<ZVec>> {
         self.expand_key(boot_level, AES_256_KEY_LENGTH, BootLevelKeyCache::HKDF_AES)
-            .context("In BootLevelKeyCache::aes_key: expand_key failed")
+            .context(ks_err!("expand_key failed"))
     }
 }
 
