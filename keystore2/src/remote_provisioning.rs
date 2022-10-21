@@ -48,6 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::database::{CertificateChain, KeyIdGuard, KeystoreDB, Uuid};
 use crate::error::{self, map_or_log_err, map_rem_prov_error, Error};
 use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB};
+use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
 use crate::permission::KeystorePerm;
 use crate::utils::{check_keystore_permission, watchdog as wd};
@@ -174,10 +175,7 @@ impl RemProvState {
                             issuerSubjectName: parse_subject_from_certificate(
                                 &cert_chain.batch_cert,
                             )
-                            .context(concat!(
-                                "In get_remote_provisioning_key_and_certs: Failed to ",
-                                "parse subject."
-                            ))?,
+                            .context(ks_err!("Failed to parse subject."))?,
                         },
                         Certificate { encodedCertificate: cert_chain.cert_chain },
                     ))),
@@ -202,9 +200,9 @@ impl RemoteProvisioningService {
         if let Some(dev) = self.device_by_sec_level.get(sec_level) {
             Ok(dev.as_ref())
         } else {
-            Err(error::Error::sys()).context(concat!(
-                "In get_dev_by_sec_level: Remote instance for requested security level",
-                " not found."
+            Err(error::Error::sys()).context(ks_err!(
+                "Remote instance for requested security level \
+                not found.",
             ))
         }
     }
@@ -213,11 +211,11 @@ impl RemoteProvisioningService {
     pub fn new_native_binder() -> Result<Strong<dyn IRemoteProvisioning>> {
         let mut result: Self = Default::default();
         let dev = get_remotely_provisioned_component(&SecurityLevel::TRUSTED_ENVIRONMENT)
-            .context("In new_native_binder: Failed to get TEE Remote Provisioner instance.")?;
+            .context(ks_err!("Failed to get TEE Remote Provisioner instance."))?;
         result.curve_by_sec_level.insert(
             SecurityLevel::TRUSTED_ENVIRONMENT,
             dev.getHardwareInfo()
-                .context("In new_native_binder: Failed to get hardware info for the TEE.")?
+                .context(ks_err!("Failed to get hardware info for the TEE."))?
                 .supportedEekCurve,
         );
         result.device_by_sec_level.insert(SecurityLevel::TRUSTED_ENVIRONMENT, dev);
@@ -225,7 +223,7 @@ impl RemoteProvisioningService {
             result.curve_by_sec_level.insert(
                 SecurityLevel::STRONGBOX,
                 dev.getHardwareInfo()
-                    .context("In new_native_binder: Failed to get hardware info for StrongBox.")?
+                    .context(ks_err!("Failed to get hardware info for StrongBox."))?
                     .supportedEekCurve,
             );
             result.device_by_sec_level.insert(SecurityLevel::STRONGBOX, dev);
@@ -234,23 +232,24 @@ impl RemoteProvisioningService {
     }
 
     fn extract_payload_from_cose_mac(data: &[u8]) -> Result<Value> {
-        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data).context(
-            "In extract_payload_from_cose_mac: COSE_Mac0 returned from IRPC cannot be parsed",
-        )?;
+        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data)
+            .context(ks_err!("COSE_Mac0 returned from IRPC cannot be parsed"))?;
         if cose_mac0.len() != COSE_MAC0_LEN {
-            return Err(error::Error::sys()).context(format!(
-                "In extract_payload_from_cose_mac: COSE_Mac0 has improper length. \
+            return Err(error::Error::sys()).context(ks_err!(
+                "COSE_Mac0 has improper length. \
                     Expected: {}, Actual: {}",
                 COSE_MAC0_LEN,
                 cose_mac0.len(),
             ));
         }
         match &cose_mac0[COSE_MAC0_PAYLOAD] {
-            Value::Bytes(key) => Ok(serde_cbor::from_slice(key)
-                .context("In extract_payload_from_cose_mac: COSE_Mac0 payload is malformed.")?),
-            _ => Err(error::Error::sys()).context(
-                "In extract_payload_from_cose_mac: COSE_Mac0 payload is the wrong type.",
-            )?,
+            Value::Bytes(key) => {
+                Ok(serde_cbor::from_slice(key)
+                    .context(ks_err!("COSE_Mac0 payload is malformed."))?)
+            }
+            _ => {
+                Err(error::Error::sys()).context(ks_err!("COSE_Mac0 payload is the wrong type."))?
+            }
         }
     }
 
@@ -291,17 +290,17 @@ impl RemoteProvisioningService {
             device_info,
             protected_data,
         ))
-        .context("In generate_csr: Failed to generate csr")?;
+        .context(ks_err!("Failed to generate csr"))?;
         let mut mac_and_keys: Vec<Value> = vec![Value::from(mac)];
         for maced_public_key in keys_to_sign {
             mac_and_keys.push(
                 Self::extract_payload_from_cose_mac(&maced_public_key.macedKey)
-                    .context("In generate_csr: Failed to get the payload from the COSE_Mac0")?,
+                    .context(ks_err!("Failed to get the payload from the COSE_Mac0"))?,
             )
         }
         let cbor_array: Value = Value::Array(mac_and_keys);
         serde_cbor::to_vec(&cbor_array)
-            .context("In generate_csr: Failed to serialize the mac and keys array")
+            .context(ks_err!("Failed to serialize the mac and keys array"))
     }
 
     /// Provisions a certificate chain for a key whose CSR was included in generate_csr. The
@@ -329,28 +328,27 @@ impl RemoteProvisioningService {
     }
 
     fn parse_cose_mac0_for_coords(data: &[u8]) -> Result<Vec<u8>> {
-        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data).context(
-            "In parse_cose_mac0_for_coords: COSE_Mac0 returned from IRPC cannot be parsed",
-        )?;
+        let cose_mac0: Vec<Value> = serde_cbor::from_slice(data)
+            .context(ks_err!("COSE_Mac0 returned from IRPC cannot be parsed"))?;
         if cose_mac0.len() != COSE_MAC0_LEN {
-            return Err(error::Error::sys()).context(format!(
-                "In parse_cose_mac0_for_coords: COSE_Mac0 has improper length. \
+            return Err(error::Error::sys()).context(ks_err!(
+                "COSE_Mac0 has improper length. \
                     Expected: {}, Actual: {}",
                 COSE_MAC0_LEN,
                 cose_mac0.len(),
             ));
         }
         let cose_key: BTreeMap<Value, Value> = match &cose_mac0[COSE_MAC0_PAYLOAD] {
-            Value::Bytes(key) => serde_cbor::from_slice(key)
-                .context("In parse_cose_mac0_for_coords: COSE_Key is malformed.")?,
-            _ => Err(error::Error::sys())
-                .context("In parse_cose_mac0_for_coords: COSE_Mac0 payload is the wrong type.")?,
+            Value::Bytes(key) => {
+                serde_cbor::from_slice(key).context(ks_err!("COSE_Key is malformed."))?
+            }
+            _ => {
+                Err(error::Error::sys()).context(ks_err!("COSE_Mac0 payload is the wrong type."))?
+            }
         };
         if !cose_key.contains_key(&COSE_KEY_XCOORD) || !cose_key.contains_key(&COSE_KEY_YCOORD) {
-            return Err(error::Error::sys()).context(
-                "In parse_cose_mac0_for_coords: \
-                COSE_Key returned from IRPC is lacking required fields",
-            );
+            return Err(error::Error::sys())
+                .context(ks_err!("COSE_Key returned from IRPC is lacking required fields"));
         }
         let mut raw_key: Vec<u8> = vec![0; 64];
         match &cose_key[&COSE_KEY_XCOORD] {
@@ -358,15 +356,15 @@ impl RemoteProvisioningService {
                 raw_key[0..32].clone_from_slice(x_coord)
             }
             Value::Bytes(x_coord) => {
-                return Err(error::Error::sys()).context(format!(
-                "In parse_cose_mac0_for_coords: COSE_Key X-coordinate is not the right length. \
+                return Err(error::Error::sys()).context(ks_err!(
+                    "COSE_Key X-coordinate is not the right length. \
                 Expected: 32; Actual: {}",
                     x_coord.len()
-                ))
+                ));
             }
             _ => {
                 return Err(error::Error::sys())
-                    .context("In parse_cose_mac0_for_coords: COSE_Key X-coordinate is not a bstr")
+                    .context(ks_err!("COSE_Key X-coordinate is not a bstr"));
             }
         }
         match &cose_key[&COSE_KEY_YCOORD] {
@@ -374,15 +372,15 @@ impl RemoteProvisioningService {
                 raw_key[32..64].clone_from_slice(y_coord)
             }
             Value::Bytes(y_coord) => {
-                return Err(error::Error::sys()).context(format!(
-                "In parse_cose_mac0_for_coords: COSE_Key Y-coordinate is not the right length. \
+                return Err(error::Error::sys()).context(ks_err!(
+                    "COSE_Key Y-coordinate is not the right length. \
                 Expected: 32; Actual: {}",
                     y_coord.len()
-                ))
+                ));
             }
             _ => {
                 return Err(error::Error::sys())
-                    .context("In parse_cose_mac0_for_coords: COSE_Key Y-coordinate is not a bstr")
+                    .context(ks_err!("COSE_Key Y-coordinate is not a bstr"));
             }
         }
         Ok(raw_key)
@@ -399,18 +397,17 @@ impl RemoteProvisioningService {
         sec_level: SecurityLevel,
     ) -> Result<()> {
         let (_, _, uuid) = get_keymint_device(&sec_level)?;
-        let dev = self.get_dev_by_sec_level(&sec_level).context(format!(
-            "In generate_key_pair: Failed to get device for security level {:?}",
-            sec_level
-        ))?;
+        let dev = self
+            .get_dev_by_sec_level(&sec_level)
+            .context(ks_err!("Failed to get device for security level {:?}", sec_level))?;
         let mut maced_key = MacedPublicKey { macedKey: Vec::new() };
         let priv_key =
             map_rem_prov_error(dev.generateEcdsaP256KeyPair(is_test_mode, &mut maced_key))
-                .context("In generate_key_pair: Failed to generated ECDSA keypair.")?;
+                .context(ks_err!("Failed to generated ECDSA keypair."))?;
         let raw_key = Self::parse_cose_mac0_for_coords(&maced_key.macedKey)
-            .context("In generate_key_pair: Failed to parse raw key")?;
+            .context(ks_err!("Failed to parse raw key"))?;
         db.create_attestation_key_entry(&maced_key.macedKey, &raw_key, &priv_key, &uuid)
-            .context("In generate_key_pair: Failed to insert attestation key entry")
+            .context(ks_err!("Failed to insert attestation key entry"))
     }
 
     /// Checks the security level of each available IRemotelyProvisionedComponent hal and returns
@@ -472,15 +469,15 @@ fn get_rem_prov_attest_key(
                     || get_rem_prov_attest_key_helper(domain, caller_uid, db, km_uuid),
                     |v| Ok(Some(v)),
                 )
-                .context(concat!(
-                    "In get_rem_prov_attest_key: Failed to get a key after",
-                    "attempting to assign one."
+                .context(ks_err!(
+                    "Failed to get a key after \
+                    attempting to assign one.",
                 ))?
                 .map_or_else(
                     || {
-                        Err(Error::sys()).context(concat!(
-                            "In get_rem_prov_attest_key: Attempted to assign a ",
-                            "key and failed silently. Something is very wrong."
+                        Err(Error::sys()).context(ks_err!(
+                            "Attempted to assign a \
+                            key and failed silently. Something is very wrong.",
                         ))
                     },
                     |(guard, cert_chain)| Ok(Some((guard, cert_chain))),
@@ -499,7 +496,7 @@ fn get_rem_prov_attest_key_helper(
 ) -> Result<Option<(KeyIdGuard, CertificateChain)>> {
     let guard_and_chain = db
         .retrieve_attestation_key_and_cert_chain(domain, caller_uid as i64, km_uuid)
-        .context("In get_rem_prov_attest_key_helper: Failed to retrieve a key + cert chain")?;
+        .context(ks_err!("Failed to retrieve a key + cert chain"))?;
     match guard_and_chain {
         Some((guard, cert_chain)) => Ok(Some((guard, cert_chain))),
         // Either this app needs to be assigned a key, or the pool is empty. An error will
@@ -507,7 +504,7 @@ fn get_rem_prov_attest_key_helper(
         // should be nudged to provision more keys so keystore can retry.
         None => {
             db.assign_attestation_key(domain, caller_uid as i64, km_uuid)
-                .context("In get_rem_prov_attest_key_helper: Failed to assign a key")?;
+                .context(ks_err!("Failed to assign a key"))?;
             Ok(None)
         }
     }
@@ -625,7 +622,7 @@ impl RemotelyProvisionedKeyPoolService {
 
         let guard_and_cert_chain =
             get_rem_prov_attest_key(Domain::APP, caller_uid as u32, db, &km_uuid)
-                .context("In get_attestation_key")?;
+                .context(ks_err!())?;
         match guard_and_cert_chain {
             Some((_, chain)) => Ok(RemotelyProvisionedKey {
                 keyBlob: chain.private_key.to_vec(),
@@ -634,7 +631,7 @@ impl RemotelyProvisionedKeyPoolService {
             // It should be impossible to get `None`, but handle it just in case as a
             // precaution against future behavioral changes in `get_rem_prov_attest_key`.
             None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS))
-                .context("In get_attestation_key: No available attestation keys"),
+                .context(ks_err!("No available attestation keys")),
         }
     }
 
@@ -644,7 +641,7 @@ impl RemotelyProvisionedKeyPoolService {
         let mut result: Self = Default::default();
 
         let dev = get_remotely_provisioned_component(&SecurityLevel::TRUSTED_ENVIRONMENT)
-            .context("In new_native_binder: Failed to get TEE Remote Provisioner instance.")?;
+            .context(ks_err!("Failed to get TEE Remote Provisioner instance."))?;
         if let Some(id) = dev.getHardwareInfo()?.uniqueId {
             result.unique_id_to_sec_level.insert(id, SecurityLevel::TRUSTED_ENVIRONMENT);
         }
@@ -738,6 +735,14 @@ mod tests {
             _challenge: &[u8],
             _device_info: &mut DeviceInfo,
             _protected_data: &mut ProtectedData,
+        ) -> binder::Result<Vec<u8>> {
+            Err(binder::StatusCode::INVALID_OPERATION.into())
+        }
+
+        fn generateCertificateRequestV2(
+            &self,
+            _keys_to_sign: &[MacedPublicKey],
+            _challenge: &[u8],
         ) -> binder::Result<Vec<u8>> {
             Err(binder::StatusCode::INVALID_OPERATION.into())
         }
