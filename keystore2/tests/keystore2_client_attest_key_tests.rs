@@ -424,7 +424,7 @@ fn keystore2_attest_rsa_key_with_non_attest_key_fails_incompat_purpose_error() {
 }
 
 /// Generate a symmetric key. Try to use this symmetric key as attestation key while generating RSA
-/// key. Test should fail to generate a key with response code `SYSTEM_ERROR`.
+/// key. Test should fail to generate a key with response code `INVALID_ARGUMENT`.
 #[test]
 fn keystore2_attest_rsa_key_with_symmetric_key_fails_sys_error() {
     skip_test_if_no_app_attest_key_feature!();
@@ -466,7 +466,7 @@ fn keystore2_attest_rsa_key_with_symmetric_key_fails_sys_error() {
         Some(&sym_key_metadata.key),
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Rc(ResponseCode::SYSTEM_ERROR), result.unwrap_err());
+    assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
 }
 
 /// Generate RSA attestation key and try to use it as attestation key while generating symmetric
