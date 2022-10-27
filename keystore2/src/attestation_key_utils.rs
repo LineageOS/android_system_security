@@ -26,7 +26,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     AttestationKey::AttestationKey, Certificate::Certificate, KeyParameter::KeyParameter, Tag::Tag,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    Domain::Domain, KeyDescriptor::KeyDescriptor,
+    Domain::Domain, KeyDescriptor::KeyDescriptor, ResponseCode::ResponseCode,
 };
 use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
@@ -119,11 +119,11 @@ fn load_attest_key_blob_and_cert(
 
             let (blob, blob_metadata) = key_entry
                 .take_key_blob_info()
-                .ok_or_else(Error::sys)
+                .ok_or(Error::Rc(ResponseCode::INVALID_ARGUMENT))
                 .context(ks_err!("Successfully loaded key entry, but KM blob was missing"))?;
             let cert = key_entry
                 .take_cert()
-                .ok_or_else(Error::sys)
+                .ok_or(Error::Rc(ResponseCode::INVALID_ARGUMENT))
                 .context(ks_err!("Successfully loaded key entry, but cert was missing"))?;
             Ok((key_id_guard, blob, cert, blob_metadata))
         }
