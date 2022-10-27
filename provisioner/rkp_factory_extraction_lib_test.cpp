@@ -72,6 +72,10 @@ class MockIRemotelyProvisionedComponent : public IRemotelyProvisionedComponentDe
                  const std::vector<uint8_t>& in_challenge, DeviceInfo* out_deviceInfo,
                  ProtectedData* out_protectedData, std::vector<uint8_t>* _aidl_return),
                 (override));
+    MOCK_METHOD(ScopedAStatus, generateCertificateRequestV2,
+                (const std::vector<MacedPublicKey>& in_keysToSign,
+                 const std::vector<uint8_t>& in_challenge, std::vector<uint8_t>* _aidl_return),
+                (override));
     MOCK_METHOD(ScopedAStatus, getInterfaceVersion, (int32_t * _aidl_return), (override));
     MOCK_METHOD(ScopedAStatus, getInterfaceHash, (std::string * _aidl_return), (override));
 };
@@ -220,4 +224,36 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
     EXPECT_THAT(actualMacedKeys->get(1)->asMap(), Pointee(Property(&Map::size, Eq(0))));
     EXPECT_THAT(actualMacedKeys->get(2)->asNull(), NotNull());
     EXPECT_THAT(actualMacedKeys->get(3)->asBstr(), Pointee(Eq(Bstr(kFakeMac))));
+}
+
+TEST(LibRkpFactoryExtractionTests, GetCsrWithV3Hal) {
+    const std::vector<uint8_t> kCsr = Array()
+                                          .add(3 /* version */)
+                                          .add(Map() /* UdsCerts */)
+                                          .add(Array() /* DiceCertChain */)
+                                          .add(Array() /* SignedData */)
+                                          .encode();
+    std::vector<uint8_t> challenge;
+
+    // Set up mock, then call getCsr
+    auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
+    EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
+        hwInfo->versionNumber = 3;
+        return ScopedAStatus::ok();
+    });
+    EXPECT_CALL(*mockRpc,
+                generateCertificateRequestV2(IsEmpty(),   // keysToSign
+                                             _,           // challenge
+                                             NotNull()))  // _aidl_return
+        .WillOnce(DoAll(SaveArg<1>(&challenge), SetArgPointee<2>(kCsr),
+                        Return(ByMove(ScopedAStatus::ok()))));
+
+    auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get());
+    ASSERT_THAT(csr, NotNull()) << csrErrMsg;
+    ASSERT_THAT(csr, Pointee(Property(&Array::size, Eq(4))));
+
+    EXPECT_THAT(csr->get(0 /* version */), Pointee(Eq(Uint(3))));
+    EXPECT_THAT(csr->get(1)->asMap(), NotNull());
+    EXPECT_THAT(csr->get(2)->asArray(), NotNull());
+    EXPECT_THAT(csr->get(3)->asArray(), NotNull());
 }
