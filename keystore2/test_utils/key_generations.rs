@@ -71,6 +71,9 @@ pub enum Error {
     /// Exception
     #[error("Binder exception {0:?}")]
     Binder(ExceptionCode),
+    /// This is returned if the C implementation of extractSubjectFromCertificate failed.
+    #[error("Failed to validate certificate chain.")]
+    ValidateCertChainFailed,
 }
 
 /// Keystore2 error mapping.
@@ -336,4 +339,129 @@ pub fn generate_hmac_key(
     assert!(key_metadata.certificateChain.is_none());
 
     Ok(key_metadata)
+}
+
+/// Generate RSA or EC attestation keys using below parameters -
+///     Purpose: ATTEST_KEY
+///     Digest: Digest::SHA_2_256
+///     Padding: PaddingMode::RSA_PKCS1_1_5_SIGN
+///     RSA-Key-Size: 2048
+///     EC-Curve: EcCurve::P_256
+pub fn generate_attestation_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    algorithm: Algorithm,
+    att_challenge: &[u8],
+    att_app_id: &[u8],
+) -> binder::Result<KeyMetadata> {
+    assert!(algorithm == Algorithm::RSA || algorithm == Algorithm::EC);
+
+    if algorithm == Algorithm::RSA {
+        let alias = "ks_rsa_attest_test_key";
+        let metadata = generate_rsa_key(
+            sec_level,
+            Domain::APP,
+            -1,
+            Some(alias.to_string()),
+            &KeyParams {
+                key_size: 2048,
+                purpose: vec![KeyPurpose::ATTEST_KEY],
+                padding: Some(PaddingMode::RSA_PKCS1_1_5_SIGN),
+                digest: Some(Digest::SHA_2_256),
+                mgf_digest: None,
+                block_mode: None,
+                att_challenge: Some(att_challenge.to_vec()),
+                att_app_id: Some(att_app_id.to_vec()),
+            },
+            None,
+        )
+        .unwrap();
+        Ok(metadata)
+    } else {
+        let metadata = generate_ec_attestation_key(
+            sec_level,
+            att_challenge,
+            att_app_id,
+            Digest::SHA_2_256,
+            EcCurve::P_256,
+        )
+        .unwrap();
+
+        Ok(metadata)
+    }
+}
+
+/// Generate EC attestation key with the given
+///    curve, attestation-challenge and attestation-app-id.
+pub fn generate_ec_attestation_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    att_challenge: &[u8],
+    att_app_id: &[u8],
+    digest: Digest,
+    ec_curve: EcCurve,
+) -> binder::Result<KeyMetadata> {
+    let alias = "ks_attest_ec_test_key";
+    let gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::ATTEST_KEY)
+        .ec_curve(ec_curve)
+        .digest(digest)
+        .attestation_challenge(att_challenge.to_vec())
+        .attestation_app_id(att_app_id.to_vec());
+
+    let attestation_key_metadata = sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    // Should have public certificate.
+    assert!(attestation_key_metadata.certificate.is_some());
+    // Should have an attestation record.
+    assert!(attestation_key_metadata.certificateChain.is_some());
+
+    Ok(attestation_key_metadata)
+}
+
+/// Generate EC-P-256 key and attest it with given attestation key.
+pub fn generate_ec_256_attested_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias: Option<String>,
+    att_challenge: &[u8],
+    att_app_id: &[u8],
+    attest_key: &KeyDescriptor,
+) -> binder::Result<KeyMetadata> {
+    let ec_gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(att_challenge.to_vec())
+        .attestation_app_id(att_app_id.to_vec());
+
+    let ec_key_metadata = sec_level
+        .generateKey(
+            &KeyDescriptor { domain: Domain::APP, nspace: -1, alias, blob: None },
+            Some(attest_key),
+            &ec_gen_params,
+            0,
+            b"entropy",
+        )
+        .unwrap();
+
+    // Should have public certificate.
+    assert!(ec_key_metadata.certificate.is_some());
+    // Shouldn't have an attestation record.
+    assert!(ec_key_metadata.certificateChain.is_none());
+
+    Ok(ec_key_metadata)
 }
