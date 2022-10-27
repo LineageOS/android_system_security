@@ -15,6 +15,8 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use binder::wait_for_interface;
+
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     BlockMode::BlockMode, Digest::Digest, ErrorCode::ErrorCode,
     KeyParameterValue::KeyParameterValue, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
@@ -26,6 +28,8 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     IKeystoreService::IKeystoreService, KeyDescriptor::KeyDescriptor, KeyParameters::KeyParameters,
     ResponseCode::ResponseCode,
 };
+
+use packagemanager_aidl::aidl::android::content::pm::IPackageManagerNative::IPackageManagerNative;
 
 use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error, run_as,
@@ -50,6 +54,26 @@ pub struct ForcedOp(pub bool);
 
 /// Sample plain text input for encrypt operation.
 pub const SAMPLE_PLAIN_TEXT: &[u8] = b"my message 11111";
+
+pub const PACKAGE_MANAGER_NATIVE_SERVICE: &str = "package_native";
+pub const APP_ATTEST_KEY_FEATURE: &str = "android.hardware.keystore.app_attest_key";
+
+/// Determines whether app_attest_key_feature is supported or not.
+pub fn app_attest_key_feature_exists() -> bool {
+    let pm = wait_for_interface::<dyn IPackageManagerNative>(PACKAGE_MANAGER_NATIVE_SERVICE)
+        .expect("Failed to get package manager native service.");
+
+    pm.hasSystemFeature(APP_ATTEST_KEY_FEATURE, 0).expect("hasSystemFeature failed.")
+}
+
+#[macro_export]
+macro_rules! skip_test_if_no_app_attest_key_feature {
+    () => {
+        if !app_attest_key_feature_exists() {
+            return;
+        }
+    };
+}
 
 pub fn has_trusty_keymint() -> bool {
     binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
