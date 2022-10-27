@@ -46,10 +46,13 @@ using aidl::android::hardware::security::keymint::remote_prov::generateEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::getProdEekChain;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
 using aidl::android::hardware::security::keymint::remote_prov::parseAndValidateFactoryDeviceInfo;
+using aidl::android::hardware::security::keymint::remote_prov::verifyFactoryCsr;
 using aidl::android::hardware::security::keymint::remote_prov::verifyFactoryProtectedData;
 
 using namespace cppbor;
 using namespace cppcose;
+
+constexpr size_t kVersionWithoutSuperencryption = 3;
 
 std::string toBase64(const std::vector<uint8_t>& buffer) {
     size_t base64Length;
@@ -97,11 +100,11 @@ std::vector<uint8_t> generateChallenge() {
     return challenge;
 }
 
-CborResult<Array> composeCertificateRequest(const ProtectedData& protectedData,
-                                            const DeviceInfo& verifiedDeviceInfo,
-                                            const std::vector<uint8_t>& challenge,
-                                            const std::vector<uint8_t>& keysToSignMac,
-                                            IRemotelyProvisionedComponent* provisionable) {
+CborResult<Array> composeCertificateRequestV1(const ProtectedData& protectedData,
+                                              const DeviceInfo& verifiedDeviceInfo,
+                                              const std::vector<uint8_t>& challenge,
+                                              const std::vector<uint8_t>& keysToSignMac,
+                                              IRemotelyProvisionedComponent* provisionable) {
     Array macedKeysToSign = Array()
                                 .add(Map().add(1, 5).encode())  // alg: hmac-sha256
                                 .add(Map())                     // empty unprotected headers
@@ -131,7 +134,7 @@ CborResult<Array> composeCertificateRequest(const ProtectedData& protectedData,
     return {std::move(certificateRequest), ""};
 }
 
-CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+CborResult<Array> getCsrV1(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
     std::vector<uint8_t> keysToSignMac;
     std::vector<MacedPublicKey> emptyKeys;
     DeviceInfo verifiedDeviceInfo;
@@ -154,11 +157,11 @@ CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedCom
                   << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
         exit(-1);
     }
-    return composeCertificateRequest(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
-                                     irpc);
+    return composeCertificateRequestV1(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
+                                       irpc);
 }
 
-void selfTestGetCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
     std::vector<uint8_t> keysToSignMac;
     std::vector<MacedPublicKey> emptyKeys;
     DeviceInfo verifiedDeviceInfo;
@@ -192,4 +195,86 @@ void selfTestGetCsr(std::string_view componentName, IRemotelyProvisionedComponen
                                              hwInfo.supportedEekCurve, irpc, challenge);
 
     std::cout << "Self test successful." << std::endl;
+}
+
+CborResult<Array> composeCertificateRequestV3(const std::vector<uint8_t>& csr) {
+    auto [parsedCsr, _, csrErrMsg] = cppbor::parse(csr);
+    if (!parsedCsr) {
+        return {nullptr, csrErrMsg};
+    }
+    if (!parsedCsr->asArray()) {
+        return {nullptr, "CSR is not a CBOR array."};
+    }
+
+    return {std::unique_ptr<Array>(parsedCsr.release()->asArray()), ""};
+}
+
+CborResult<cppbor::Array> getCsrV3(std::string_view componentName,
+                                   IRemotelyProvisionedComponent* irpc) {
+    std::vector<uint8_t> csr;
+    std::vector<MacedPublicKey> emptyKeys;
+    const std::vector<uint8_t> challenge = generateChallenge();
+
+    auto status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
+    if (!status.isOk()) {
+        std::cerr << "Bundle extraction failed for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    return composeCertificateRequestV3(csr);
+}
+
+void selfTestGetCsrV3(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+    std::vector<uint8_t> csr;
+    std::vector<MacedPublicKey> emptyKeys;
+    const std::vector<uint8_t> challenge = generateChallenge();
+
+    auto status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
+    if (!status.isOk()) {
+        std::cerr << "Bundle extraction failed for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    auto result = verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc, challenge);
+    if (!result) {
+        std::cerr << "Self test failed for '" << componentName
+                  << "'. Error message: " << result.message() << "." << std::endl;
+        exit(-1);
+    }
+
+    std::cout << "Self test successful." << std::endl;
+}
+
+CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+    RpcHardwareInfo hwInfo;
+    auto status = irpc->getHardwareInfo(&hwInfo);
+    if (!status.isOk()) {
+        std::cerr << "Failed to get hardware info for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    if (hwInfo.versionNumber < kVersionWithoutSuperencryption) {
+        return getCsrV1(componentName, irpc);
+    } else {
+        return getCsrV3(componentName, irpc);
+    }
+}
+
+void selfTestGetCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+    RpcHardwareInfo hwInfo;
+    auto status = irpc->getHardwareInfo(&hwInfo);
+    if (!status.isOk()) {
+        std::cerr << "Failed to get hardware info for '" << componentName
+                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+        exit(-1);
+    }
+
+    if (hwInfo.versionNumber < kVersionWithoutSuperencryption) {
+        selfTestGetCsrV1(componentName, irpc);
+    } else {
+        selfTestGetCsrV3(componentName, irpc);
+    }
 }

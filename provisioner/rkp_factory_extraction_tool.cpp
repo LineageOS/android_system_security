@@ -47,8 +47,6 @@ constexpr std::string_view kBinaryCsrOutput = "csr";     // Just the raw csr as 
 constexpr std::string_view kBuildPlusCsr = "build+csr";  // Text-encoded (JSON) build
                                                          // fingerprint plus CSR.
 
-constexpr size_t kChallengeSize = 16;
-
 void writeOutput(const std::string instance_name, const Array& csr) {
     if (FLAGS_output_format == kBinaryCsrOutput) {
         auto bytes = csr.encode();
