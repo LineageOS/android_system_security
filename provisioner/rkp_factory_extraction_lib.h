@@ -25,7 +25,8 @@
 #include <string_view>
 #include <vector>
 
-constexpr size_t kChallengeSize = 16;
+// Challenge size must be between 32 and 64 bytes inclusive.
+constexpr size_t kChallengeSize = 64;
 
 // Contains a the result of an operation that should return cborData on success.
 // Returns an an error message and null cborData on error.
