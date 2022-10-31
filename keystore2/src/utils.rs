@@ -104,6 +104,7 @@ pub fn is_device_id_attestation_tag(tag: Tag) -> bool {
             | Tag::ATTESTATION_ID_MEID
             | Tag::ATTESTATION_ID_SERIAL
             | Tag::DEVICE_UNIQUE_ATTESTATION
+            | Tag::ATTESTATION_ID_SECOND_IMEI
     )
 }
 
