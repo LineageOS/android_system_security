@@ -153,13 +153,11 @@ impl RemProvState {
         } else {
             match get_rem_prov_attest_key(key.domain, caller_uid, db, &self.km_uuid) {
                 Err(e) => {
-                    log::error!(
-                        "In get_remote_provisioning_key_and_certs: Error occurred: {:?}",
-                        e
-                    );
                     if self.is_rkp_only() {
+                        log::error!("Error occurred: {:?}", e);
                         return Err(e);
                     }
+                    log::warn!("Error occurred: {:?}", e);
                     log_rkp_error_stats(
                         MetricsRkpError::FALL_BACK_DURING_HYBRID,
                         &self.security_level,
