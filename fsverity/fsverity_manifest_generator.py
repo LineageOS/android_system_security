@@ -50,7 +50,7 @@ if __name__ == '__main__':
       required=True)
   p.add_argument(
       'inputs',
-      nargs='+',
+      nargs='*',
       help='input file for the build manifest')
   args = p.parse_args(sys.argv[1:])
 
