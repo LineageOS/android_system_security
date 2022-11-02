@@ -59,6 +59,7 @@ cc_binary {
         "libutilscallstack",
     ],
     static_libs: [
+        "android.hardware.security.rkp-V3-cpp",
         "android.hardware.keymaster-V3-cpp",
         "libcppbor_external",
     ],
