@@ -31,6 +31,7 @@ rust_defaults {
     ],
 
     rustlibs: [
+        "android.hardware.security.rkp-V3-rust",
         "android.hardware.security.secureclock-V1-rust",
         "android.hardware.security.sharedsecret-V1-rust",
         "android.os.permissions_aidl-rust",
@@ -84,6 +85,7 @@ rust_library {
         "keystore2_use_latest_aidl_rust",
     ],
     rustlibs: [
+        "android.hardware.security.rkp-V3-rust",
         "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",
@@ -121,6 +123,7 @@ rust_test {
     auto_gen_config: true,
     compile_multilib: "first",
     rustlibs: [
+        "android.hardware.security.rkp-V3-rust",
         "libbinder_rs",
         "libkeystore2_selinux",
         "liblog_rust",

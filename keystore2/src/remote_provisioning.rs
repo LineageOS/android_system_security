@@ -23,10 +23,12 @@ use std::collections::HashMap;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, AttestationKey::AttestationKey, Certificate::Certificate,
-    DeviceInfo::DeviceInfo, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
-    KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue,
-    MacedPublicKey::MacedPublicKey, ProtectedData::ProtectedData, SecurityLevel::SecurityLevel,
+    KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue, SecurityLevel::SecurityLevel,
     Tag::Tag,
+};
+use android_hardware_security_rkp::aidl::android::hardware::security::keymint::{
+    DeviceInfo::DeviceInfo, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
+    MacedPublicKey::MacedPublicKey, ProtectedData::ProtectedData,
 };
 use android_security_remoteprovisioning::aidl::android::security::remoteprovisioning::{
     AttestationPoolStatus::AttestationPoolStatus, IRemoteProvisioning::BnRemoteProvisioning,
@@ -692,7 +694,7 @@ mod tests {
     use serde_cbor::Value;
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
-    use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+    use android_hardware_security_rkp::aidl::android::hardware::security::keymint::{
         RpcHardwareInfo::RpcHardwareInfo,
     };
 
