@@ -55,7 +55,6 @@ cc_defaults {
         "liblog",
     ],
     static_libs: [
-        "android.hardware.security.rkp-V3-ndk",
         "libbase",
         "libcppbor_external",
         "libcppcose_rkp",
