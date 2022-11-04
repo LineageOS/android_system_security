@@ -18,6 +18,7 @@ pub mod keystore2_client_attest_key_tests;
 pub mod keystore2_client_ec_key_tests;
 pub mod keystore2_client_grant_key_tests;
 pub mod keystore2_client_hmac_key_tests;
+pub mod keystore2_client_import_keys_tests;
 pub mod keystore2_client_key_id_domain_tests;
 pub mod keystore2_client_list_entries_tests;
 pub mod keystore2_client_operation_tests;
