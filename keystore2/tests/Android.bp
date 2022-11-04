@@ -45,6 +45,7 @@ rust_test {
         "libserde",
         "libthiserror",
 	"libcxx",
+	"libopenssl",
     ],
     static_libs: [
         "libkeystore2_ffi_test_utils",
