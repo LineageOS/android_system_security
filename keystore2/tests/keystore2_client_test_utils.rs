@@ -15,6 +15,11 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use openssl::hash::MessageDigest;
+use openssl::rsa::Padding;
+use openssl::sign::Verifier;
+use openssl::x509::X509;
+
 use binder::wait_for_interface;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
@@ -25,8 +30,8 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 use android_system_keystore2::aidl::android::system::keystore2::{
     CreateOperationResponse::CreateOperationResponse, Domain::Domain,
     IKeystoreOperation::IKeystoreOperation, IKeystoreSecurityLevel::IKeystoreSecurityLevel,
-    IKeystoreService::IKeystoreService, KeyDescriptor::KeyDescriptor, KeyParameters::KeyParameters,
-    ResponseCode::ResponseCode,
+    IKeystoreService::IKeystoreService, KeyDescriptor::KeyDescriptor, KeyMetadata::KeyMetadata,
+    KeyParameters::KeyParameters, ResponseCode::ResponseCode,
 };
 
 use packagemanager_aidl::aidl::android::content::pm::IPackageManagerNative::IPackageManagerNative;
@@ -113,6 +118,104 @@ pub fn perform_sample_sign_operation(
     let sig = op.finish(None, None)?;
     assert!(sig.is_some());
     Ok(())
+}
+
+/// Perform sample HMAC sign and verify operations.
+pub fn perform_sample_hmac_sign_verify_op(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    key: &KeyDescriptor,
+) {
+    let sign_op = sec_level
+        .createOperation(
+            key,
+            &authorizations::AuthSetBuilder::new()
+                .purpose(KeyPurpose::SIGN)
+                .digest(Digest::SHA_2_256)
+                .mac_length(256),
+            false,
+        )
+        .unwrap();
+    assert!(sign_op.iOperation.is_some());
+
+    let op = sign_op.iOperation.unwrap();
+    op.update(b"my message").unwrap();
+    let sig = op.finish(None, None).unwrap();
+    assert!(sig.is_some());
+
+    let sig = sig.unwrap();
+    let verify_op = sec_level
+        .createOperation(
+            key,
+            &authorizations::AuthSetBuilder::new()
+                .purpose(KeyPurpose::VERIFY)
+                .digest(Digest::SHA_2_256),
+            false,
+        )
+        .unwrap();
+    assert!(verify_op.iOperation.is_some());
+
+    let op = verify_op.iOperation.unwrap();
+    let result = op.finish(Some(b"my message"), Some(&sig)).unwrap();
+    assert!(result.is_none());
+}
+
+/// Map KeyMint Digest values to OpenSSL MessageDigest.
+pub fn get_openssl_digest_mode(digest: Option<Digest>) -> MessageDigest {
+    match digest {
+        Some(Digest::MD5) => MessageDigest::md5(),
+        Some(Digest::SHA1) => MessageDigest::sha1(),
+        Some(Digest::SHA_2_224) => MessageDigest::sha224(),
+        Some(Digest::SHA_2_256) => MessageDigest::sha256(),
+        Some(Digest::SHA_2_384) => MessageDigest::sha384(),
+        Some(Digest::SHA_2_512) => MessageDigest::sha512(),
+        _ => MessageDigest::sha256(),
+    }
+}
+
+/// Map KeyMint PaddingMode values to OpenSSL Padding.
+pub fn get_openssl_padding_mode(padding: PaddingMode) -> Padding {
+    match padding {
+        PaddingMode::RSA_OAEP => Padding::PKCS1_OAEP,
+        PaddingMode::RSA_PSS => Padding::PKCS1_PSS,
+        PaddingMode::RSA_PKCS1_1_5_SIGN => Padding::PKCS1,
+        PaddingMode::RSA_PKCS1_1_5_ENCRYPT => Padding::PKCS1,
+        _ => Padding::NONE,
+    }
+}
+
+/// Perform sample sign and verify operations using RSA or EC key.
+pub fn perform_sample_asym_sign_verify_op(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    key_metadata: &KeyMetadata,
+    padding: Option<PaddingMode>,
+    digest: Option<Digest>,
+) {
+    let mut authorizations = authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN);
+    if let Some(value) = padding {
+        authorizations = authorizations.padding_mode(value);
+    }
+    if let Some(value) = digest {
+        authorizations = authorizations.digest(value);
+    }
+
+    let sign_op = sec_level.createOperation(&key_metadata.key, &authorizations, false).unwrap();
+    assert!(sign_op.iOperation.is_some());
+
+    let op = sign_op.iOperation.unwrap();
+    op.update(b"my message").unwrap();
+    let sig = op.finish(None, None).unwrap();
+    assert!(sig.is_some());
+
+    let sig = sig.unwrap();
+    let cert_bytes = key_metadata.certificate.as_ref().unwrap();
+    let cert = X509::from_der(cert_bytes.as_ref()).unwrap();
+    let pub_key = cert.public_key().unwrap();
+    let mut verifier = Verifier::new(get_openssl_digest_mode(digest), pub_key.as_ref()).unwrap();
+    if let Some(value) = padding {
+        verifier.set_rsa_padding(get_openssl_padding_mode(value)).unwrap();
+    }
+    verifier.update(b"my message").unwrap();
+    assert!(verifier.verify(&sig).unwrap());
 }
 
 /// Create new operation on child proc and perform simple operation after parent notification.
