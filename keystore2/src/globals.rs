@@ -31,9 +31,10 @@ use crate::{
 use crate::km_compat::{KeyMintV1, BacklevelKeyMintWrapper};
 use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    IKeyMintDevice::IKeyMintDevice, IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
-    KeyMintHardwareInfo::KeyMintHardwareInfo, SecurityLevel::SecurityLevel,
+    IKeyMintDevice::IKeyMintDevice, KeyMintHardwareInfo::KeyMintHardwareInfo,
+    SecurityLevel::SecurityLevel,
 };
+use android_hardware_security_rkp::aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent::IRemotelyProvisionedComponent;
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
     ISecureClock::ISecureClock,
 };

@@ -107,6 +107,7 @@ aidl_interface {
     srcs: [ "android/security/remoteprovisioning/*.aidl" ],
     imports: [
         "android.hardware.security.keymint-V3",
+        "android.hardware.security.rkp-V3",
     ],
     unstable: true,
     backend: {
