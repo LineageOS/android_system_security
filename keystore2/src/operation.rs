@@ -359,7 +359,7 @@ impl Operation {
             .before_update()
             .context(ks_err!("Trying to get auth tokens."))?;
 
-        self.update_outcome(&mut *outcome, {
+        self.update_outcome(&mut outcome, {
             let _wp = wd::watch_millis("Operation::update_aad: calling updateAad", 500);
             map_km_error(self.km_op.updateAad(aad_input, hat.as_ref(), tst.as_ref()))
         })
@@ -383,7 +383,7 @@ impl Operation {
             .context(ks_err!("Trying to get auth tokens."))?;
 
         let output = self
-            .update_outcome(&mut *outcome, {
+            .update_outcome(&mut outcome, {
                 let _wp = wd::watch_millis("Operation::update: calling update", 500);
                 map_km_error(self.km_op.update(input, hat.as_ref(), tst.as_ref()))
             })
@@ -413,7 +413,7 @@ impl Operation {
             .context(ks_err!("Trying to get auth tokens."))?;
 
         let output = self
-            .update_outcome(&mut *outcome, {
+            .update_outcome(&mut outcome, {
                 let _wp = wd::watch_millis("Operation::finish: calling finish", 500);
                 map_km_error(self.km_op.finish(
                     input,
