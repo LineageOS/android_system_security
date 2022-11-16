@@ -500,8 +500,30 @@ ScopedAStatus KeyMintDevice::generateKey(const std::vector<KeyParameter>& inKeyP
 ScopedAStatus KeyMintDevice::importKey(const std::vector<KeyParameter>& inKeyParams,
                                        KeyFormat in_inKeyFormat,
                                        const std::vector<uint8_t>& in_inKeyData,
-                                       const std::optional<AttestationKey>& /* in_attestationKey */,
+                                       const std::optional<AttestationKey>& in_attestationKey,
                                        KeyCreationResult* out_creationResult) {
+    // Since KeyMaster doesn't support ECDH, route all ECDH key import requests to
+    // soft-KeyMint.
+    //
+    // For this to work we'll need to also route begin() and deleteKey() calls to
+    // soft-KM. In order to do that, we'll prefix all keyblobs with whether it was
+    // created by the real underlying KeyMaster HAL or whether it was created by
+    // soft-KeyMint.
+    //
+    // See keyBlobPrefix() for more discussion.
+    //
+    for (const auto& keyParam : inKeyParams) {
+        if (keyParam.tag == Tag::PURPOSE &&
+            keyParam.value.get<KeyParameterValue::Tag::keyPurpose>() == KeyPurpose::AGREE_KEY) {
+            auto ret = softKeyMintDevice_->importKey(inKeyParams, in_inKeyFormat, in_inKeyData,
+                                                     in_attestationKey, out_creationResult);
+            if (ret.isOk()) {
+                out_creationResult->keyBlob = keyBlobPrefix(out_creationResult->keyBlob, true);
+            }
+            return ret;
+        }
+    }
+
     auto legacyKeyGENParams = convertKeyParametersToLegacy(extractGenerationParams(inKeyParams));
     auto legacyKeyFormat = convertKeyFormatToLegacy(in_inKeyFormat);
     KMV1::ErrorCode errorCode;
