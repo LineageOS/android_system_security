@@ -421,7 +421,7 @@ art::odrefresh::ExitCode CheckCompOsPendingArtifacts(const SigningKey& signing_k
         std::map<std::string, std::string> compos_digests(compos_info->file_hashes().begin(),
                                                           compos_info->file_hashes().end());
 
-        auto status = verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_digests, signing_key);
+        auto status = verifyAllFilesUsingCompOs(kArtArtifactsDir, compos_digests);
         if (!status.ok()) {
             LOG(WARNING) << "Faild to verify CompOS artifacts: " << status.error();
         } else {
@@ -529,6 +529,7 @@ int main(int /* argc */, char** argv) {
         } else {
             LOG(INFO) << "Found and verified existing public key certificate: " << kSigningKeyCert;
         }
+        // TODO(258061812): Remove the certificate from the keyring when it won't break old devices.
         auto cert_add_result = addCertToFsVerityKeyring(kSigningKeyCert, "fsv_ods");
         if (!cert_add_result.ok()) {
             LOG(ERROR) << "Failed to add certificate to fs-verity keyring: "
@@ -608,7 +609,7 @@ int main(int /* argc */, char** argv) {
                          : art::metrics::statsd::ODSIGN_REPORTED__STATUS__STATUS_PARTIAL_OK;
         Result<std::map<std::string, std::string>> digests;
         if (supportsFsVerity) {
-            digests = addFilesToVerityRecursive(kArtArtifactsDir, *key);
+            digests = addFilesToVerityRecursive(kArtArtifactsDir);
         } else {
             // If we can't use verity, just compute the root hashes and store
             // those, so we can reverify them at the next boot.
