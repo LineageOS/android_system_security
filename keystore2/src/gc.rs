@@ -126,8 +126,7 @@ impl GcInternal {
                     .unwrap()
                     .unwrap_key_if_required(&blob_metadata, &blob)
                     .context(ks_err!("Trying to unwrap to-be-deleted blob.",))?;
-                (self.invalidate_key)(uuid, &*blob)
-                    .context(ks_err!("Trying to invalidate key."))?;
+                (self.invalidate_key)(uuid, &blob).context(ks_err!("Trying to invalidate key."))?;
             }
         }
         Ok(())
