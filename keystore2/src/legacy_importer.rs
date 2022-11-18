@@ -510,7 +510,7 @@ impl LegacyImporterState {
             }
         };
 
-        let (km_params, upgraded_blob) = get_key_characteristics_without_app_data(&km_uuid, &*blob)
+        let (km_params, upgraded_blob) = get_key_characteristics_without_app_data(&km_uuid, &blob)
             .context(ks_err!("Failed to get key characteristics from device.",))?;
 
         let flags = km_blob.get_flags();
