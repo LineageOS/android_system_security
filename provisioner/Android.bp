@@ -88,7 +88,7 @@ cc_test {
 
 cc_binary {
     name: "rkp_factory_extraction_tool",
-    vendor_available: true,
+    vendor: true,
     srcs: ["rkp_factory_extraction_tool.cpp"],
     defaults: [
         "rkp_factory_extraction_defaults",
