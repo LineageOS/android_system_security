@@ -5022,8 +5022,8 @@ pub mod tests {
         let list_o_keys: Vec<(i64, i64)> = LIST_O_ENTRIES
             .iter()
             .map(|(domain, ns, alias)| {
-                let entry = make_test_key_entry(&mut db, *domain, *ns, *alias, None)
-                    .unwrap_or_else(|e| {
+                let entry =
+                    make_test_key_entry(&mut db, *domain, *ns, alias, None).unwrap_or_else(|e| {
                         panic!("Failed to insert {:?} {} {}. Error {:?}", domain, ns, alias, e)
                     });
                 (entry.id(), *ns)
