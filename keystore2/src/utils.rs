@@ -17,6 +17,7 @@
 
 use crate::error::{map_binder_status, map_km_error, Error, ErrorCode};
 use crate::key_parameter::KeyParameter;
+use crate::ks_err;
 use crate::permission;
 use crate::permission::{KeyPerm, KeyPermSet, KeystorePerm};
 use crate::{
@@ -51,9 +52,9 @@ use std::iter::IntoIterator;
 pub fn check_keystore_permission(perm: KeystorePerm) -> anyhow::Result<()> {
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_keystore_permission(
-            calling_sid.ok_or_else(Error::sys).context(
-                "In check_keystore_permission: Cannot check permission without calling_sid.",
-            )?,
+            calling_sid
+                .ok_or_else(Error::sys)
+                .context(ks_err!("Cannot check permission without calling_sid."))?,
             perm,
         )
     })
@@ -65,9 +66,9 @@ pub fn check_keystore_permission(perm: KeystorePerm) -> anyhow::Result<()> {
 pub fn check_grant_permission(access_vec: KeyPermSet, key: &KeyDescriptor) -> anyhow::Result<()> {
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_grant_permission(
-            calling_sid.ok_or_else(Error::sys).context(
-                "In check_grant_permission: Cannot check permission without calling_sid.",
-            )?,
+            calling_sid
+                .ok_or_else(Error::sys)
+                .context(ks_err!("Cannot check permission without calling_sid."))?,
             access_vec,
             key,
         )
@@ -87,7 +88,7 @@ pub fn check_key_permission(
             ThreadState::get_calling_uid(),
             calling_sid
                 .ok_or_else(Error::sys)
-                .context("In check_key_permission: Cannot check permission without calling_sid.")?,
+                .context(ks_err!("Cannot check permission without calling_sid."))?,
             perm,
             key,
             access_vector,
@@ -135,14 +136,12 @@ fn check_android_permission(permission: &str) -> anyhow::Result<()> {
             ThreadState::get_calling_uid() as i32,
         )
     };
-    let has_permissions = map_binder_status(binder_result)
-        .context("In check_device_attestation_permissions: checkPermission failed")?;
+    let has_permissions =
+        map_binder_status(binder_result).context(ks_err!("checkPermission failed"))?;
     match has_permissions {
         true => Ok(()),
-        false => Err(Error::Km(ErrorCode::CANNOT_ATTEST_IDS)).context(concat!(
-            "In check_device_attestation_permissions: ",
-            "caller does not have the permission to attest device IDs"
-        )),
+        false => Err(Error::Km(ErrorCode::CANNOT_ATTEST_IDS))
+            .context(ks_err!("caller does not have the permission to attest device IDs")),
     }
 }
 
@@ -189,18 +188,15 @@ where
                 );
                 map_km_error(km_dev.upgradeKey(key_blob, upgrade_params))
             }
-            .context("In utils::upgrade_keyblob_if_required_with: Upgrade failed.")?;
+            .context(ks_err!("Upgrade failed."))?;
 
-            new_blob_handler(&upgraded_blob)
-                .context("In utils::upgrade_keyblob_if_required_with: calling new_blob_handler.")?;
+            new_blob_handler(&upgraded_blob).context(ks_err!("calling new_blob_handler."))?;
 
             km_op(&upgraded_blob)
                 .map(|v| (v, Some(upgraded_blob)))
-                .context("In utils::upgrade_keyblob_if_required_with: Calling km_op after upgrade.")
+                .context(ks_err!("Calling km_op after upgrade."))
         }
-        r => r
-            .map(|v| (v, None))
-            .context("In utils::upgrade_keyblob_if_required_with: Calling km_op."),
+        r => r.map(|v| (v, None)).context(ks_err!("Calling km_op.")),
     }
 }
 
@@ -270,12 +266,12 @@ pub fn list_key_entries(
     result.append(
         &mut LEGACY_IMPORTER
             .list_uid(domain, namespace)
-            .context("In list_key_entries: Trying to list legacy keys.")?,
+            .context(ks_err!("Trying to list legacy keys."))?,
     );
     result.append(
         &mut db
             .list(domain, namespace, KeyType::Client)
-            .context("In list_key_entries: Trying to list keystore database.")?,
+            .context(ks_err!("Trying to list keystore database."))?,
     );
     result.sort_unstable();
     result.dedup();
@@ -333,12 +329,11 @@ pub trait AesGcmKey {
 
 impl<T: AesGcmKey> AesGcm for T {
     fn decrypt(&self, data: &[u8], iv: &[u8], tag: &[u8]) -> Result<ZVec> {
-        aes_gcm_decrypt(data, iv, tag, self.key())
-            .context("In AesGcm<T>::decrypt: Decryption failed")
+        aes_gcm_decrypt(data, iv, tag, self.key()).context(ks_err!("Decryption failed"))
     }
 
     fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
-        aes_gcm_encrypt(plaintext, self.key()).context("In AesGcm<T>::encrypt: Encryption failed.")
+        aes_gcm_encrypt(plaintext, self.key()).context(ks_err!("Encryption failed."))
     }
 }
 
