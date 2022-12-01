@@ -66,10 +66,7 @@ impl KeystoreService {
             SecurityLevel::TRUSTED_ENVIRONMENT,
             id_rotation_state.clone(),
         )
-        .context(concat!(
-            "In KeystoreService::new_native_binder: ",
-            "Trying to construct mandatory security level TEE."
-        ))?;
+        .context(ks_err!("Trying to construct mandatory security level TEE."))?;
         result.i_sec_level_by_uuid.insert(uuid, dev);
         result.uuid_by_sec_level.insert(SecurityLevel::TRUSTED_ENVIRONMENT, uuid);
 
@@ -86,9 +83,7 @@ impl KeystoreService {
             .set_init(move || {
                 (create_thread_local_db(), uuid_by_sec_level, LEGACY_BLOB_LOADER.clone())
             })
-            .context(
-                "In KeystoreService::new_native_binder: Trying to initialize the legacy migrator.",
-            )?;
+            .context(ks_err!("Trying to initialize the legacy migrator."))?;
 
         Ok(BnKeystoreService::new_binder(
             result,
@@ -108,8 +103,7 @@ impl KeystoreService {
         if let Some(dev) = self.i_sec_level_by_uuid.get(uuid) {
             Ok(dev.clone())
         } else {
-            Err(error::Error::sys())
-                .context("In get_i_sec_level_by_uuid: KeyMint instance for key not found.")
+            Err(error::Error::sys()).context(ks_err!("KeyMint instance for key not found."))
         }
     }
 
@@ -125,7 +119,7 @@ impl KeystoreService {
             Ok(dev.clone())
         } else {
             Err(error::Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-                .context("In get_security_level: No such security level.")
+                .context(ks_err!("No such security level."))
         }
     }
 
@@ -147,12 +141,12 @@ impl KeystoreService {
                     )
                 })
             })
-            .context("In get_key_entry, while trying to load key info.")?;
+            .context(ks_err!("while trying to load key info."))?;
 
         let i_sec_level = if !key_entry.pure_cert() {
             Some(
                 self.get_i_sec_level_by_uuid(key_entry.km_uuid())
-                    .context("In get_key_entry: Trying to get security level proxy.")?,
+                    .context(ks_err!("Trying to get security level proxy."))?,
             )
         } else {
             None
@@ -174,7 +168,7 @@ impl KeystoreService {
                     .creation_date()
                     .map(|d| d.to_millis_epoch())
                     .ok_or(Error::Rc(ResponseCode::VALUE_CORRUPTED))
-                    .context("In get_key_entry: Trying to get creation date.")?,
+                    .context(ks_err!("Trying to get creation date."))?,
                 authorizations: key_parameters_to_authorizations(key_entry.into_key_parameters()),
             },
         })
@@ -197,10 +191,7 @@ impl KeystoreService {
                     KeyType::Client,
                     KeyEntryLoadBits::NONE,
                     caller_uid,
-                    |k, av| {
-                        check_key_permission(KeyPerm::Update, k, &av)
-                            .context("In update_subcomponent.")
-                    },
+                    |k, av| check_key_permission(KeyPerm::Update, k, &av).context(ks_err!()),
                 )
             }) {
                 Err(e) => match e.root_cause().downcast_ref::<Error>() {
@@ -209,7 +200,7 @@ impl KeystoreService {
                 },
                 Ok(v) => Ok(Some(v)),
             }
-            .context("Failed to load key entry.")?;
+            .context(ks_err!("Failed to load key entry."))?;
 
             let mut db = db.borrow_mut();
             if let Some((key_id_guard, _key_entry)) = entry {
@@ -256,7 +247,7 @@ impl KeystoreService {
             .context("Failed to insert new certificate.")?;
             Ok(())
         })
-        .context("In update_subcomponent.")
+        .context(ks_err!())
     }
 
     fn list_entries(&self, domain: Domain, namespace: i64) -> Result<Vec<KeyDescriptor>> {
