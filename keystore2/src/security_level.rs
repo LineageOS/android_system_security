@@ -148,7 +148,7 @@ impl KeystoreSecurityLevel {
             SecurityLevel::SOFTWARE,
         ));
 
-        let creation_date = DateTime::now().context("Trying to make creation time.")?;
+        let creation_date = DateTime::now().context(ks_err!("Trying to make creation time."))?;
 
         let key = match key.domain {
             Domain::BLOB => KeyDescriptor {
@@ -677,7 +677,7 @@ impl KeystoreSecurityLevel {
                 KeyParameterValue::Algorithm(Algorithm::RSA)
                 | KeyParameterValue::Algorithm(Algorithm::EC) => Ok(KeyFormat::PKCS8),
                 v => Err(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-                    .context(format!("Unknown Algorithm {:?}.", v)),
+                    .context(ks_err!("Unknown Algorithm {:?}.", v)),
             })
             .context(ks_err!())?;
 
@@ -757,10 +757,10 @@ impl KeystoreSecurityLevel {
             })
             .context("Failed to load wrapping key.")?;
 
-        let (wrapping_key_blob, wrapping_blob_metadata) = wrapping_key_entry
-            .take_key_blob_info()
-            .ok_or_else(error::Error::sys)
-            .context("No km_blob after successfully loading key. This should never happen.")?;
+        let (wrapping_key_blob, wrapping_blob_metadata) =
+            wrapping_key_entry.take_key_blob_info().ok_or_else(error::Error::sys).context(
+                ks_err!("No km_blob after successfully loading key. This should never happen."),
+            )?;
 
         let wrapping_key_blob = SUPER_KEY
             .read()
