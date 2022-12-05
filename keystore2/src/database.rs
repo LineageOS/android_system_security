@@ -5335,6 +5335,10 @@ pub mod tests {
                 SecurityLevel::TRUSTED_ENVIRONMENT,
             ),
             KeyParameter::new(
+                KeyParameterValue::AttestationIdSecondIMEI(vec![4u8, 3u8, 1u8, 2u8]),
+                SecurityLevel::TRUSTED_ENVIRONMENT,
+            ),
+            KeyParameter::new(
                 KeyParameterValue::AttestationIdMEID(vec![4u8, 3u8, 1u8, 2u8]),
                 SecurityLevel::TRUSTED_ENVIRONMENT,
             ),
