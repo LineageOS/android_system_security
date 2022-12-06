@@ -966,9 +966,12 @@ pub enum KeyParameterValue {
     /// Provides the device's serial number, to attestKey()
     #[key_param(tag = ATTESTATION_ID_SERIAL, field = Blob)]
     AttestationIdSerial(Vec<u8>),
-    /// Provides the IMEIs for all radios on the device, to attestKey()
+    /// Provides the primary IMEI for the device, to attestKey()
     #[key_param(tag = ATTESTATION_ID_IMEI, field = Blob)]
     AttestationIdIMEI(Vec<u8>),
+    /// Provides a second IMEI for the device, to attestKey()
+    #[key_param(tag = ATTESTATION_ID_SECOND_IMEI, field = Blob)]
+    AttestationIdSecondIMEI(Vec<u8>),
     /// Provides the MEIDs for all radios on the device, to attestKey()
     #[key_param(tag = ATTESTATION_ID_MEID, field = Blob)]
     AttestationIdMEID(Vec<u8>),
