@@ -19,7 +19,7 @@
 //! client.
 
 use keystore2_apc_compat_bindgen::{
-    abortUserConfirmation, closeUserConfirmationService, promptUserConfirmation, size_t,
+    abortUserConfirmation, closeUserConfirmationService, promptUserConfirmation,
     tryGetUserConfirmationService, ApcCompatCallback, ApcCompatServiceHandle,
 };
 pub use keystore2_apc_compat_bindgen::{
@@ -76,9 +76,9 @@ extern "C" fn confirmation_result_callback(
     handle: *mut ::std::os::raw::c_void,
     rc: u32,
     tbs_message: *const u8,
-    tbs_message_size: size_t,
+    tbs_message_size: usize,
     confirmation_token: *const u8,
-    confirmation_token_size: size_t,
+    confirmation_token_size: usize,
 ) {
     // # Safety:
     // The C/C++ implementation must pass to us the handle that was created
@@ -178,7 +178,7 @@ impl ApcHal {
                 cb,
                 prompt_text.as_ptr(),
                 extra_data.as_ptr(),
-                extra_data.len() as size_t,
+                extra_data.len() as usize,
                 locale.as_ptr(),
                 ui_opts,
             )
