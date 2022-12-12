@@ -554,9 +554,18 @@ Status Credential::getEntries(const vector<uint8_t>& requestMessage,
         ret.resultNamespaces.push_back(resultNamespaceParcel);
     }
 
-    status = halBinder->finishRetrieval(&ret.mac, &ret.deviceNameSpaces);
-    if (!status.isOk()) {
-        return halStatusToGenericError(status);
+    // API version 5 (feature version 202301) supports both MAC and ECDSA signature.
+    if (halApiVersion_ >= 5) {
+        status = halBinder->finishRetrievalWithSignature(&ret.mac, &ret.deviceNameSpaces,
+                                                         &ret.signature);
+        if (!status.isOk()) {
+            return halStatusToGenericError(status);
+        }
+    } else {
+        status = halBinder->finishRetrieval(&ret.mac, &ret.deviceNameSpaces);
+        if (!status.isOk()) {
+            return halStatusToGenericError(status);
+        }
     }
     ret.staticAuthenticationData = selectedAuthKeyStaticAuthData_;
 
