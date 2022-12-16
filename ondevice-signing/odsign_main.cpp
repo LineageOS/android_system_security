@@ -529,15 +529,6 @@ int main(int /* argc */, char** argv) {
         } else {
             LOG(INFO) << "Found and verified existing public key certificate: " << kSigningKeyCert;
         }
-        // TODO(258061812): Remove the certificate from the keyring when it won't break old devices.
-        auto cert_add_result = addCertToFsVerityKeyring(kSigningKeyCert, "fsv_ods");
-        if (!cert_add_result.ok()) {
-            LOG(ERROR) << "Failed to add certificate to fs-verity keyring: "
-                       << cert_add_result.error();
-            odsign_record->status =
-                art::metrics::statsd::ODSIGN_REPORTED__STATUS__STATUS_CERT_FAILED;
-            return -1;
-        }
     }
 
     bool digests_verified = false;
