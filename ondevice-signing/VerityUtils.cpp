@@ -29,13 +29,11 @@
 #include "android-base/errors.h"
 #include <android-base/file.h>
 #include <android-base/logging.h>
+#include <android-base/result.h>
 #include <android-base/unique_fd.h>
 #include <asm/byteorder.h>
 #include <libfsverity.h>
 #include <linux/fsverity.h>
-
-#include "CertUtils.h"
-#include "SigningKey.h"
 
 #define FS_VERITY_MAX_DIGEST_SIZE 64
 
@@ -57,23 +55,6 @@ static std::string toHex(std::span<const uint8_t> data) {
         ss << std::setfill('0') << std::setw(2) << std::hex << static_cast<unsigned>(*it);
     }
     return ss.str();
-}
-
-static std::vector<uint8_t> fromHex(std::string_view hex) {
-    if (hex.size() % 2 != 0) {
-        return {};
-    }
-    std::vector<uint8_t> result;
-    result.reserve(hex.size() / 2);
-    for (size_t i = 0; i < hex.size(); i += 2) {
-        uint8_t byte;
-        auto conversion_result = std::from_chars(&hex[i], &hex[i + 2], byte, 16);
-        if (conversion_result.ptr != &hex[i + 2] || conversion_result.ec != std::errc()) {
-            return {};
-        }
-        result.push_back(byte);
-    }
-    return result;
 }
 
 static int read_callback(void* file, void* buf, size_t count) {
@@ -163,28 +144,9 @@ static Result<std::string> measureFsVerity(const std::string& path) {
 
 }  // namespace
 
-static Result<std::vector<uint8_t>> signDigest(const SigningKey& key,
-                                               const std::vector<uint8_t>& digest) {
-    auto d = makeUniqueWithTrailingData<fsverity_formatted_digest>(digest.size());
-
-    memcpy(d->magic, "FSVerity", 8);
-    d->digest_algorithm = __cpu_to_le16(FS_VERITY_HASH_ALG_SHA256);
-    d->digest_size = __cpu_to_le16(digest.size());
-    memcpy(d->digest, digest.data(), digest.size());
-
-    auto signed_digest = key.sign(std::string((char*)d.get(), sizeof(*d) + digest.size()));
-    if (!signed_digest.ok()) {
-        return signed_digest.error();
-    }
-
-    return std::vector<uint8_t>(signed_digest->begin(), signed_digest->end());
-}
-
-static Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
+static Result<void> enableFsVerity(int fd) {
     struct fsverity_enable_arg arg = {.version = 1};
 
-    arg.sig_ptr = reinterpret_cast<uint64_t>(pkcs7.data());
-    arg.sig_size = pkcs7.size();
     arg.hash_algorithm = FS_VERITY_HASH_ALG_SHA256;
     arg.block_size = 4096;
 
@@ -197,29 +159,13 @@ static Result<void> enableFsVerity(int fd, std::span<uint8_t> pkcs7) {
     return {};
 }
 
-Result<std::string> enableFsVerity(int fd, const SigningKey& key) {
-    auto digest = createDigest(fd);
-    if (!digest.ok()) {
-        return Error() << digest.error();
+Result<void> enableFsVerity(const std::string& path) {
+    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
+    if (!fd.ok()) {
+        return Error() << "Can't open " << path;
     }
 
-    auto signed_digest = signDigest(key, digest.value());
-    if (!signed_digest.ok()) {
-        return signed_digest.error();
-    }
-
-    auto pkcs7_data = createPkcs7(signed_digest.value(), kRootSubject);
-    if (!pkcs7_data.ok()) {
-        return pkcs7_data.error();
-    }
-
-    auto enabled = enableFsVerity(fd, pkcs7_data.value());
-    if (!enabled.ok()) {
-        return Error() << enabled.error();
-    }
-
-    // Return the root hash as a hex string
-    return toHex(digest.value());
+    return enableFsVerity(fd.get());
 }
 
 static Result<bool> isFileInVerity(int fd) {
@@ -230,8 +176,7 @@ static Result<bool> isFileInVerity(int fd) {
     return (flags & FS_VERITY_FL) != 0;
 }
 
-Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::string& path,
-                                                                     const SigningKey& key) {
+Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::string& path) {
     std::map<std::string, std::string> digests;
 
     std::error_code ec;
@@ -245,7 +190,7 @@ Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::
             auto enabled = OR_RETURN(isFileInVerity(fd));
             if (!enabled) {
                 LOG(INFO) << "Adding " << it->path() << " to fs-verity...";
-                OR_RETURN(enableFsVerity(fd, key));
+                OR_RETURN(enableFsVerity(fd));
             } else {
                 LOG(INFO) << it->path() << " was already in fs-verity.";
             }
@@ -258,23 +203,6 @@ Result<std::map<std::string, std::string>> addFilesToVerityRecursive(const std::
     }
 
     return digests;
-}
-
-Result<void> enableFsVerity(const std::string& path, const std::string& signature_path) {
-    unique_fd fd(TEMP_FAILURE_RETRY(open(path.c_str(), O_RDONLY | O_CLOEXEC)));
-    if (!fd.ok()) {
-        return Error() << "Can't open " << path;
-    }
-
-    std::string signature;
-    android::base::ReadFileToString(signature_path, &signature);
-    std::vector<uint8_t> span = std::vector<uint8_t>(signature.begin(), signature.end());
-
-    const auto& enable = enableFsVerity(fd.get(), span);
-    if (!enable.ok()) {
-        return enable.error();
-    }
-    return {};
 }
 
 Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::string& path) {
@@ -306,8 +234,7 @@ Result<std::map<std::string, std::string>> verifyAllFilesInVerity(const std::str
 }
 
 Result<void> verifyAllFilesUsingCompOs(const std::string& directory_path,
-                                       const std::map<std::string, std::string>& digests,
-                                       const SigningKey& signing_key) {
+                                       const std::map<std::string, std::string>& digests) {
     std::error_code ec;
     size_t verified_count = 0;
     auto it = std::filesystem::recursive_directory_iterator(directory_path, ec);
@@ -325,41 +252,18 @@ Result<void> verifyAllFilesUsingCompOs(const std::string& directory_path,
                 return ErrnoError() << "Can't open " << path;
             }
 
-            auto verity_digest = measureFsVerity(fd);
-            if (verity_digest.ok()) {
-                // The file is already in fs-verity. We need to make sure it was signed
-                // by CompOS, so we just check that it has the digest we expect.
-                if (verity_digest.value() == compos_digest) {
-                    ++verified_count;
-                } else {
-                    return Error() << "fs-verity digest does not match CompOS digest: " << path;
-                }
-            } else {
-                // Not in fs-verity yet. We know the digest CompOS provided; If
-                // it's not the correct digest for the file then enabling
-                // fs-verity will fail, so we don't need to check it explicitly
-                // ourselves. Otherwise we should be good.
-                LOG(INFO) << "Adding " << path << " to fs-verity...";
+            bool enabled = OR_RETURN(isFileInVerity(fd));
+            if (!enabled) {
+                LOG(INFO) << "Enabling fs-verity for " << path;
+                OR_RETURN(enableFsVerity(fd));
+            }
 
-                auto digest_bytes = fromHex(compos_digest);
-                if (digest_bytes.empty()) {
-                    return Error() << "Invalid digest " << compos_digest;
-                }
-                auto signed_digest = signDigest(signing_key, digest_bytes);
-                if (!signed_digest.ok()) {
-                    return signed_digest.error();
-                }
-
-                auto pkcs7_data = createPkcs7(signed_digest.value(), kRootSubject);
-                if (!pkcs7_data.ok()) {
-                    return pkcs7_data.error();
-                }
-
-                auto enabled = enableFsVerity(fd, pkcs7_data.value());
-                if (!enabled.ok()) {
-                    return Error() << enabled.error();
-                }
+            auto actual_digest = OR_RETURN(measureFsVerity(fd));
+            // Make sure the file's fs-verity digest matches the known value.
+            if (actual_digest == compos_digest) {
                 ++verified_count;
+            } else {
+                return Error() << "fs-verity digest does not match CompOS digest: " << path;
             }
         } else if (it->is_directory()) {
             // These are fine to ignore
