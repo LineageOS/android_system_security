@@ -53,6 +53,7 @@ use crate::globals::{get_keymint_device, get_remotely_provisioned_component, DB}
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
 use crate::permission::KeystorePerm;
+use crate::rkpd_client::get_rkpd_attestation_key;
 use crate::utils::{check_keystore_permission, watchdog as wd};
 use android_security_metrics::aidl::android::security::metrics::RkpError::RkpError as MetricsRkpError;
 
@@ -184,7 +185,47 @@ impl RemProvState {
             }
         }
     }
+
+    /// Fetches attestation key and corresponding certificates from RKPD.
+    pub fn get_rkpd_attestation_key_and_certs(
+        &self,
+        key: &KeyDescriptor,
+        caller_uid: u32,
+        params: &[KeyParameter],
+    ) -> Result<Option<(AttestationKey, Certificate)>> {
+        if !self.is_asymmetric_key(params) || key.domain != Domain::APP {
+            Ok(None)
+        } else {
+            match get_rkpd_attestation_key(&self.security_level, caller_uid) {
+                Err(e) => {
+                    if self.is_rkp_only() {
+                        log::error!("Error occurred: {:?}", e);
+                        return Err(e);
+                    }
+                    log::warn!("Error occurred: {:?}", e);
+                    log_rkp_error_stats(
+                        MetricsRkpError::FALL_BACK_DURING_HYBRID,
+                        &self.security_level,
+                    );
+                    Ok(None)
+                }
+                Ok(rkpd_key) => Ok(Some((
+                    AttestationKey {
+                        keyBlob: rkpd_key.keyBlob,
+                        attestKeyParams: vec![],
+                        // Batch certificate is at the beginning of the certificate chain.
+                        issuerSubjectName: parse_subject_from_certificate(
+                            &rkpd_key.encodedCertChain,
+                        )
+                        .context(ks_err!("Failed to parse subject."))?,
+                    },
+                    Certificate { encodedCertificate: rkpd_key.encodedCertChain },
+                ))),
+            }
+        }
+    }
 }
+
 /// Implementation of the IRemoteProvisioning service.
 #[derive(Default)]
 pub struct RemoteProvisioningService {
