@@ -441,13 +441,12 @@ pub fn get_timestamp_service() -> Result<Strong<dyn ISecureClock>> {
 static REMOTE_PROVISIONING_HAL_SERVICE_NAME: &str =
     "android.hardware.security.keymint.IRemotelyProvisionedComponent";
 
-fn connect_remotely_provisioned_component(
-    security_level: &SecurityLevel,
-) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
+/// Get the service name of a remotely provisioned component corresponding to given security level.
+pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -> Result<String> {
     let remotely_prov_instances =
         get_aidl_instances("android.hardware.security.keymint", 1, "IRemotelyProvisionedComponent");
 
-    let service_name = match *security_level {
+    match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
             if remotely_prov_instances.iter().any(|instance| *instance == "default") {
                 Some(format!("{}/default", REMOTE_PROVISIONING_HAL_SERVICE_NAME))
@@ -465,8 +464,13 @@ fn connect_remotely_provisioned_component(
         _ => None,
     }
     .ok_or(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-    .context(ks_err!())?;
+    .context(ks_err!())
+}
 
+fn connect_remotely_provisioned_component(
+    security_level: &SecurityLevel,
+) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
+    let service_name = get_remotely_provisioned_component_name(security_level)?;
     let rem_prov_hal: Strong<dyn IRemotelyProvisionedComponent> =
         map_binder_status_code(binder::get_interface(&service_name))
             .context(ks_err!("Trying to connect to RemotelyProvisionedComponent service."))?;
