@@ -31,10 +31,9 @@ rust_bindgen {
     ],
 }
 
-rust_binary {
-    name: "prng_seeder",
+rust_defaults {
+    name: "prng_seeder_defaults",
     edition: "2021",
-    srcs: ["src/main.rs"],
     rustlibs: [
         "libanyhow",
         "libbssl_ffi",
@@ -47,4 +46,20 @@ rust_binary {
     ],
 
     init_rc: ["prng_seeder.rc"],
+}
+
+rust_binary {
+    name: "prng_seeder",
+    defaults: ["prng_seeder_defaults"],
+    srcs: ["src/main.rs"],
+}
+
+rust_binary {
+    name: "prng_seeder_microdroid",
+    defaults: ["prng_seeder_defaults"],
+    srcs: ["src/main.rs"],
+    stem: "prng_seeder",
+    bootstrap: true,
+    installable: false,
+    prefer_rlib: true,
 }
