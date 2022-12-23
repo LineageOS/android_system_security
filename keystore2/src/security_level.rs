@@ -26,6 +26,7 @@ use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
 use crate::ks_err;
 use crate::metrics_store::log_key_creation_event_stats;
 use crate::remote_provisioning::RemProvState;
+use crate::rkpd_client::store_rkpd_attestation_key;
 use crate::super_key::{KeyBlob, SuperKeyManager};
 use crate::utils::{
     check_device_attestation_permissions, check_key_permission,
@@ -616,6 +617,30 @@ impl KeystoreSecurityLevel {
                     result.certificateChain.push(attestation_certs);
                     result
                 }),
+            Some(AttestationKeyInfo::RkpdProvisioned { attestation_key, attestation_certs }) => {
+                self.upgrade_rkpd_keyblob_if_required_with(&attestation_key.keyBlob, &[], |blob| {
+                    map_km_error({
+                        let _wp = self.watch_millis(
+                            concat!(
+                                "In KeystoreSecurityLevel::generate_key (RkpdProvisioned): ",
+                                "calling generate_key.",
+                            ),
+                            5000, // Generate can take a little longer.
+                        );
+                        let dynamic_attest_key = Some(AttestationKey {
+                            keyBlob: blob.to_vec(),
+                            attestKeyParams: vec![],
+                            issuerSubjectName: attestation_key.issuerSubjectName.clone(),
+                        });
+                        self.keymint.generateKey(&params, dynamic_attest_key.as_ref())
+                    })
+                })
+                .context("While generating Key with remote provisioned attestation key.")
+                .map(|(mut result, _)| {
+                    result.certificateChain.push(attestation_certs);
+                    result
+                })
+            }
             None => map_km_error({
                 let _wp = self.watch_millis(
                     concat!(
@@ -886,6 +911,28 @@ impl KeystoreSecurityLevel {
             }
         }
         Ok((v, upgraded_blob))
+    }
+
+    fn upgrade_rkpd_keyblob_if_required_with<T, F>(
+        &self,
+        key_blob: &[u8],
+        params: &[KeyParameter],
+        f: F,
+    ) -> Result<(T, Option<Vec<u8>>)>
+    where
+        F: Fn(&[u8]) -> Result<T, Error>,
+    {
+        crate::utils::upgrade_keyblob_if_required_with(
+            &*self.keymint,
+            key_blob,
+            params,
+            f,
+            |upgraded_blob| {
+                store_rkpd_attestation_key(&self.security_level, key_blob, upgraded_blob)
+                    .context(ks_err!("Failed store_rkpd_attestation_key()."))
+            },
+        )
+        .context(ks_err!())
     }
 
     fn convert_storage_key_to_ephemeral(
