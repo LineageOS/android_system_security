@@ -70,6 +70,23 @@
       "parentUuid": "ae2fcc09_b04e5981",
       "revId": "34ac2abcb07d21e6a421dfb2b9b1d476872b726a",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "e3600a28_1baf311b",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 4550
+      },
+      "writtenOn": "2023-01-04T18:25:14Z",
+      "side": 1,
+      "message": "You need to manually pick the manifest commit in .repo/manifests, sync, then apply the security patch topic to properly test it.",
+      "revId": "34ac2abcb07d21e6a421dfb2b9b1d476872b726a",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
     }
   ]
 }
