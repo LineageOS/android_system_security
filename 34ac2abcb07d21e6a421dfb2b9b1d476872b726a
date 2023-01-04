@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "ff7a6fd1_ebaa98b7",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 26658
+      },
+      "writtenOn": "2023-01-04T08:47:03Z",
+      "side": 1,
+      "message": "Build for sargo fails immediately with\n```\n[ 99% 496/499] analyzing Android.bp files and generating ninja file at out/soong/build.ninja\nFAILED: out/soong/build.ninja\ncd \"$(dirname \"out/host/linux-x86/bin/soong_build\")\" \u0026\u0026 BUILDER\u003d\"$PWD/$(basename \"out/host/linux-x86/bin/soong_build\")\" \u0026\u0026 cd / \u0026\u0026 en\nv -i  \"$BUILDER\"     --top \"$TOP\"     --soong_out \"out/soong\"     --out \"out\"     -o out/soong/build.ninja --globListDir build --glob\nFile out/soong/globs-build.ninja -t -l out/.module_paths/Android.bp.list --available_env out/soong/soong.environment.available --used\n_env out/soong/soong.environment.used.build Android.bp\nerror: system/security/prng_seeder/Android.bp:34:1: \"prng_seeder\" depends on undefined module \"libbssl_ffi\"\n09:44:21 soong bootstrap failed with: exit status 1\n\n#### failed to build some targets (26 seconds) ####\n```",
+      "revId": "34ac2abcb07d21e6a421dfb2b9b1d476872b726a",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    }
+  ]
+}
