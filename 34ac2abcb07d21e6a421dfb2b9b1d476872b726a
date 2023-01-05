@@ -104,6 +104,24 @@
       "message": "I might not understand something trivial here, but:\ni) how would I sync https://android.googlesource.com/platform/external/boringssl/+/c6957566e22929a3c13cdd1b0984433ffbf3e8b6 into the tree?\nii) which manifest commit do I need to sync first? There\u0027s none in the patchset.",
       "revId": "34ac2abcb07d21e6a421dfb2b9b1d476872b726a",
       "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "ae0b2a83_8cb5a451",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 16779
+      },
+      "writtenOn": "2023-01-05T08:14:43Z",
+      "side": 1,
+      "message": "You need to pick the manifest change (346873) into .repo/manifests, run repo sync and then pick the ASB topic.",
+      "parentUuid": "b7e67417_7df2ef6b",
+      "revId": "34ac2abcb07d21e6a421dfb2b9b1d476872b726a",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
     }
   ]
 }
