@@ -36,7 +36,7 @@ rust_test {
     rustlibs: [
         "librustutils",
         "libkeystore2_test_utils",
-	"packagemanager_aidl-rust",
+        "packagemanager_aidl-rust",
         "libnix",
         "libanyhow",
         "libbinder_rs",
@@ -44,8 +44,8 @@ rust_test {
         "liblibc",
         "libserde",
         "libthiserror",
-	"libcxx",
-	"libopenssl",
+        "libcxx",
+        "libopenssl",
     ],
     static_libs: [
         "libkeystore2_ffi_test_utils",
@@ -54,6 +54,9 @@ rust_test {
     ],
     shared_libs: [
         "libcrypto",
+        "libkeymaster_portable",
+        "libkeymaster_messages",
+        "libcppbor_external",
     ],
     require_root: true,
 }
@@ -67,10 +70,16 @@ cc_library_static {
     ],
     generated_headers: [
         "cxx-bridge-header",
+        "libkeystore2_ffi_test_utils_bridge_header",
     ],
     generated_sources: ["libkeystore2_ffi_test_utils_bridge_code"],
     static_libs: [
         "libkeymint_vts_test_utils",
+    ],
+    shared_libs: [
+        "libkeymaster_portable",
+        "libkeymaster_messages",
+        "libcppbor_external",
     ],
 }
 
@@ -78,6 +87,14 @@ genrule {
     name: "libkeystore2_ffi_test_utils_bridge_code",
     tools: ["cxxbridge"],
     cmd: "$(location cxxbridge) $(in) >> $(out)",
-    srcs: ["keystore2_client_attest_key_tests.rs"],
+    srcs: ["ffi_test_utils.rs"],
     out: ["libkeystore2_test_utils_cxx_generated.cc"],
+}
+
+genrule {
+    name: "libkeystore2_ffi_test_utils_bridge_header",
+    tools: ["cxxbridge"],
+    cmd: "$(location cxxbridge) $(in) --header >> $(out)",
+    srcs: ["ffi_test_utils.rs"],
+    out: ["ffi_test_utils.rs.h"],
 }
