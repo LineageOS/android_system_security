@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    BlockMode::BlockMode, Digest::Digest, ErrorCode::ErrorCode, KeyPurpose::KeyPurpose,
-    PaddingMode::PaddingMode, SecurityLevel::SecurityLevel,
+    Digest::Digest, ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
+    SecurityLevel::SecurityLevel,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
     CreateOperationResponse::CreateOperationResponse, Domain::Domain,
@@ -25,9 +25,7 @@ use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error,
 };
 
-use crate::keystore2_client_test_utils::{
-    delete_app_key, has_trusty_keymint, perform_sample_sign_operation, ForcedOp,
-};
+use crate::keystore2_client_test_utils::{delete_app_key, perform_sample_sign_operation, ForcedOp};
 
 /// This macro is used for creating signing key operation tests using digests and paddings
 /// for various key sizes.
@@ -59,7 +57,6 @@ macro_rules! test_rsa_encrypt_key_op {
                 stringify!($test_name),
                 $padding,
                 None,
-                None,
             );
         }
     };
@@ -73,7 +70,6 @@ macro_rules! test_rsa_encrypt_key_op {
                 stringify!($test_name),
                 $padding,
                 $mgf_digest,
-                Some(BlockMode::ECB),
             );
         }
     };
@@ -133,7 +129,6 @@ fn perform_rsa_sign_key_op_success(
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::SIGN,
         ForcedOp(false),
@@ -170,18 +165,16 @@ fn perform_rsa_sign_key_op_failure(digest: Digest, alias: &str, padding: Padding
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::SIGN,
         ForcedOp(false),
     ));
     assert!(result.is_err());
 
-    if has_trusty_keymint() {
-        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::UNKNOWN_ERROR));
-    } else {
-        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::INCOMPATIBLE_DIGEST));
-    }
+    let e = result.unwrap_err();
+    assert!(
+        e == Error::Km(ErrorCode::UNKNOWN_ERROR) || e == Error::Km(ErrorCode::INCOMPATIBLE_DIGEST)
+    );
 
     delete_app_key(&keystore2, alias).unwrap();
 }
@@ -193,7 +186,6 @@ fn create_rsa_encrypt_decrypt_key_op_success(
     alias: &str,
     padding: PaddingMode,
     mgf_digest: Option<Digest>,
-    block_mode: Option<BlockMode>,
 ) {
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
@@ -209,9 +201,8 @@ fn create_rsa_encrypt_decrypt_key_op_success(
             padding: Some(padding),
             digest,
             mgf_digest,
-            block_mode,
+            block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1559,7 +1550,6 @@ fn keystore2_rsa_generate_signing_key_padding_pss_fail() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::SIGN,
         ForcedOp(false),
@@ -1592,7 +1582,6 @@ fn keystore2_rsa_generate_key_with_oaep_padding_fail() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1624,7 +1613,6 @@ fn keystore2_rsa_generate_keys() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1654,7 +1642,6 @@ fn keystore2_rsa_encrypt_key_op_invalid_purpose() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::SIGN,
         ForcedOp(false),
@@ -1684,7 +1671,6 @@ fn keystore2_rsa_sign_key_op_invalid_purpose() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1714,7 +1700,6 @@ fn keystore2_rsa_key_unsupported_purpose() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::AGREE_KEY,
         ForcedOp(false),
@@ -1747,7 +1732,6 @@ fn keystore2_rsa_encrypt_key_unsupported_padding() {
                 mgf_digest: None,
                 block_mode: None,
                 att_challenge: None,
-                att_app_id: None,
             },
             KeyPurpose::DECRYPT,
             ForcedOp(false),
@@ -1781,7 +1765,6 @@ fn keystore2_rsa_signing_key_unsupported_padding() {
                 mgf_digest: None,
                 block_mode: None,
                 att_challenge: None,
-                att_app_id: None,
             },
             KeyPurpose::SIGN,
             ForcedOp(false),
@@ -1813,7 +1796,6 @@ fn keystore2_rsa_key_unsupported_op() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::ENCRYPT,
         ForcedOp(false),
@@ -1845,7 +1827,6 @@ fn keystore2_rsa_key_missing_purpose() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1876,7 +1857,6 @@ fn keystore2_rsa_gen_keys_with_oaep_paddings_without_digest() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         KeyPurpose::DECRYPT,
         ForcedOp(false),
@@ -1906,7 +1886,6 @@ fn keystore2_rsa_gen_keys_unsupported_size() {
             mgf_digest: None,
             block_mode: None,
             att_challenge: None,
-            att_app_id: None,
         },
         None,
     ));

@@ -89,7 +89,6 @@ fn keystore2_list_entries_success() {
                 key_generations::SELINUX_SHELL_NAMESPACE,
                 Some(alias.to_string()),
                 None,
-                None,
             )
             .unwrap();
 
@@ -127,7 +126,6 @@ fn keystore2_list_entries_success() {
                     Domain::APP,
                     -1,
                     Some(alias.to_string()),
-                    None,
                     None,
                 )
                 .unwrap();
