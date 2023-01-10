@@ -23,7 +23,10 @@ use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::IGetKeyCallback,
     IGetRegistrationCallback::BnGetRegistrationCallback,
     IGetRegistrationCallback::IGetRegistrationCallback, IRegistration::IRegistration,
-    IRemoteProvisioning::IRemoteProvisioning, RemotelyProvisionedKey::RemotelyProvisionedKey,
+    IRemoteProvisioning::IRemoteProvisioning,
+    IStoreUpgradedKeyCallback::BnStoreUpgradedKeyCallback,
+    IStoreUpgradedKeyCallback::IStoreUpgradedKeyCallback,
+    RemotelyProvisionedKey::RemotelyProvisionedKey,
 };
 use android_security_rkp_aidl::binder::{BinderFeatures, Interface, Strong};
 use anyhow::{Context, Result};
@@ -191,6 +194,46 @@ async fn get_rkpd_attestation_key_async(
     rx.await.unwrap()
 }
 
+struct StoreUpgradedKeyCallback {
+    completer: SafeSender<Result<()>>,
+}
+
+impl StoreUpgradedKeyCallback {
+    pub fn new_native_binder(
+        completer: oneshot::Sender<Result<()>>,
+    ) -> Result<Strong<dyn IStoreUpgradedKeyCallback>> {
+        let result: Self = StoreUpgradedKeyCallback { completer: SafeSender::new(completer) };
+        Ok(BnStoreUpgradedKeyCallback::new_binder(result, BinderFeatures::default()))
+    }
+
+    fn on_success(&self) -> Result<()> {
+        self.completer.send(Ok(()));
+        Ok(())
+    }
+
+    fn on_error(&self, error: &str) -> Result<()> {
+        self.completer.send(
+            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
+                .context(ks_err!("Failed to store upgraded key: {:?}", error)),
+        );
+        Ok(())
+    }
+}
+
+impl Interface for StoreUpgradedKeyCallback {}
+
+impl IStoreUpgradedKeyCallback for StoreUpgradedKeyCallback {
+    fn onSuccess(&self) -> binder::Result<()> {
+        let _wp = wd::watch_millis("IGetRegistrationCallback::onSuccess", 500);
+        map_or_log_err(self.on_success(), Ok)
+    }
+
+    fn onError(&self, error: &str) -> binder::Result<()> {
+        let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
+        map_or_log_err(self.on_error(error), Ok)
+    }
+}
+
 async fn store_rkpd_attestation_key_async(
     security_level: &SecurityLevel,
     key_blob: &[u8],
@@ -200,10 +243,15 @@ async fn store_rkpd_attestation_key_async(
         .await
         .context(ks_err!("Trying to get to IRegistration service."))?;
 
+    let (tx, rx) = oneshot::channel();
+    let cb = StoreUpgradedKeyCallback::new_native_binder(tx)
+        .context(ks_err!("Trying to create a StoreUpgradedKeyCallback."))?;
+
     registration
-        .storeUpgradedKey(key_blob, upgraded_blob)
+        .storeUpgradedKeyAsync(key_blob, upgraded_blob, &cb)
         .context(ks_err!("Failed to store upgraded blob with RKPD."))?;
-    Ok(())
+
+    rx.await.unwrap()
 }
 
 /// Get attestation key from RKPD.
@@ -257,7 +305,12 @@ mod tests {
             todo!()
         }
 
-        fn storeUpgradedKey(&self, _: &[u8], _: &[u8]) -> binder::Result<()> {
+        fn storeUpgradedKeyAsync(
+            &self,
+            _: &[u8],
+            _: &[u8],
+            _: &Strong<dyn IStoreUpgradedKeyCallback>,
+        ) -> binder::Result<()> {
             todo!()
         }
     }
@@ -333,6 +386,28 @@ mod tests {
         let (tx, rx) = oneshot::channel();
         let cb = GetKeyCallback::new_native_binder(tx).unwrap();
         assert!(cb.onError("error").is_ok());
+
+        let result = block_on(rx).unwrap();
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Km(ErrorCode::UNKNOWN_ERROR)
+        );
+    }
+
+    #[test]
+    fn test_store_upgraded_key_cb_success() {
+        let (tx, rx) = oneshot::channel();
+        let cb = StoreUpgradedKeyCallback::new_native_binder(tx).unwrap();
+        assert!(cb.onSuccess().is_ok());
+
+        block_on(rx).unwrap().unwrap();
+    }
+
+    #[test]
+    fn test_store_upgraded_key_cb_error() {
+        let (tx, rx) = oneshot::channel();
+        let cb = StoreUpgradedKeyCallback::new_native_binder(tx).unwrap();
+        assert!(cb.onError("oh no! it failed").is_ok());
 
         let result = block_on(rx).unwrap();
         assert_eq!(
