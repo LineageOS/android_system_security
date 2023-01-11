@@ -14,7 +14,7 @@
 
 //! Helper wrapper around RKPD interface.
 
-use crate::error::{map_binder_status_code, map_or_log_err, Error, ErrorCode};
+use crate::error::{map_binder_status_code, Error, ErrorCode};
 use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::utils::watchdog as wd;
@@ -60,28 +60,10 @@ struct GetRegistrationCallback {
 impl GetRegistrationCallback {
     pub fn new_native_binder(
         registration_tx: oneshot::Sender<Result<binder::Strong<dyn IRegistration>>>,
-    ) -> Result<Strong<dyn IGetRegistrationCallback>> {
+    ) -> Strong<dyn IGetRegistrationCallback> {
         let result: Self =
             GetRegistrationCallback { registration_tx: SafeSender::new(registration_tx) };
-        Ok(BnGetRegistrationCallback::new_binder(result, BinderFeatures::default()))
-    }
-    fn on_success(&self, registration: &binder::Strong<dyn IRegistration>) -> Result<()> {
-        self.registration_tx.send(Ok(registration.clone()));
-        Ok(())
-    }
-    fn on_cancel(&self) -> Result<()> {
-        self.registration_tx.send(
-            Err(Error::Km(ErrorCode::OPERATION_CANCELLED))
-                .context(ks_err!("GetRegistrationCallback cancelled.")),
-        );
-        Ok(())
-    }
-    fn on_error(&self, error: &str) -> Result<()> {
-        self.registration_tx.send(
-            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
-                .context(ks_err!("GetRegistrationCallback failed: {:?}", error)),
-        );
-        Ok(())
+        BnGetRegistrationCallback::new_binder(result, BinderFeatures::default())
     }
 }
 
@@ -90,15 +72,26 @@ impl Interface for GetRegistrationCallback {}
 impl IGetRegistrationCallback for GetRegistrationCallback {
     fn onSuccess(&self, registration: &Strong<dyn IRegistration>) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onSuccess", 500);
-        map_or_log_err(self.on_success(registration), Ok)
+        self.registration_tx.send(Ok(registration.clone()));
+        Ok(())
     }
     fn onCancel(&self) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onCancel", 500);
-        map_or_log_err(self.on_cancel(), Ok)
+        log::warn!("IGetRegistrationCallback cancelled");
+        self.registration_tx.send(
+            Err(Error::Km(ErrorCode::OPERATION_CANCELLED))
+                .context(ks_err!("GetRegistrationCallback cancelled.")),
+        );
+        Ok(())
     }
     fn onError(&self, error: &str) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
-        map_or_log_err(self.on_error(error), Ok)
+        log::error!("IGetRegistrationCallback failed: '{error}'");
+        self.registration_tx.send(
+            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
+                .context(ks_err!("GetRegistrationCallback failed: {:?}", error)),
+        );
+        Ok(())
     }
 }
 
@@ -114,8 +107,7 @@ async fn get_rkpd_registration(
         .context(ks_err!("Trying to get IRPC name."))?;
 
     let (tx, rx) = oneshot::channel();
-    let cb = GetRegistrationCallback::new_native_binder(tx)
-        .context(ks_err!("Trying to create a IGetRegistrationCallback."))?;
+    let cb = GetRegistrationCallback::new_native_binder(tx);
 
     remote_provisioning
         .getRegistration(&rpc_name, &cb)
@@ -131,30 +123,9 @@ struct GetKeyCallback {
 impl GetKeyCallback {
     pub fn new_native_binder(
         key_tx: oneshot::Sender<Result<RemotelyProvisionedKey>>,
-    ) -> Result<Strong<dyn IGetKeyCallback>> {
+    ) -> Strong<dyn IGetKeyCallback> {
         let result: Self = GetKeyCallback { key_tx: SafeSender::new(key_tx) };
-        Ok(BnGetKeyCallback::new_binder(result, BinderFeatures::default()))
-    }
-    fn on_success(&self, key: &RemotelyProvisionedKey) -> Result<()> {
-        self.key_tx.send(Ok(RemotelyProvisionedKey {
-            keyBlob: key.keyBlob.clone(),
-            encodedCertChain: key.encodedCertChain.clone(),
-        }));
-        Ok(())
-    }
-    fn on_cancel(&self) -> Result<()> {
-        self.key_tx.send(
-            Err(Error::Km(ErrorCode::OPERATION_CANCELLED))
-                .context(ks_err!("GetKeyCallback cancelled.")),
-        );
-        Ok(())
-    }
-    fn on_error(&self, error: &str) -> Result<()> {
-        self.key_tx.send(
-            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
-                .context(ks_err!("GetKeyCallback failed: {:?}", error)),
-        );
-        Ok(())
+        BnGetKeyCallback::new_binder(result, BinderFeatures::default())
     }
 }
 
@@ -163,15 +134,29 @@ impl Interface for GetKeyCallback {}
 impl IGetKeyCallback for GetKeyCallback {
     fn onSuccess(&self, key: &RemotelyProvisionedKey) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetKeyCallback::onSuccess", 500);
-        map_or_log_err(self.on_success(key), Ok)
+        self.key_tx.send(Ok(RemotelyProvisionedKey {
+            keyBlob: key.keyBlob.clone(),
+            encodedCertChain: key.encodedCertChain.clone(),
+        }));
+        Ok(())
     }
     fn onCancel(&self) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetKeyCallback::onCancel", 500);
-        map_or_log_err(self.on_cancel(), Ok)
+        log::warn!("IGetKeyCallback cancelled");
+        self.key_tx.send(
+            Err(Error::Km(ErrorCode::OPERATION_CANCELLED))
+                .context(ks_err!("GetKeyCallback cancelled.")),
+        );
+        Ok(())
     }
     fn onError(&self, error: &str) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetKeyCallback::onError", 500);
-        map_or_log_err(self.on_error(error), Ok)
+        log::error!("IGetKeyCallback failed: {error}");
+        self.key_tx.send(
+            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
+                .context(ks_err!("GetKeyCallback failed: {:?}", error)),
+        );
+        Ok(())
     }
 }
 
@@ -184,8 +169,7 @@ async fn get_rkpd_attestation_key_async(
         .context(ks_err!("Trying to get to IRegistration service."))?;
 
     let (tx, rx) = oneshot::channel();
-    let cb = GetKeyCallback::new_native_binder(tx)
-        .context(ks_err!("Trying to create a IGetKeyCallback."))?;
+    let cb = GetKeyCallback::new_native_binder(tx);
 
     registration
         .getKey(caller_uid.try_into().unwrap(), &cb)
@@ -201,22 +185,9 @@ struct StoreUpgradedKeyCallback {
 impl StoreUpgradedKeyCallback {
     pub fn new_native_binder(
         completer: oneshot::Sender<Result<()>>,
-    ) -> Result<Strong<dyn IStoreUpgradedKeyCallback>> {
+    ) -> Strong<dyn IStoreUpgradedKeyCallback> {
         let result: Self = StoreUpgradedKeyCallback { completer: SafeSender::new(completer) };
-        Ok(BnStoreUpgradedKeyCallback::new_binder(result, BinderFeatures::default()))
-    }
-
-    fn on_success(&self) -> Result<()> {
-        self.completer.send(Ok(()));
-        Ok(())
-    }
-
-    fn on_error(&self, error: &str) -> Result<()> {
-        self.completer.send(
-            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
-                .context(ks_err!("Failed to store upgraded key: {:?}", error)),
-        );
-        Ok(())
+        BnStoreUpgradedKeyCallback::new_binder(result, BinderFeatures::default())
     }
 }
 
@@ -225,12 +196,18 @@ impl Interface for StoreUpgradedKeyCallback {}
 impl IStoreUpgradedKeyCallback for StoreUpgradedKeyCallback {
     fn onSuccess(&self) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onSuccess", 500);
-        map_or_log_err(self.on_success(), Ok)
+        self.completer.send(Ok(()));
+        Ok(())
     }
 
     fn onError(&self, error: &str) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
-        map_or_log_err(self.on_error(error), Ok)
+        log::error!("IGetRegistrationCallback failed: {error}");
+        self.completer.send(
+            Err(Error::Km(ErrorCode::UNKNOWN_ERROR))
+                .context(ks_err!("Failed to store upgraded key: {:?}", error)),
+        );
+        Ok(())
     }
 }
 
@@ -244,8 +221,7 @@ async fn store_rkpd_attestation_key_async(
         .context(ks_err!("Trying to get to IRegistration service."))?;
 
     let (tx, rx) = oneshot::channel();
-    let cb = StoreUpgradedKeyCallback::new_native_binder(tx)
-        .context(ks_err!("Trying to create a StoreUpgradedKeyCallback."))?;
+    let cb = StoreUpgradedKeyCallback::new_native_binder(tx);
 
     registration
         .storeUpgradedKeyAsync(key_blob, upgraded_blob, &cb)
@@ -317,7 +293,7 @@ mod tests {
 
     fn get_mock_registration() -> Result<binder::Strong<dyn IRegistration>> {
         let (tx, rx) = oneshot::channel();
-        let cb = GetRegistrationCallback::new_native_binder(tx).unwrap();
+        let cb = GetRegistrationCallback::new_native_binder(tx);
         let mock_registration = MockRegistration::new_native_binder();
 
         assert!(cb.onSuccess(&mock_registration).is_ok());
@@ -333,7 +309,7 @@ mod tests {
     #[test]
     fn test_get_registration_cb_cancel() {
         let (tx, rx) = oneshot::channel();
-        let cb = GetRegistrationCallback::new_native_binder(tx).unwrap();
+        let cb = GetRegistrationCallback::new_native_binder(tx);
         assert!(cb.onCancel().is_ok());
 
         let result = block_on(rx).unwrap();
@@ -346,7 +322,7 @@ mod tests {
     #[test]
     fn test_get_registration_cb_error() {
         let (tx, rx) = oneshot::channel();
-        let cb = GetRegistrationCallback::new_native_binder(tx).unwrap();
+        let cb = GetRegistrationCallback::new_native_binder(tx);
         assert!(cb.onError("error").is_ok());
 
         let result = block_on(rx).unwrap();
@@ -361,7 +337,7 @@ mod tests {
         let mock_key =
             RemotelyProvisionedKey { keyBlob: vec![1, 2, 3], encodedCertChain: vec![4, 5, 6] };
         let (tx, rx) = oneshot::channel();
-        let cb = GetKeyCallback::new_native_binder(tx).unwrap();
+        let cb = GetKeyCallback::new_native_binder(tx);
         assert!(cb.onSuccess(&mock_key).is_ok());
 
         let key = block_on(rx).unwrap().unwrap();
@@ -371,7 +347,7 @@ mod tests {
     #[test]
     fn test_get_key_cb_cancel() {
         let (tx, rx) = oneshot::channel();
-        let cb = GetKeyCallback::new_native_binder(tx).unwrap();
+        let cb = GetKeyCallback::new_native_binder(tx);
         assert!(cb.onCancel().is_ok());
 
         let result = block_on(rx).unwrap();
@@ -384,7 +360,7 @@ mod tests {
     #[test]
     fn test_get_key_cb_error() {
         let (tx, rx) = oneshot::channel();
-        let cb = GetKeyCallback::new_native_binder(tx).unwrap();
+        let cb = GetKeyCallback::new_native_binder(tx);
         assert!(cb.onError("error").is_ok());
 
         let result = block_on(rx).unwrap();
@@ -395,9 +371,9 @@ mod tests {
     }
 
     #[test]
-    fn test_store_upgraded_key_cb_success() {
+    fn test_store_upgraded_cb_success() {
         let (tx, rx) = oneshot::channel();
-        let cb = StoreUpgradedKeyCallback::new_native_binder(tx).unwrap();
+        let cb = StoreUpgradedKeyCallback::new_native_binder(tx);
         assert!(cb.onSuccess().is_ok());
 
         block_on(rx).unwrap().unwrap();
@@ -406,7 +382,7 @@ mod tests {
     #[test]
     fn test_store_upgraded_key_cb_error() {
         let (tx, rx) = oneshot::channel();
-        let cb = StoreUpgradedKeyCallback::new_native_binder(tx).unwrap();
+        let cb = StoreUpgradedKeyCallback::new_native_binder(tx);
         assert!(cb.onError("oh no! it failed").is_ok());
 
         let result = block_on(rx).unwrap();
