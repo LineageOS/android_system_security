@@ -417,16 +417,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_get_rkpd_attestation_key() {
+        binder::ProcessState::start_thread_pool();
         let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, 0).unwrap();
         assert!(!key.keyBlob.is_empty());
         assert!(!key.encodedCertChain.is_empty());
     }
 
     #[test]
-    #[ignore]
     fn test_get_rkpd_attestation_key_same_caller() {
+        binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let caller_uid = 0;
 
@@ -439,8 +439,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_get_rkpd_attestation_key_different_caller() {
+        binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
 
         // Different callers should be getting different keys.
@@ -452,8 +452,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_store_rkpd_attestation_key() {
+        binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, 0).unwrap();
 
