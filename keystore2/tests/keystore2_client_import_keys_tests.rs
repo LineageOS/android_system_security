@@ -35,7 +35,7 @@ use keystore2_test_utils::{
 use crate::ffi_test_utils::{create_wrapped_key, create_wrapped_key_additional_auth_data};
 
 use crate::keystore2_client_test_utils::{
-    encrypt_secure_key, encrypt_transport_key, has_trusty_keymint,
+    encrypt_secure_key, encrypt_transport_key, has_default_keymint,
     perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
     perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
 };
@@ -286,7 +286,7 @@ fn keystore2_rsa_import_key_with_multipurpose_fails_incompt_purpose_error() {
         key_generations::RSA_2048_KEY,
     ));
 
-    if has_trusty_keymint() {
+    if has_default_keymint() {
         assert!(result.is_err());
         assert_eq!(Error::Km(ErrorCode::INCOMPATIBLE_PURPOSE), result.unwrap_err());
     } else {
