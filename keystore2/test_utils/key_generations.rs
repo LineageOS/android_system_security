@@ -58,8 +58,6 @@ pub struct KeyParams {
     pub block_mode: Option<BlockMode>,
     /// Attestation challenge.
     pub att_challenge: Option<Vec<u8>>,
-    /// Attestation app id.
-    pub att_app_id: Option<Vec<u8>>,
 }
 
 /// DER-encoded PKCS#8 format RSA key. Generated using:
@@ -338,7 +336,6 @@ pub fn generate_ec_p256_signing_key(
     nspace: i64,
     alias: Option<String>,
     att_challenge: Option<&[u8]>,
-    att_app_id: Option<&[u8]>,
 ) -> binder::Result<KeyMetadata> {
     let mut key_attest = false;
     let mut gen_params = AuthSetBuilder::new()
@@ -352,11 +349,6 @@ pub fn generate_ec_p256_signing_key(
     if let Some(challenge) = att_challenge {
         key_attest = true;
         gen_params = gen_params.clone().attestation_challenge(challenge.to_vec());
-    }
-
-    if let Some(app_id) = att_app_id {
-        key_attest = true;
-        gen_params = gen_params.clone().attestation_app_id(app_id.to_vec());
     }
 
     match sec_level.generateKey(
@@ -453,9 +445,6 @@ pub fn generate_rsa_key(
     if let Some(value) = &key_params.att_challenge {
         gen_params = gen_params.attestation_challenge(value.to_vec())
     }
-    if let Some(value) = &key_params.att_app_id {
-        gen_params = gen_params.attestation_app_id(value.to_vec())
-    }
 
     let key_metadata = sec_level.generateKey(
         &KeyDescriptor { domain, nspace, alias, blob: None },
@@ -468,8 +457,7 @@ pub fn generate_rsa_key(
     // Must have a public key.
     assert!(key_metadata.certificate.is_some());
 
-    if attest_key.is_none() && key_params.att_challenge.is_some() && key_params.att_app_id.is_some()
-    {
+    if attest_key.is_none() && key_params.att_challenge.is_some() {
         // Should have an attestation record.
         assert!(key_metadata.certificateChain.is_some());
     } else {
@@ -578,7 +566,6 @@ pub fn generate_attestation_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     algorithm: Algorithm,
     att_challenge: &[u8],
-    att_app_id: &[u8],
 ) -> binder::Result<KeyMetadata> {
     assert!(algorithm == Algorithm::RSA || algorithm == Algorithm::EC);
 
@@ -597,7 +584,6 @@ pub fn generate_attestation_key(
                 mgf_digest: None,
                 block_mode: None,
                 att_challenge: Some(att_challenge.to_vec()),
-                att_app_id: Some(att_app_id.to_vec()),
             },
             None,
         )
@@ -607,7 +593,6 @@ pub fn generate_attestation_key(
         let metadata = generate_ec_attestation_key(
             sec_level,
             att_challenge,
-            att_app_id,
             Digest::SHA_2_256,
             EcCurve::P_256,
         )
@@ -622,7 +607,6 @@ pub fn generate_attestation_key(
 pub fn generate_ec_attestation_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     att_challenge: &[u8],
-    att_app_id: &[u8],
     digest: Digest,
     ec_curve: EcCurve,
 ) -> binder::Result<KeyMetadata> {
@@ -633,8 +617,7 @@ pub fn generate_ec_attestation_key(
         .purpose(KeyPurpose::ATTEST_KEY)
         .ec_curve(ec_curve)
         .digest(digest)
-        .attestation_challenge(att_challenge.to_vec())
-        .attestation_app_id(att_app_id.to_vec());
+        .attestation_challenge(att_challenge.to_vec());
 
     let attestation_key_metadata = sec_level.generateKey(
         &KeyDescriptor {
@@ -662,7 +645,6 @@ pub fn generate_ec_256_attested_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     alias: Option<String>,
     att_challenge: &[u8],
-    att_app_id: &[u8],
     attest_key: &KeyDescriptor,
 ) -> binder::Result<KeyMetadata> {
     let ec_gen_params = AuthSetBuilder::new()
@@ -672,8 +654,7 @@ pub fn generate_ec_256_attested_key(
         .purpose(KeyPurpose::VERIFY)
         .digest(Digest::SHA_2_256)
         .ec_curve(EcCurve::P_256)
-        .attestation_challenge(att_challenge.to_vec())
-        .attestation_app_id(att_app_id.to_vec());
+        .attestation_challenge(att_challenge.to_vec());
 
     let ec_key_metadata = sec_level
         .generateKey(
