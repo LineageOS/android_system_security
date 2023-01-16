@@ -84,7 +84,8 @@ macro_rules! skip_test_if_no_app_attest_key_feature {
     };
 }
 
-pub fn has_trusty_keymint() -> bool {
+/// Indicate whether the default device is KeyMint (rather than Keymaster).
+pub fn has_default_keymint() -> bool {
     binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
         .expect("Could not check for declared keymint interface")
 }
@@ -102,10 +103,9 @@ pub fn create_signing_operation(
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
-    let key_metadata = key_generations::generate_ec_p256_signing_key(
-        &sec_level, domain, nspace, alias, None, None,
-    )
-    .unwrap();
+    let key_metadata =
+        key_generations::generate_ec_p256_signing_key(&sec_level, domain, nspace, alias, None)
+            .unwrap();
 
     sec_level.createOperation(
         &key_metadata.key,

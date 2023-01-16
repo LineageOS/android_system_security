@@ -307,7 +307,6 @@ fn keystore2_ops_prune_test() {
         key_generations::SELINUX_SHELL_NAMESPACE,
         Some(alias),
         None,
-        None,
     )
     .unwrap();
 
