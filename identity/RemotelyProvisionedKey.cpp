@@ -42,6 +42,8 @@ using ::android::security::rkp::IRegistration;
 using ::android::security::rkp::IRemoteProvisioning;
 using ::android::security::rkp::RemotelyProvisionedKey;
 
+constexpr const char* kRemoteProvisioningServiceName = "remote_provisioning";
+
 std::optional<String16> findRpcNameById(std::string_view targetRpcId) {
     auto deviceManifest = vintf::VintfObject::GetDeviceHalManifest();
     auto instances = deviceManifest->getAidlInstances("android.hardware.security.keymint",
@@ -182,7 +184,7 @@ getRpcKeyFuture(const sp<IRemotelyProvisionedComponent>& rpc, int32_t keyId) {
     }
 
     sp<IRemoteProvisioning> remoteProvisioning =
-        android::waitForService<IRemoteProvisioning>(IRemoteProvisioning::descriptor);
+        android::waitForService<IRemoteProvisioning>(String16(kRemoteProvisioningServiceName));
     if (!remoteProvisioning) {
         LOG(ERROR) << "Failed to get IRemoteProvisioning HAL";
         return std::nullopt;
