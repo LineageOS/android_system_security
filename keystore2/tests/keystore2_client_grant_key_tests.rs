@@ -44,7 +44,6 @@ fn generate_ec_key_and_grant_to_user(
         key_generations::SELINUX_SHELL_NAMESPACE,
         Some(alias),
         None,
-        None,
     )
     .unwrap();
 

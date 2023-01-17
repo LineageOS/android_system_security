@@ -209,7 +209,6 @@ fn keystore2_get_key_entry_blob_fail() {
         key_generations::SELINUX_SHELL_NAMESPACE,
         None,
         None,
-        None,
     )
     .unwrap();
 

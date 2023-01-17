@@ -71,15 +71,6 @@ impl AuthSetBuilder {
         self
     }
 
-    /// Add Attestation-ID.
-    pub fn attestation_app_id(mut self, b: Vec<u8>) -> Self {
-        self.0.push(KeyParameter {
-            tag: Tag::ATTESTATION_APPLICATION_ID,
-            value: KeyParameterValue::Blob(b),
-        });
-        self
-    }
-
     /// Add No_auth_required.
     pub fn no_auth_required(mut self) -> Self {
         self.0.push(KeyParameter {
