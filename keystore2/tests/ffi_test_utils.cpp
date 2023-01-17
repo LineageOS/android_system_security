@@ -237,7 +237,7 @@ CxxResult buildAsn1DerEncodedWrappedKeyDescription() {
     }
 
     // Perform ASN.1 DER encoding of KeyDescription.
-    size_t asn1_data_len = i2d_TEST_KEY_DESCRIPTION(key_description.get(), nullptr);
+    int asn1_data_len = i2d_TEST_KEY_DESCRIPTION(key_description.get(), nullptr);
     if (asn1_data_len < 0) {
         cxx_result.error = keymaster::TranslateLastOpenSslError();
         return cxx_result;
@@ -341,7 +341,7 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
     }
 
     // ASN.1 DER-encoding of secure key wrapper.
-    size_t asn1_data_len = i2d_TEST_SECURE_KEY_WRAPPER(sec_key_wrapper.get(), nullptr);
+    int asn1_data_len = i2d_TEST_SECURE_KEY_WRAPPER(sec_key_wrapper.get(), nullptr);
     if (asn1_data_len < 0) {
         cxx_result.error = keymaster::TranslateLastOpenSslError();
         return cxx_result;
