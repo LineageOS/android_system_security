@@ -149,9 +149,7 @@ fn keystore2_attest_ec_key_success() {
         let mut cert_chain: Vec<u8> = Vec::new();
         cert_chain.extend(attestation_key_metadata.certificate.as_ref().unwrap());
         cert_chain.extend(attestation_key_metadata.certificateChain.as_ref().unwrap());
-        // The server seems to be issuing test certs with invalid subject names.
-        // Re-enable when b/263254184 is fixed
-        // validate_certchain(&cert_chain).expect("Error while validating cert chain.");
+        validate_certchain(&cert_chain).expect("Error while validating cert chain.");
 
         // Create EC key and use attestation key to sign it.
         let ec_key_alias = format!("ks_ec_attested_test_key_{}", getuid());
@@ -168,9 +166,7 @@ fn keystore2_attest_ec_key_success() {
         cert_chain.extend(attestation_key_metadata.certificate.as_ref().unwrap());
         cert_chain.extend(attestation_key_metadata.certificateChain.as_ref().unwrap());
 
-        // The server seems to be issuing test certs with invalid subject names.
-        // Re-enable when b/263254184 is fixed
-        // validate_certchain(&cert_chain).expect("Error while validating cert chain.");
+        validate_certchain(&cert_chain).expect("Error while validating cert chain.");
     }
 }
 
