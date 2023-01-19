@@ -16,8 +16,6 @@
 
 #![feature(slice_internals)]
 #![no_main]
-#[macro_use]
-extern crate libfuzzer_sys;
 
 use core::slice::memchr;
 use keystore2::{legacy_blob::LegacyBlobLoader, utils::ui_opts_2_compat};
@@ -31,7 +29,7 @@ use keystore2_crypto::{
 };
 use keystore2_selinux::{check_access, getpidcon, setcon, Backend, Context, KeystoreKeyBackend};
 use keystore2_vintf::{get_aidl_instances, get_hidl_instances};
-use libfuzzer_sys::arbitrary::Arbitrary;
+use libfuzzer_sys::{arbitrary::Arbitrary, fuzz_target};
 use std::{ffi::CString, sync::Arc};
 
 // Avoid allocating too much memory and crashing the fuzzer.
