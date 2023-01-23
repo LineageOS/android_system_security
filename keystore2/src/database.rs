@@ -1859,7 +1859,8 @@ impl KeystoreDB {
                 let (_, hw_info) = get_keymint_dev_by_uuid(km_uuid)
                     .context("Error in retrieving keymint device by UUID.")?;
                 log_rkp_error_stats(MetricsRkpError::OUT_OF_KEYS, &hw_info.securityLevel);
-                return Err(KsError::Rc(ResponseCode::OUT_OF_KEYS)).context("Out of keys.");
+                return Err(KsError::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
+                    .context("Out of keys.");
             } else if result > 1 {
                 return Err(KsError::sys())
                     .context(format!("Expected to update 1 entry, instead updated {}", result));
