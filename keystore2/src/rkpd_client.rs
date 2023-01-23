@@ -438,12 +438,22 @@ mod tests {
     }
 
     #[test]
+    // Couple of things to note:
+    // 1. This test must never run with UID of keystore. Otherwise, it can mess up keys stored by
+    //    keystore.
+    // 2. Storing and reading the stored key is prone to race condition. So, we only do this in one
+    //    test case.
     fn test_store_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let key_id = get_next_key_id();
         let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        let new_blob: [u8; 8] = rand::random();
 
-        assert!(store_rkpd_attestation_key(&sec_level, &key.keyBlob, &key.keyBlob).is_ok());
+        assert!(store_rkpd_attestation_key(&sec_level, &key.keyBlob, &new_blob).is_ok());
+
+        let new_key =
+            get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        assert_eq!(new_key.keyBlob, new_blob);
     }
 }
