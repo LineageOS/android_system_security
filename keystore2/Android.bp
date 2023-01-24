@@ -158,6 +158,7 @@ rust_test {
         "watchdog",
         "keystore2_blob_test_utils",
     ],
+    require_root: true,
 }
 
 rust_defaults {
