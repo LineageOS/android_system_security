@@ -44,7 +44,6 @@ rust_defaults {
         "android.security.rkp_aidl-rust",
         "libanyhow",
         "libbinder_rs",
-        "libfutures",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
@@ -60,6 +59,7 @@ rust_defaults {
         "libserde",
         "libserde_cbor",
         "libthiserror",
+        "libtokio",
     ],
     shared_libs: [
         "libcutils",
