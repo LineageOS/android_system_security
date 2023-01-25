@@ -253,6 +253,7 @@ pub fn store_rkpd_attestation_key(
 mod tests {
     use super::*;
     use android_security_rkp_aidl::aidl::android::security::rkp::IRegistration::BnRegistration;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
     #[derive(Default)]
@@ -298,6 +299,13 @@ mod tests {
 
         assert!(cb.onSuccess(&mock_registration).is_ok());
         block_on(rx).unwrap()
+    }
+
+    // Using the same key ID makes test cases race with each other. So, we use separate key IDs for
+    // different test cases.
+    fn get_next_key_id() -> u32 {
+        static ID: AtomicU32 = AtomicU32::new(0);
+        ID.fetch_add(1, Ordering::Relaxed)
     }
 
     #[test]
@@ -404,11 +412,11 @@ mod tests {
     fn test_get_rkpd_attestation_key_same_caller() {
         binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
-        let caller_uid = 0;
+        let key_id = get_next_key_id();
 
         // Multiple calls should return the same key.
-        let first_key = get_rkpd_attestation_key(&sec_level, caller_uid).unwrap();
-        let second_key = get_rkpd_attestation_key(&sec_level, caller_uid).unwrap();
+        let first_key = get_rkpd_attestation_key(&sec_level, key_id).unwrap();
+        let second_key = get_rkpd_attestation_key(&sec_level, key_id).unwrap();
 
         assert_eq!(first_key.keyBlob, second_key.keyBlob);
         assert_eq!(first_key.encodedCertChain, second_key.encodedCertChain);
@@ -418,21 +426,34 @@ mod tests {
     fn test_get_rkpd_attestation_key_different_caller() {
         binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
+        let first_key_id = get_next_key_id();
+        let second_key_id = get_next_key_id();
 
         // Different callers should be getting different keys.
-        let first_key = get_rkpd_attestation_key(&sec_level, 1).unwrap();
-        let second_key = get_rkpd_attestation_key(&sec_level, 2).unwrap();
+        let first_key = get_rkpd_attestation_key(&sec_level, first_key_id).unwrap();
+        let second_key = get_rkpd_attestation_key(&sec_level, second_key_id).unwrap();
 
         assert_ne!(first_key.keyBlob, second_key.keyBlob);
         assert_ne!(first_key.encodedCertChain, second_key.encodedCertChain);
     }
 
     #[test]
+    // Couple of things to note:
+    // 1. This test must never run with UID of keystore. Otherwise, it can mess up keys stored by
+    //    keystore.
+    // 2. Storing and reading the stored key is prone to race condition. So, we only do this in one
+    //    test case.
     fn test_store_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
         let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
-        let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, 0).unwrap();
+        let key_id = get_next_key_id();
+        let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        let new_blob: [u8; 8] = rand::random();
 
-        assert!(store_rkpd_attestation_key(&sec_level, &key.keyBlob, &key.keyBlob).is_ok());
+        assert!(store_rkpd_attestation_key(&sec_level, &key.keyBlob, &new_blob).is_ok());
+
+        let new_key =
+            get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        assert_eq!(new_key.keyBlob, new_blob);
     }
 }
