@@ -502,10 +502,8 @@ impl LegacyKeystore {
     ) -> Result<bool> {
         let blob = legacy_loader
             .read_legacy_keystore_entry(uid, alias, |ciphertext, iv, tag, _salt, _key_size| {
-                if let Some(key) = SUPER_KEY
-                    .read()
-                    .unwrap()
-                    .get_per_boot_key_by_user_id(uid_to_android_user(uid as u32))
+                if let Some(key) =
+                    SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(uid))
                 {
                     key.decrypt(ciphertext, iv, tag)
                 } else {

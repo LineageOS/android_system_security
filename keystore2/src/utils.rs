@@ -209,6 +209,7 @@ pub fn key_parameters_to_authorizations(
     parameters.into_iter().map(|p| p.into_authorization()).collect()
 }
 
+#[allow(clippy::unnecessary_cast)]
 /// This returns the current time (in milliseconds) as an instance of a monotonic clock,
 /// by invoking the system call since Rust does not support getting monotonic time instance
 /// as an integer.
