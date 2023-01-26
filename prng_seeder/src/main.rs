@@ -37,7 +37,7 @@ use tokio::{io::AsyncWriteExt, net::UnixListener as TokioUnixListener};
 
 use crate::conditioner::ConditionerBuilder;
 
-#[derive(Debug, clap::Parser)]
+#[derive(Debug, Parser)]
 struct Cli {
     #[clap(long, default_value = "/dev/hw_random")]
     source: PathBuf,
@@ -134,4 +134,15 @@ fn main() {
     // Logs are sometimes mysteriously not being logged, so print too
     println!("prng_seeder: launch terminated: {:?}", e);
     std::process::exit(-1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn verify_cli() {
+        Cli::command().debug_assert();
+    }
 }
