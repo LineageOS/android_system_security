@@ -94,7 +94,7 @@ extern "C" fn confirmation_result_callback(
             // If the pointer and size is not nullptr and not 0 respectively, the C/C++
             // implementation must pass a valid pointer to an allocation of at least size bytes,
             // and the pointer must be valid until this function returns.
-            unsafe { slice::from_raw_parts(tbs_message, s as usize) },
+            unsafe { slice::from_raw_parts(tbs_message, s) },
         ),
     };
     let confirmation_token = match (confirmation_token.is_null(), confirmation_token_size) {
@@ -104,7 +104,7 @@ extern "C" fn confirmation_result_callback(
             // If the pointer and size is not nullptr and not 0 respectively, the C/C++
             // implementation must pass a valid pointer to an allocation of at least size bytes,
             // and the pointer must be valid until this function returns.
-            unsafe { slice::from_raw_parts(confirmation_token, s as usize) },
+            unsafe { slice::from_raw_parts(confirmation_token, s) },
         ),
     };
     hal_cb(rc, tbs_message, confirmation_token)
@@ -178,7 +178,7 @@ impl ApcHal {
                 cb,
                 prompt_text.as_ptr(),
                 extra_data.as_ptr(),
-                extra_data.len() as usize,
+                extra_data.len(),
                 locale.as_ptr(),
                 ui_opts,
             )
