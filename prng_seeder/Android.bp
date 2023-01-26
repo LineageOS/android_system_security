@@ -63,3 +63,20 @@ rust_binary {
     installable: false,
     prefer_rlib: true,
 }
+
+rust_test {
+    name: "prng_seeder.test",
+    edition: "2021",
+    srcs: ["src/main.rs"],
+    rustlibs: [
+        "libanyhow",
+        "libbssl_ffi",
+        "libclap",
+        "libcutils_socket_bindgen",
+        "liblogger",
+        "liblog_rust",
+        "libnix",
+        "libtokio",
+    ],
+    test_suites: ["general-tests"],
+}
