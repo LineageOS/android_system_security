@@ -20,18 +20,19 @@
 #include <optional>
 
 #include <android-base/logging.h>
+#include <android-base/properties.h>
 #include <android/hardware/security/keymint/IRemotelyProvisionedComponent.h>
 #include <android/hardware/security/keymint/RpcHardwareInfo.h>
 #include <android/security/remoteprovisioning/IRemotelyProvisionedKeyPool.h>
 #include <android/security/remoteprovisioning/RemotelyProvisionedKey.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
-#include <server_configurable_flags/get_flags.h>
 #include <vintf/VintfObject.h>
 
 #include "Credential.h"
 #include "CredentialData.h"
 #include "CredentialStore.h"
+#include "RemotelyProvisionedKey.h"
 #include "Session.h"
 #include "Util.h"
 #include "WritableCredential.h"
@@ -45,10 +46,8 @@ using ::android::security::remoteprovisioning::IRemotelyProvisionedKeyPool;
 using ::android::security::rkp::IRemoteProvisioning;
 
 bool useRkpd() {
-    std::string useRkpdFlagValue = server_configurable_flags::GetServerConfigurableFlag(
-        "remote_key_provisioning_native", "enable_rkpd",
-        /*default_value=*/"false");
-    return useRkpdFlagValue == "true";
+    return android::base::GetBoolProperty("remote_provisioning.enable_rkpd",
+                                          /*default_value=*/false);
 }
 
 }  // namespace
@@ -70,31 +69,14 @@ bool CredentialStore::init() {
             LOG(ERROR) << "Error getting remotely provisioned component: " << status;
             return false;
         }
-        useRkpd_ = useRkpd();
-
-        if (useRkpd_) {
-            uid_t callingUid = android::IPCThreadState::self()->getCallingUid();
-            auto rpcKeyFuture = getRpcKeyFuture(rpc_, callingUid);
-            if (!rpcKeyFuture) {
-                LOG(ERROR) << "Error in getRpcKeyFuture()";
-                return false;
-            }
-            rpcKeyFuture_ = std::move(*rpcKeyFuture);
-        } else {
-            keyPool_ = android::waitForService<IRemotelyProvisionedKeyPool>(
-                IRemotelyProvisionedKeyPool::descriptor);
-            if (!keyPool_) {
-                LOG(ERROR) << "Error getting IRemotelyProvisionedKeyPool HAL with service name '"
-                           << IRemotelyProvisionedKeyPool::descriptor << "'";
-                return false;
-            }
-        }
     }
 
     LOG(INFO) << "Connected to Identity Credential HAL with API version " << halApiVersion_
               << " and name '" << hwInfo_.credentialStoreName << "' authored by '"
               << hwInfo_.credentialStoreAuthorName << "' with chunk size " << hwInfo_.dataChunkSize
-              << " and directoAccess set to " << (hwInfo_.isDirectAccess ? "true" : "false");
+              << " directoAccess set to " << (hwInfo_.isDirectAccess ? "true" : "false")
+              << " and remote key provisioning support "
+              << (hwInfo_.isRemoteKeyProvisioningSupported ? "enabled" : "disabled");
     return true;
 }
 
@@ -140,7 +122,9 @@ Status CredentialStore::createCredential(const std::string& credentialName,
     if (hwInfo_.isRemoteKeyProvisioningSupported) {
         status = setRemotelyProvisionedAttestationKey(halWritableCredential.get());
         if (!status.isOk()) {
-            return halStatusToGenericError(status);
+            LOG(WARNING) << status.toString8()
+                         << "\nUnable to fetch remotely provisioned attestation key, falling back "
+                         << "to the factory-provisioned attestation key.";
         }
     }
 
@@ -205,13 +189,21 @@ Status CredentialStore::setRemotelyProvisionedAttestationKey(
     std::vector<uint8_t> encodedCertChain;
     Status status;
 
-    if (useRkpd_) {
-        if (rpcKeyFuture_.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+    if (useRkpd()) {
+        LOG(INFO) << "Fetching attestation key from RKPD";
+
+        uid_t callingUid = android::IPCThreadState::self()->getCallingUid();
+        auto rpcKeyFuture = getRpcKeyFuture(rpc_, callingUid);
+        if (!rpcKeyFuture) {
+            return Status::fromServiceSpecificError(ERROR_GENERIC, "Error in getRpcKeyFuture()");
+        }
+
+        if (rpcKeyFuture->wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
             return Status::fromServiceSpecificError(
                 ERROR_GENERIC, "Waiting for remotely provisioned attestation key timed out");
         }
 
-        std::optional<::android::security::rkp::RemotelyProvisionedKey> key = rpcKeyFuture_.get();
+        std::optional<::android::security::rkp::RemotelyProvisionedKey> key = rpcKeyFuture->get();
         if (!key) {
             return Status::fromServiceSpecificError(
                 ERROR_GENERIC, "Failed to get remotely provisioned attestation key");
@@ -225,6 +217,16 @@ Status CredentialStore::setRemotelyProvisionedAttestationKey(
         keyBlob = std::move(key->keyBlob);
         encodedCertChain = std::move(key->encodedCertChain);
     } else {
+        LOG(INFO) << "Fetching attestation key from remotely provisioned key pool.";
+
+        sp<IRemotelyProvisionedKeyPool> keyPool =
+            android::waitForService<IRemotelyProvisionedKeyPool>(
+                IRemotelyProvisionedKeyPool::descriptor);
+        if (!keyPool) {
+            return Status::fromServiceSpecificError(
+                ERROR_GENERIC, "Error getting IRemotelyProvisionedKeyPool HAL");
+        }
+
         std::optional<std::string> rpcId = getRpcId(rpc_);
         if (!rpcId) {
             return Status::fromServiceSpecificError(
@@ -233,11 +235,9 @@ Status CredentialStore::setRemotelyProvisionedAttestationKey(
 
         uid_t callingUid = android::IPCThreadState::self()->getCallingUid();
         ::android::security::remoteprovisioning::RemotelyProvisionedKey key;
-        Status status = keyPool_->getAttestationKey(callingUid, *rpcId, &key);
+        Status status = keyPool->getAttestationKey(callingUid, *rpcId, &key);
         if (!status.isOk()) {
-            LOG(WARNING) << "Unable to fetch remotely provisioned attestation key, falling back "
-                         << "to the factory-provisioned attestation key.";
-            return Status::ok();
+            return status;
         }
 
         keyBlob = std::move(key.keyBlob);

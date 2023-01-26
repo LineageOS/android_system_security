@@ -47,7 +47,7 @@ cc_binary {
         "android.hardware.identity-support-lib",
         "android.hardware.keymaster@4.0",
         "android.security.authorization-ndk",
-	"android.security.remoteprovisioning-cpp",
+        "android.security.remoteprovisioning-cpp",
         "libbase",
         "libbinder",
         "libbinder_ndk",
@@ -59,7 +59,6 @@ cc_binary {
         "libutils",
         "libutilscallstack",
         "libvintf",
-	"server_configurable_flags",
     ],
     static_libs: [
         "android.hardware.security.rkp-V3-cpp",
