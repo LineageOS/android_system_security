@@ -321,7 +321,7 @@ impl LegacyBlobLoader {
                     acc.push(c as char);
                 }
                 c => {
-                    acc.push((b'+' + (c as u8 >> 6)) as char);
+                    acc.push((b'+' + (c >> 6)) as char);
                     acc.push((b'0' + (c & 0x3F)) as char);
                 }
             };
