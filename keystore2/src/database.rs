@@ -830,7 +830,7 @@ impl AuthTokenEntry {
     pub fn satisfies(&self, user_secure_ids: &[i64], auth_type: HardwareAuthenticatorType) -> bool {
         user_secure_ids.iter().any(|&sid| {
             (sid == self.auth_token.userId || sid == self.auth_token.authenticatorId)
-                && (((auth_type.0 as i32) & (self.auth_token.authenticatorType.0 as i32)) != 0)
+                && ((auth_type.0 & self.auth_token.authenticatorType.0) != 0)
         })
     }
 
@@ -4562,7 +4562,7 @@ pub mod tests {
                 DESTINATION_UID,
                 |k, av| {
                     assert_eq!(Domain::SELINUX, k.domain);
-                    assert_eq!(DESTINATION_NAMESPACE as i64, k.nspace);
+                    assert_eq!(DESTINATION_NAMESPACE, k.nspace);
                     assert!(av.is_none());
                     Ok(())
                 },
