@@ -17,7 +17,6 @@
 #ifndef SYSTEM_SECURITY_CREDENTIAL_STORE_H_
 #define SYSTEM_SECURITY_CREDENTIAL_STORE_H_
 
-#include <future>
 #include <string>
 #include <vector>
 
@@ -25,8 +24,6 @@
 #include <android/security/identity/BnCredentialStore.h>
 #include <android/security/remoteprovisioning/IRemotelyProvisionedKeyPool.h>
 #include <android/security/rkp/IRemoteProvisioning.h>
-
-#include "RemotelyProvisionedKey.h"
 
 namespace android {
 namespace security {
@@ -80,10 +77,7 @@ class CredentialStore : public BnCredentialStore {
 
     HardwareInformation hwInfo_;
 
-    bool useRkpd_;
     sp<IRemotelyProvisionedComponent> rpc_;
-    sp<IRemotelyProvisionedKeyPool> keyPool_;
-    std::future<std::optional<RemotelyProvisionedKey>> rpcKeyFuture_;
 };
 
 }  // namespace identity

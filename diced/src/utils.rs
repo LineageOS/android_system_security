@@ -256,18 +256,17 @@ pub mod cbor {
     pub fn encode_header(t: u8, n: u64, buffer: &mut dyn Write) -> Result<()> {
         match n {
             n if n < 24 => {
-                let written = buffer
-                    .write(&u8::to_be_bytes(((t as u8) << 5) | (n as u8 & 0x1F)))
-                    .with_context(|| {
-                    format!("In encode_header: Failed to write header ({}, {})", t, n)
-                })?;
+                let written =
+                    buffer.write(&u8::to_be_bytes((t << 5) | (n as u8 & 0x1F))).with_context(
+                        || format!("In encode_header: Failed to write header ({}, {})", t, n),
+                    )?;
                 if written != 1 {
                     return Err(anyhow!("In encode_header: Buffer to small. ({}, {})", t, n));
                 }
             }
             n if n <= 0xFF => {
                 let written =
-                    buffer.write(&u8::to_be_bytes(((t as u8) << 5) | (24u8 & 0x1F))).with_context(
+                    buffer.write(&u8::to_be_bytes((t << 5) | (24u8 & 0x1F))).with_context(
                         || format!("In encode_header: Failed to write header ({}, {})", t, n),
                     )?;
                 if written != 1 {
@@ -286,7 +285,7 @@ pub mod cbor {
             }
             n if n <= 0xFFFF => {
                 let written =
-                    buffer.write(&u8::to_be_bytes(((t as u8) << 5) | (25u8 & 0x1F))).with_context(
+                    buffer.write(&u8::to_be_bytes((t << 5) | (25u8 & 0x1F))).with_context(
                         || format!("In encode_header: Failed to write header ({}, {})", t, n),
                     )?;
                 if written != 1 {
@@ -305,7 +304,7 @@ pub mod cbor {
             }
             n if n <= 0xFFFFFFFF => {
                 let written =
-                    buffer.write(&u8::to_be_bytes(((t as u8) << 5) | (26u8 & 0x1F))).with_context(
+                    buffer.write(&u8::to_be_bytes((t << 5) | (26u8 & 0x1F))).with_context(
                         || format!("In encode_header: Failed to write header ({}, {})", t, n),
                     )?;
                 if written != 1 {
@@ -324,13 +323,13 @@ pub mod cbor {
             }
             n => {
                 let written =
-                    buffer.write(&u8::to_be_bytes(((t as u8) << 5) | (27u8 & 0x1F))).with_context(
+                    buffer.write(&u8::to_be_bytes((t << 5) | (27u8 & 0x1F))).with_context(
                         || format!("In encode_header: Failed to write header ({}, {})", t, n),
                     )?;
                 if written != 1 {
                     return Err(anyhow!("In encode_header: Buffer to small. ({}, {})", t, n));
                 }
-                let written = buffer.write(&u64::to_be_bytes(n as u64)).with_context(|| {
+                let written = buffer.write(&u64::to_be_bytes(n)).with_context(|| {
                     format!("In encode_header: Failed to write size ({}, {})", t, n)
                 })?;
                 if written != 8 {
