@@ -19,7 +19,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Mode::Mode as BinderMode,
 };
 use anyhow::{Context, Result};
-use dice::ContextImpl;
+use dice::{ContextImpl, DiceMode};
 use diced_open_dice_cbor as dice;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
@@ -63,13 +63,13 @@ impl dice::InputValues for InputValues<'_> {
         self.0.authorityDescriptor.as_deref()
     }
 
-    fn mode(&self) -> dice::Mode {
+    fn mode(&self) -> DiceMode {
         match self.0.mode {
-            BinderMode::NOT_INITIALIZED => dice::Mode::NotConfigured,
-            BinderMode::NORMAL => dice::Mode::Normal,
-            BinderMode::DEBUG => dice::Mode::Debug,
-            BinderMode::RECOVERY => dice::Mode::Recovery,
-            _ => dice::Mode::NotConfigured,
+            BinderMode::NOT_INITIALIZED => DiceMode::kDiceModeNotInitialized,
+            BinderMode::NORMAL => DiceMode::kDiceModeNormal,
+            BinderMode::DEBUG => DiceMode::kDiceModeDebug,
+            BinderMode::RECOVERY => DiceMode::kDiceModeMaintenance,
+            _ => DiceMode::kDiceModeNotInitialized,
         }
     }
 
