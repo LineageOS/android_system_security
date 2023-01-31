@@ -138,8 +138,8 @@ impl RemProvState {
     /// (2) if remote provisioning is present and enabled on the system. If these conditions are
     /// met, it makes an attempt to fetch the attestation key assigned to the `caller_uid`.
     ///
-    /// It returns the ResponseCode `OUT_OF_KEYS` if there is not one key currently assigned to the
-    /// `caller_uid` and there are none available to assign.
+    /// It returns the ResponseCode `OUT_OF_KEYS_TRANSIENT_ERROR` if there is not one key currently
+    /// assigned to the `caller_uid` and there are none available to assign.
     pub fn get_remotely_provisioned_attestation_key_and_certs(
         &self,
         key: &KeyDescriptor,
@@ -490,7 +490,7 @@ pub fn get_pool_status(expired_by: i64, sec_level: SecurityLevel) -> Result<Atte
 /// Fetches a remote provisioning attestation key and certificate chain inside of the
 /// returned `CertificateChain` struct if one exists for the given caller_uid. If one has not
 /// been assigned, this function will assign it. If there are no signed attestation keys
-/// available to be assigned, it will return the ResponseCode `OUT_OF_KEYS`
+/// available to be assigned, it will return the ResponseCode `OUT_OF_KEYS_TRANSIENT_ERROR`
 fn get_rem_prov_attest_key(
     domain: Domain,
     caller_uid: u32,
@@ -645,7 +645,7 @@ impl RemotelyProvisionedKeyPoolService {
     /// Fetches a remotely provisioned certificate chain and key for the given client uid that
     /// was provisioned using the IRemotelyProvisionedComponent with the given id. The same key
     /// will be returned for a given caller_uid on every request. If there are no attestation keys
-    /// available, `OUT_OF_KEYS` is returned.
+    /// available, `OUT_OF_KEYS_TRANSIENT_ERROR` is returned.
     fn get_attestation_key(
         &self,
         db: &mut KeystoreDB,
@@ -671,7 +671,7 @@ impl RemotelyProvisionedKeyPoolService {
             }),
             // It should be impossible to get `None`, but handle it just in case as a
             // precaution against future behavioral changes in `get_rem_prov_attest_key`.
-            None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS))
+            None => Err(error::Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
                 .context(ks_err!("No available attestation keys")),
         }
     }
@@ -958,7 +958,7 @@ mod tests {
                 .unwrap_err()
                 .downcast::<error::Error>()
                 .unwrap(),
-            error::Error::Rc(ResponseCode::OUT_OF_KEYS)
+            error::Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
         );
     }
 
@@ -1023,7 +1023,7 @@ mod tests {
                 .unwrap_err()
                 .downcast::<error::Error>()
                 .unwrap(),
-            error::Error::Rc(ResponseCode::OUT_OF_KEYS)
+            error::Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
         );
     }
 
