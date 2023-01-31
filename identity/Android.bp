@@ -47,7 +47,6 @@ cc_binary {
         "android.hardware.identity-support-lib",
         "android.hardware.keymaster@4.0",
         "android.security.authorization-ndk",
-        "android.security.remoteprovisioning-cpp",
         "libbase",
         "libbinder",
         "libbinder_ndk",
