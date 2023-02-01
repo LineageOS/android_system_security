@@ -26,3 +26,4 @@ pub mod keystore2_client_list_entries_tests;
 pub mod keystore2_client_operation_tests;
 pub mod keystore2_client_rsa_key_tests;
 pub mod keystore2_client_test_utils;
+pub mod keystore2_client_update_subcomponent_tests;
