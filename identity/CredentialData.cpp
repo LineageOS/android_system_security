@@ -581,13 +581,17 @@ CredentialData::getAuthKeysNeedingCertification(const sp<IIdentityCredential>& h
 
     vector<vector<uint8_t>> keysNeedingCert;
 
-    int64_t nowMilliSeconds =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) * 1000;
+    time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    int64_t nowMilliseconds;
+    if (__builtin_mul_overflow(int64_t(now), int64_t(1000), &nowMilliseconds)) {
+        LOG(ERROR) << "Overflow converting " << now << " to milliseconds";
+        return {};
+    }
 
     for (AuthKeyData& data : authKeyDatas_) {
         bool keyExceedUseCount = (data.useCount >= maxUsesPerKey_);
         int64_t expirationDateAdjusted = data.expirationDateMillisSinceEpoch - minValidTimeMillis_;
-        bool keyBeyondAdjustedExpirationDate = (nowMilliSeconds > expirationDateAdjusted);
+        bool keyBeyondAdjustedExpirationDate = (nowMilliseconds > expirationDateAdjusted);
         bool newKeyNeeded =
             (data.certificate.size() == 0) || keyExceedUseCount || keyBeyondAdjustedExpirationDate;
         bool certificationPending = (data.pendingCertificate.size() > 0);
