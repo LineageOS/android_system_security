@@ -16,6 +16,7 @@ pub mod ffi_test_utils;
 pub mod keystore2_client_3des_key_tests;
 pub mod keystore2_client_aes_key_tests;
 pub mod keystore2_client_attest_key_tests;
+pub mod keystore2_client_delete_key_tests;
 pub mod keystore2_client_ec_key_tests;
 pub mod keystore2_client_grant_key_tests;
 pub mod keystore2_client_hmac_key_tests;
