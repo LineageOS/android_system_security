@@ -90,6 +90,29 @@ pub fn has_default_keymint() -> bool {
         .expect("Could not check for declared keymint interface")
 }
 
+/// Generate EC key and grant it to the list of users with given access vector.
+/// Returns the list of granted keys `nspace` values in the order of given grantee uids.
+pub fn generate_ec_key_and_grant_to_users(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias: Option<String>,
+    grantee_uids: Vec<i32>,
+    access_vector: i32,
+) -> Result<Vec<i64>, binder::Status> {
+    let key_metadata =
+        key_generations::generate_ec_p256_signing_key(sec_level, Domain::APP, -1, alias, None)?;
+
+    let mut granted_keys = Vec::new();
+
+    for uid in grantee_uids {
+        let granted_key = keystore2.grant(&key_metadata.key, uid, access_vector)?;
+        assert_eq!(granted_key.domain, Domain::GRANT);
+        granted_keys.push(granted_key.nspace);
+    }
+
+    Ok(granted_keys)
+}
+
 /// Generate a EC_P256 key using given domain, namespace and alias.
 /// Create an operation using the generated key and perform sample signing operation.
 pub fn create_signing_operation(
