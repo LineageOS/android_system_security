@@ -153,7 +153,7 @@ impl ResidentArtifacts {
         (cdi_attest, cdi_seal, bcc)
     }
 
-    fn execute_step(self, input_values: &dyn dice::InputValues) -> Result<Self> {
+    fn execute_step(self, input_values: InputValues) -> Result<Self> {
         let ResidentArtifacts { cdi_attest, cdi_seal, bcc } = self;
 
         let (cdi_attest, cdi_seal, bcc) = dice::OpenDiceCborContext::new()
@@ -165,7 +165,7 @@ impl ResidentArtifacts {
                     format!("Trying to convert cdi_seal. (length: {})", cdi_seal.len())
                 })?,
                 &bcc,
-                input_values,
+                &input_values,
             )
             .context("In ResidentArtifacts::execute_step:")?;
         Ok(ResidentArtifacts { cdi_attest, cdi_seal, bcc })
@@ -173,13 +173,14 @@ impl ResidentArtifacts {
 
     /// Iterate through the iterator of dice input values performing one
     /// BCC main flow step on each element.
-    pub fn execute_steps<'a, Iter>(self, input_values: Iter) -> Result<Self>
+    pub fn execute_steps<'a, T, I>(self, input_values: I) -> Result<Self>
     where
-        Iter: IntoIterator<Item = &'a dyn dice::InputValues>,
+        T: Into<InputValues<'a>>,
+        I: IntoIterator<Item = T>,
     {
         input_values
             .into_iter()
-            .try_fold(self, |acc, input_values| acc.execute_step(input_values))
+            .try_fold(self, |acc, input| acc.execute_step(input.into()))
             .context("In ResidentArtifacts::execute_step:")
     }
 }
