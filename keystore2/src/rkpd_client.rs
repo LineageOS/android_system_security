@@ -651,4 +651,29 @@ mod tests {
             println!("RKPD key was NOT upgraded.");
         }
     }
+
+    #[test]
+    #[ignore] // b/266607003
+    fn test_stress_get_rkpd_attestation_key() {
+        binder::ProcessState::start_thread_pool();
+        let key_id = get_next_key_id();
+        let mut threads = vec![];
+        const NTHREADS: u32 = 10;
+        const NCALLS: u32 = 1000;
+
+        for _ in 0..NTHREADS {
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..NCALLS {
+                    let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id)
+                        .unwrap();
+                    assert!(!key.keyBlob.is_empty());
+                    assert!(!key.encodedCertChain.is_empty());
+                }
+            }));
+        }
+
+        for t in threads {
+            assert!(t.join().is_ok());
+        }
+    }
 }
