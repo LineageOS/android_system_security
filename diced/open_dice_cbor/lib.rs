@@ -24,7 +24,7 @@
 //!     code_hash: [3u8, dice::HASH_SIZE],
 //!     config: dice::ConfigOwned::Descriptor("My descriptor".as_bytes().to_vec()),
 //!     authority_hash: [0u8, dice::HASH_SIZE],
-//!     mode: dice::Mode::Normal,
+//!     mode: dice::DiceMode::kDiceModeNormal,
 //!     hidden: [0u8, dice::HIDDEN_SIZE],
 //! };
 //! let (cdi_attest, cdi_seal, cert_chain) = context
@@ -33,20 +33,17 @@
 
 use keystore2_crypto::{zvec, ZVec};
 use open_dice_bcc_bindgen::BccMainFlow;
+pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed,
     DiceGenerateCertificate, DiceHash, DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow,
-    DiceMode, DiceResult, DiceSign, DiceVerify, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
+    DiceResult, DiceSign, DiceVerify, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
     DICE_ID_SIZE, DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
     DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use open_dice_cbor_bindgen::{
     DiceConfigType_kDiceConfigTypeDescriptor as DICE_CONFIG_TYPE_DESCRIPTOR,
     DiceConfigType_kDiceConfigTypeInline as DICE_CONFIG_TYPE_INLINE,
-    DiceMode_kDiceModeDebug as DICE_MODE_DEBUG,
-    DiceMode_kDiceModeMaintenance as DICE_MODE_RECOVERY,
-    DiceMode_kDiceModeNormal as DICE_MODE_NORMAL,
-    DiceMode_kDiceModeNotInitialized as DICE_MODE_NOT_CONFIGURED,
     DiceResult_kDiceResultBufferTooSmall as DICE_RESULT_BUFFER_TOO_SMALL,
     DiceResult_kDiceResultInvalidInput as DICE_RESULT_INVALID_INPUT,
     DiceResult_kDiceResultOk as DICE_RESULT_OK,
@@ -175,31 +172,6 @@ impl From<Config<'_>> for ConfigOwned {
     }
 }
 
-/// DICE modes as defined here:
-/// https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/specification.md#mode-value-details
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Mode {
-    /// See documentation linked above.
-    NotConfigured = 0,
-    /// See documentation linked above.
-    Normal = 1,
-    /// See documentation linked above.
-    Debug = 2,
-    /// See documentation linked above.
-    Recovery = 3,
-}
-
-impl Mode {
-    fn get_internal(&self) -> DiceMode {
-        match self {
-            Self::NotConfigured => DICE_MODE_NOT_CONFIGURED,
-            Self::Normal => DICE_MODE_NORMAL,
-            Self::Debug => DICE_MODE_DEBUG,
-            Self::Recovery => DICE_MODE_RECOVERY,
-        }
-    }
-}
-
 /// This trait allows API users to supply DICE input values without copying.
 pub trait InputValues {
     /// Returns the code hash.
@@ -211,7 +183,7 @@ pub trait InputValues {
     /// Returns the authority descriptor.
     fn authority_descriptor(&self) -> Option<&[u8]>;
     /// Returns the mode.
-    fn mode(&self) -> Mode;
+    fn mode(&self) -> DiceMode;
     /// Returns the hidden value.
     fn hidden(&self) -> &[u8; HIDDEN_SIZE];
 }
@@ -222,7 +194,7 @@ pub struct InputValuesOwned {
     config: ConfigOwned,
     authority_hash: [u8; HASH_SIZE],
     authority_descriptor: Option<Vec<u8>>,
-    mode: Mode,
+    mode: DiceMode,
     hidden: [u8; HIDDEN_SIZE],
 }
 
@@ -233,7 +205,7 @@ impl InputValuesOwned {
         config: Config,
         authority_hash: [u8; HASH_SIZE],
         authority_descriptor: Option<Vec<u8>>,
-        mode: Mode,
+        mode: DiceMode,
         hidden: [u8; HIDDEN_SIZE],
     ) -> Self {
         Self {
@@ -263,7 +235,7 @@ impl InputValues for InputValuesOwned {
     fn authority_descriptor(&self) -> Option<&[u8]> {
         self.authority_descriptor.as_deref()
     }
-    fn mode(&self) -> Mode {
+    fn mode(&self) -> DiceMode {
         self.mode
     }
     fn hidden(&self) -> &[u8; HIDDEN_SIZE] {
@@ -288,7 +260,7 @@ where
             .authority_descriptor()
             .map_or_else(std::ptr::null, <[u8]>::as_ptr),
         authority_descriptor_size: input_values.authority_descriptor().map_or(0, <[u8]>::len),
-        mode: input_values.mode().get_internal(),
+        mode: input_values.mode(),
         hidden: *input_values.hidden(),
     };
 
