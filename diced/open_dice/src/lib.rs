@@ -17,6 +17,11 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(feature = "std"))]
+extern crate core as std;
+
 mod dice;
+mod error;
 
 pub use dice::{Config, Hash, Hidden, InlineConfig, InputValues, HASH_SIZE, HIDDEN_SIZE};
+pub use error::{check_result, DiceError, Result};
