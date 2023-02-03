@@ -19,7 +19,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Mode::Mode as BinderMode,
 };
 use anyhow::{Context, Result};
-use dice::{ContextImpl, DiceMode};
+use dice::{ContextImpl, DiceMode, Hash, Hidden};
 use diced_open_dice_cbor as dice;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
@@ -47,7 +47,7 @@ impl From<InputValues<'_>> for BinderInputValues {
 }
 
 impl dice::InputValues for InputValues<'_> {
-    fn code_hash(&self) -> &[u8; dice::HASH_SIZE] {
+    fn code_hash(&self) -> &Hash {
         &self.0.codeHash
     }
 
@@ -55,7 +55,7 @@ impl dice::InputValues for InputValues<'_> {
         dice::Config::Descriptor(self.0.config.desc.as_slice())
     }
 
-    fn authority_hash(&self) -> &[u8; dice::HASH_SIZE] {
+    fn authority_hash(&self) -> &Hash {
         &self.0.authorityHash
     }
 
@@ -73,7 +73,7 @@ impl dice::InputValues for InputValues<'_> {
         }
     }
 
-    fn hidden(&self) -> &[u8; dice::HIDDEN_SIZE] {
+    fn hidden(&self) -> &Hidden {
         // If `self` was created using try_from the length was checked and this cannot panic.
         &self.0.hidden
     }
