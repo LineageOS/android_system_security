@@ -29,11 +29,6 @@ pub enum DiceError {
     BufferTooSmall,
     /// Platform error.
     PlatformError,
-    /// Input string has an interior nul byte.
-    /// TODO(b/267575445): Remove this error once we change the param of
-    /// `format_config_descriptor to take &CStr.
-    #[cfg(feature = "std")]
-    CStrNulError,
     /// The allocation of a ZVec failed.
     #[cfg(feature = "std")]
     ZVecError(keystore2_crypto::zvec::Error),
@@ -56,8 +51,6 @@ impl fmt::Display for DiceError {
             Self::InvalidInput => write!(f, "invalid input"),
             Self::BufferTooSmall => write!(f, "buffer too small"),
             Self::PlatformError => write!(f, "platform error"),
-            #[cfg(feature = "std")]
-            Self::CStrNulError => write!(f, "input string has an interior nul byte"),
             #[cfg(feature = "std")]
             Self::ZVecError(e) => write!(f, "ZVec allocation failed {e}"),
         }
