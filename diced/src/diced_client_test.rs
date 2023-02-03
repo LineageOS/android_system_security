@@ -52,11 +52,7 @@ fn equivalence_test() {
         diced_utils::ResidentArtifacts::new(&former.cdiAttest, &former.cdiSeal, &former.bcc.data)
             .unwrap();
 
-    let input_values: Vec<diced_utils::InputValues> =
-        input_values.iter().map(|v| v.into()).collect();
-
-    let artifacts =
-        artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
+    let artifacts = artifacts.execute_steps(input_values.iter()).unwrap();
     let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
         cdi_attest[..].try_into().unwrap(),
@@ -96,11 +92,7 @@ fn demote_test() {
     )
     .unwrap();
 
-    let input_values: Vec<diced_utils::InputValues> =
-        input_values.iter().map(|v| v.into()).collect();
-
-    let artifacts =
-        artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
+    let artifacts = artifacts.execute_steps(input_values.iter()).unwrap();
     let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
         cdi_attest[..].try_into().unwrap(),
@@ -160,11 +152,8 @@ fn demote_self_test() {
     .unwrap();
 
     let client = [client];
-    let input_values: Vec<diced_utils::InputValues> =
-        input_values.iter().chain(client.iter()).map(|v| v.into()).collect();
 
-    let artifacts =
-        artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues)).unwrap();
+    let artifacts = artifacts.execute_steps(input_values.iter().chain(client.iter())).unwrap();
     let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
         cdi_attest[..].try_into().unwrap(),

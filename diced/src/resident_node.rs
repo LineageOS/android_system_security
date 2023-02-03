@@ -24,7 +24,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 use anyhow::{Context, Result};
 use dice::{ContextImpl, OpenDiceCborContext};
 use diced_open_dice_cbor as dice;
-use diced_utils::{self as utils, InputValues, ResidentArtifacts};
+use diced_utils::{self as utils, ResidentArtifacts};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::RwLock;
@@ -61,17 +61,12 @@ impl ResidentNode {
 
         let client_arr = [client];
 
-        let input_values: Vec<utils::InputValues> = demotion_db
+        let input_values = demotion_db
             .get(&client_arr[0])
             .map(|v| v.iter())
             .unwrap_or_else(|| client_arr.iter())
-            .chain(input_values.iter())
-            .map(|v| v.into())
-            .collect();
-
-        artifacts
-            .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
-            .context("In get_effective_artifacts:")
+            .chain(input_values.iter());
+        artifacts.execute_steps(input_values).context("In get_effective_artifacts:")
     }
 }
 
@@ -173,18 +168,10 @@ impl DiceNodeImpl for ResidentNode {
     fn demote_self(&self, input_values: &[BinderInputValues]) -> Result<()> {
         let mut artifacts = self.artifacts.write().unwrap();
 
-        let input_values = input_values
-            .iter()
-            .map(|v| {
-                v.try_into().with_context(|| format!("Failed to convert input values: {:#?}", v))
-            })
-            .collect::<Result<Vec<InputValues>>>()
-            .context("In ResidentNode::demote_self:")?;
-
         *artifacts = artifacts
             .try_clone()
             .context("In ResidentNode::demote_self: Failed to clone resident artifacts")?
-            .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
+            .execute_steps(input_values)
             .context("In ResidentNode::demote_self:")?;
         Ok(())
     }
