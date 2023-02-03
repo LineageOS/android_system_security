@@ -31,19 +31,18 @@
 //!     .main_flow(&parent_cdi_attest, &parent_cdi_seal, &input_values)?;
 //! ```
 
+use diced_open_dice::InlineConfig;
+pub use diced_open_dice::{Config, Hash, Hidden, HASH_SIZE, HIDDEN_SIZE};
 use keystore2_crypto::{zvec, ZVec};
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed,
-    DiceGenerateCertificate, DiceHash, DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow,
-    DiceResult, DiceSign, DiceVerify, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
-    DICE_ID_SIZE, DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
+    DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceHash,
+    DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceResult, DiceSign, DiceVerify,
+    DICE_CDI_SIZE, DICE_ID_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
     DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use open_dice_cbor_bindgen::{
-    DiceConfigType_kDiceConfigTypeDescriptor as DICE_CONFIG_TYPE_DESCRIPTOR,
-    DiceConfigType_kDiceConfigTypeInline as DICE_CONFIG_TYPE_INLINE,
     DiceResult_kDiceResultBufferTooSmall as DICE_RESULT_BUFFER_TOO_SMALL,
     DiceResult_kDiceResultInvalidInput as DICE_RESULT_INVALID_INPUT,
     DiceResult_kDiceResultOk as DICE_RESULT_OK,
@@ -51,12 +50,6 @@ use open_dice_cbor_bindgen::{
 };
 use std::ffi::{c_void, NulError};
 
-/// The size of a DICE hash.
-pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
-/// The size of the DICE hidden value.
-pub const HIDDEN_SIZE: usize = DICE_HIDDEN_SIZE as usize;
-/// The size of a DICE inline config.
-pub const INLINE_CONFIG_SIZE: usize = DICE_INLINE_CONFIG_SIZE as usize;
 /// The size of a private key seed.
 pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
 /// The size of a CDI.
@@ -119,48 +112,9 @@ fn check_result(result: DiceResult) -> Result<()> {
     }
 }
 
-/// Configuration descriptor for dice input values.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Config<'a> {
-    /// A reference to an inline descriptor.
-    Inline(&'a [u8; INLINE_CONFIG_SIZE]),
-    /// A reference to a free form descriptor that will be hashed by the implementation.
-    Descriptor(&'a [u8]),
-}
-
 enum ConfigOwned {
-    Inline([u8; INLINE_CONFIG_SIZE]),
+    Inline(InlineConfig),
     Descriptor(Vec<u8>),
-}
-
-impl Config<'_> {
-    fn get_type(&self) -> DiceConfigType {
-        match self {
-            Self::Inline(_) => DICE_CONFIG_TYPE_INLINE,
-            Self::Descriptor(_) => DICE_CONFIG_TYPE_DESCRIPTOR,
-        }
-    }
-
-    fn get_inline(&self) -> [u8; INLINE_CONFIG_SIZE] {
-        match self {
-            Self::Inline(inline) => **inline,
-            _ => [0u8; INLINE_CONFIG_SIZE],
-        }
-    }
-
-    fn get_descriptor_as_ptr(&self) -> *const u8 {
-        match self {
-            Self::Descriptor(descriptor) => descriptor.as_ptr(),
-            _ => std::ptr::null(),
-        }
-    }
-
-    fn get_descriptor_size(&self) -> usize {
-        match self {
-            Self::Descriptor(descriptor) => descriptor.len(),
-            _ => 0,
-        }
-    }
 }
 
 impl From<Config<'_>> for ConfigOwned {
@@ -175,38 +129,38 @@ impl From<Config<'_>> for ConfigOwned {
 /// This trait allows API users to supply DICE input values without copying.
 pub trait InputValues {
     /// Returns the code hash.
-    fn code_hash(&self) -> &[u8; HASH_SIZE];
+    fn code_hash(&self) -> &Hash;
     /// Returns the config.
     fn config(&self) -> Config;
     /// Returns the authority hash.
-    fn authority_hash(&self) -> &[u8; HASH_SIZE];
+    fn authority_hash(&self) -> &Hash;
     /// Returns the authority descriptor.
     fn authority_descriptor(&self) -> Option<&[u8]>;
     /// Returns the mode.
     fn mode(&self) -> DiceMode;
     /// Returns the hidden value.
-    fn hidden(&self) -> &[u8; HIDDEN_SIZE];
+    fn hidden(&self) -> &Hidden;
 }
 
 /// An owning convenience type implementing `InputValues`.
 pub struct InputValuesOwned {
-    code_hash: [u8; HASH_SIZE],
+    code_hash: Hash,
     config: ConfigOwned,
-    authority_hash: [u8; HASH_SIZE],
+    authority_hash: Hash,
     authority_descriptor: Option<Vec<u8>>,
     mode: DiceMode,
-    hidden: [u8; HIDDEN_SIZE],
+    hidden: Hidden,
 }
 
 impl InputValuesOwned {
     /// Construct a new instance of InputValuesOwned.
     pub fn new(
-        code_hash: [u8; HASH_SIZE],
+        code_hash: Hash,
         config: Config,
-        authority_hash: [u8; HASH_SIZE],
+        authority_hash: Hash,
         authority_descriptor: Option<Vec<u8>>,
         mode: DiceMode,
-        hidden: [u8; HIDDEN_SIZE],
+        hidden: Hidden,
     ) -> Self {
         Self {
             code_hash,
@@ -220,7 +174,7 @@ impl InputValuesOwned {
 }
 
 impl InputValues for InputValuesOwned {
-    fn code_hash(&self) -> &[u8; HASH_SIZE] {
+    fn code_hash(&self) -> &Hash {
         &self.code_hash
     }
     fn config(&self) -> Config {
@@ -229,7 +183,7 @@ impl InputValues for InputValuesOwned {
             ConfigOwned::Descriptor(descriptor) => Config::Descriptor(descriptor.as_slice()),
         }
     }
-    fn authority_hash(&self) -> &[u8; HASH_SIZE] {
+    fn authority_hash(&self) -> &Hash {
         &self.authority_hash
     }
     fn authority_descriptor(&self) -> Option<&[u8]> {
@@ -238,7 +192,7 @@ impl InputValues for InputValuesOwned {
     fn mode(&self) -> DiceMode {
         self.mode
     }
-    fn hidden(&self) -> &[u8; HIDDEN_SIZE] {
+    fn hidden(&self) -> &Hidden {
         &self.hidden
     }
 }
@@ -247,24 +201,16 @@ fn call_with_input_values<T: InputValues + ?Sized, F, R>(input_values: &T, f: F)
 where
     F: FnOnce(*const DiceInputValues) -> Result<R>,
 {
-    let input_values = DiceInputValues {
-        code_hash: *input_values.code_hash(),
-        code_descriptor: std::ptr::null(),
-        code_descriptor_size: 0,
-        config_type: input_values.config().get_type(),
-        config_value: input_values.config().get_inline(),
-        config_descriptor: input_values.config().get_descriptor_as_ptr(),
-        config_descriptor_size: input_values.config().get_descriptor_size(),
-        authority_hash: *input_values.authority_hash(),
-        authority_descriptor: input_values
-            .authority_descriptor()
-            .map_or_else(std::ptr::null, <[u8]>::as_ptr),
-        authority_descriptor_size: input_values.authority_descriptor().map_or(0, <[u8]>::len),
-        mode: input_values.mode(),
-        hidden: *input_values.hidden(),
-    };
-
-    f(&input_values as *const DiceInputValues)
+    let input_values = diced_open_dice::InputValues::new(
+        input_values.code_hash(),
+        None, // code_descriptor
+        input_values.config(),
+        input_values.authority_hash(),
+        input_values.authority_descriptor(),
+        input_values.mode(),
+        Some(input_values.hidden()),
+    );
+    f(input_values.as_ptr())
 }
 
 /// Multiple of the open dice function required preallocated output buffer

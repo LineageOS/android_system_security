@@ -121,13 +121,13 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
 }
 
 fn make_input_values(
-    code_hash: &[u8; dice::HASH_SIZE],
-    authority_hash: &[u8; dice::HASH_SIZE],
+    code_hash: &dice::Hash,
+    authority_hash: &dice::Hash,
     config_name: &str,
     config_version: u64,
     config_resettable: bool,
     mode: Mode,
-    hidden: &[u8; dice::HIDDEN_SIZE],
+    hidden: &dice::Hidden,
 ) -> Result<BinderInputValues> {
     Ok(BinderInputValues {
         codeHash: *code_hash,
