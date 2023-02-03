@@ -653,7 +653,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // b/266607003
     fn test_stress_get_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
         let key_id = get_next_key_id();
