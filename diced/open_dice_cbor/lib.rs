@@ -32,22 +32,21 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, Config, DiceError, Hash, Hidden, InputValues, Result, HASH_SIZE, HIDDEN_SIZE,
+    check_result, Config, DiceError, Hash, Hidden, InputValues, Result, CDI_SIZE, HASH_SIZE,
+    HIDDEN_SIZE,
 };
 use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceHash,
-    DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_CDI_SIZE, DICE_ID_SIZE,
+    DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_ID_SIZE,
     DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
 
 /// The size of a private key seed.
 pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
-/// The size of a CDI.
-pub const CDI_SIZE: usize = DICE_CDI_SIZE as usize;
 /// The size of an ID.
 pub const ID_SIZE: usize = DICE_ID_SIZE as usize;
 /// The size of a private key.
