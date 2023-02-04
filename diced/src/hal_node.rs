@@ -187,10 +187,8 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Re
         // `ResidentHal::new`
         run_forked(move || {
             let artifacts = artifacts.with_artifacts(|a| ResidentArtifacts::new_from(a))?;
-            let input_values: Vec<utils::InputValues> =
-                input_values.iter().map(|v| v.into()).collect();
             let artifacts = artifacts
-                .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
+                .execute_steps(input_values)
                 .context("In ResidentHal::get_effective_artifacts:")?;
             f(artifacts)
         })
@@ -279,11 +277,8 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
         *artifacts = run_forked(|| {
             let new_artifacts =
                 artifacts_clone.with_artifacts(|a| ResidentArtifacts::new_from(a))?;
-            let input_values: Vec<utils::InputValues> =
-                input_values.iter().map(|v| v.into()).collect();
-
             let new_artifacts = new_artifacts
-                .execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))
+                .execute_steps(input_values)
                 .context("In ResidentHal::get_effective_artifacts:")?;
             artifacts_clone.update(&new_artifacts)
         })?;
@@ -414,11 +409,7 @@ mod test {
             make_input_values("component 2 code", "component 2", "component 2 authority")?,
             make_input_values("component 3 code", "component 3", "component 3 authority")?,
         ];
-
-        let input_values: Vec<utils::InputValues> = input_values.iter().map(|v| v.into()).collect();
-
-        let new_artifacts =
-            artifacts.execute_steps(input_values.iter().map(|v| v as &dyn dice::InputValues))?;
+        let new_artifacts = artifacts.execute_steps(input_values)?;
 
         let result = utils::make_bcc_handover(
             new_artifacts.cdi_attest(),

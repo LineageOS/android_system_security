@@ -24,7 +24,7 @@ use diced_open_dice_cbor as dice;
 use diced_utils::cbor;
 use diced_utils::InputValues;
 use keystore2_crypto::ZVec;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::io::Write;
 
 /// Sample UDS used to perform the root dice flow by `make_sample_bcc_and_cdis`.
@@ -82,12 +82,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
     let input_values_vector = get_input_values_vector();
 
     let (cdi_attest, cdi_seal, mut cert) = dice_ctx
-        .main_flow(
-            UDS,
-            UDS,
-            &InputValues::try_from(&input_values_vector[0])
-                .context("In make_sample_bcc_and_cdis: Trying to convert input values. (0)")?,
-        )
+        .main_flow(UDS, UDS, &InputValues::from(&input_values_vector[0]))
         .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
 
     let mut bcc: Vec<u8> = vec![];
@@ -108,8 +103,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
                 "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (1)",
             )?,
             &bcc,
-            &InputValues::try_from(&input_values_vector[1])
-                .context("In make_sample_bcc_and_cdis: Trying to convert input values. (1)")?,
+            &InputValues::from(&input_values_vector[1]),
         )
         .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
     dice_ctx
@@ -121,20 +115,19 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
                 "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (2)",
             )?,
             &bcc,
-            &InputValues::try_from(&input_values_vector[2])
-                .context("In make_sample_bcc_and_cdis: Trying to convert input values. (2)")?,
+            &InputValues::from(&input_values_vector[2]),
         )
         .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
 }
 
 fn make_input_values(
-    code_hash: &[u8; dice::HASH_SIZE],
-    authority_hash: &[u8; dice::HASH_SIZE],
+    code_hash: &dice::Hash,
+    authority_hash: &dice::Hash,
     config_name: &str,
     config_version: u64,
     config_resettable: bool,
     mode: Mode,
-    hidden: &[u8; dice::HIDDEN_SIZE],
+    hidden: &dice::Hidden,
 ) -> Result<BinderInputValues> {
     Ok(BinderInputValues {
         codeHash: *code_hash,

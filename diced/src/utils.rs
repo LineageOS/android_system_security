@@ -19,7 +19,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Mode::Mode as BinderMode,
 };
 use anyhow::{Context, Result};
-use dice::ContextImpl;
+use dice::{ContextImpl, DiceMode, Hash, Hidden};
 use diced_open_dice_cbor as dice;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
@@ -47,7 +47,7 @@ impl From<InputValues<'_>> for BinderInputValues {
 }
 
 impl dice::InputValues for InputValues<'_> {
-    fn code_hash(&self) -> &[u8; dice::HASH_SIZE] {
+    fn code_hash(&self) -> &Hash {
         &self.0.codeHash
     }
 
@@ -55,7 +55,7 @@ impl dice::InputValues for InputValues<'_> {
         dice::Config::Descriptor(self.0.config.desc.as_slice())
     }
 
-    fn authority_hash(&self) -> &[u8; dice::HASH_SIZE] {
+    fn authority_hash(&self) -> &Hash {
         &self.0.authorityHash
     }
 
@@ -63,17 +63,17 @@ impl dice::InputValues for InputValues<'_> {
         self.0.authorityDescriptor.as_deref()
     }
 
-    fn mode(&self) -> dice::Mode {
+    fn mode(&self) -> DiceMode {
         match self.0.mode {
-            BinderMode::NOT_INITIALIZED => dice::Mode::NotConfigured,
-            BinderMode::NORMAL => dice::Mode::Normal,
-            BinderMode::DEBUG => dice::Mode::Debug,
-            BinderMode::RECOVERY => dice::Mode::Recovery,
-            _ => dice::Mode::NotConfigured,
+            BinderMode::NOT_INITIALIZED => DiceMode::kDiceModeNotInitialized,
+            BinderMode::NORMAL => DiceMode::kDiceModeNormal,
+            BinderMode::DEBUG => DiceMode::kDiceModeDebug,
+            BinderMode::RECOVERY => DiceMode::kDiceModeMaintenance,
+            _ => DiceMode::kDiceModeNotInitialized,
         }
     }
 
-    fn hidden(&self) -> &[u8; dice::HIDDEN_SIZE] {
+    fn hidden(&self) -> &Hidden {
         // If `self` was created using try_from the length was checked and this cannot panic.
         &self.0.hidden
     }
@@ -153,7 +153,7 @@ impl ResidentArtifacts {
         (cdi_attest, cdi_seal, bcc)
     }
 
-    fn execute_step(self, input_values: &dyn dice::InputValues) -> Result<Self> {
+    fn execute_step(self, input_values: InputValues) -> Result<Self> {
         let ResidentArtifacts { cdi_attest, cdi_seal, bcc } = self;
 
         let (cdi_attest, cdi_seal, bcc) = dice::OpenDiceCborContext::new()
@@ -165,7 +165,7 @@ impl ResidentArtifacts {
                     format!("Trying to convert cdi_seal. (length: {})", cdi_seal.len())
                 })?,
                 &bcc,
-                input_values,
+                &input_values,
             )
             .context("In ResidentArtifacts::execute_step:")?;
         Ok(ResidentArtifacts { cdi_attest, cdi_seal, bcc })
@@ -173,13 +173,14 @@ impl ResidentArtifacts {
 
     /// Iterate through the iterator of dice input values performing one
     /// BCC main flow step on each element.
-    pub fn execute_steps<'a, Iter>(self, input_values: Iter) -> Result<Self>
+    pub fn execute_steps<'a, T, I>(self, input_values: I) -> Result<Self>
     where
-        Iter: IntoIterator<Item = &'a dyn dice::InputValues>,
+        T: Into<InputValues<'a>>,
+        I: IntoIterator<Item = T>,
     {
         input_values
             .into_iter()
-            .try_fold(self, |acc, input_values| acc.execute_step(input_values))
+            .try_fold(self, |acc, input| acc.execute_step(input.into()))
             .context("In ResidentArtifacts::execute_step:")
     }
 }
