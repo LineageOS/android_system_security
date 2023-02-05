@@ -590,6 +590,9 @@ mod tests {
 
         let new_key =
             get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+
+        // Restore original key so that we don't leave RKPD with invalid blobs.
+        assert!(store_rkpd_attestation_key(&sec_level, &new_blob, &key.keyBlob).is_ok());
         assert_eq!(new_key.keyBlob, new_blob);
     }
 
@@ -653,7 +656,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // b/266607003
     fn test_stress_get_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
         let key_id = get_next_key_id();
