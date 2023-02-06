@@ -24,11 +24,13 @@ rust_library_rlib {
     ],
 }
 
-rust_library_rlib {
+rust_library {
     name: "libdiced_open_dice",
     defaults: ["libdiced_open_dice_defaults"],
     rustlibs: [
         "libopen_dice_cbor_bindgen",
+        // For ZVec
+        "libkeystore2_crypto_rust",
     ],
     features: [
         "std",
