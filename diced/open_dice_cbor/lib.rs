@@ -32,15 +32,15 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, retry_bcc_format_config_descriptor, Config, DiceError, Hash, Hidden, InputValues,
-    Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+    check_result, hash, retry_bcc_format_config_descriptor, Config, DiceError, Hash, Hidden,
+    InputValues, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
 };
 use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceHash,
-    DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_ID_SIZE,
+    DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceKdf,
+    DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_ID_SIZE,
     DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
@@ -254,24 +254,6 @@ pub trait ContextImpl: Context + Send {
             })
         })?;
         Ok((next_attest, next_seal, cert))
-    }
-
-    /// Safe wrapper around open-dice DiceHash, see open dice
-    /// documentation for details.
-    fn hash(&mut self, input: &[u8]) -> Result<Vec<u8>> {
-        let mut output: Vec<u8> = vec![0; HASH_SIZE];
-
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are the pointer to and length of the given
-        //   input buffer respectively.
-        // * The fourth argument must be a pointer to a mutable buffer of size HASH_SIZE
-        //   which is fulfilled by the allocation above.
-        check_result(unsafe {
-            DiceHash(self.get_context(), input.as_ptr(), input.len(), output.as_mut_ptr())
-        })?;
-        Ok(output)
     }
 
     /// Safe wrapper around open-dice DiceKdf, see open dice
@@ -535,7 +517,7 @@ mod test {
     #[test]
     fn hash_derive_sign_verify() {
         let mut ctx = OpenDiceCborContext::new();
-        let seed = ctx.hash("MySeedString".as_bytes()).unwrap();
+        let seed = diced_open_dice::hash("MySeedString".as_bytes()).unwrap();
         assert_eq!(seed, SEED_TEST_VECTOR);
         let cdi_attest = &seed[..CDI_SIZE];
         assert_eq!(cdi_attest, CDI_ATTEST_TEST_VECTOR);
