@@ -32,23 +32,19 @@
 //! ```
 
 use diced_open_dice::InlineConfig;
-pub use diced_open_dice::{Config, Hash, Hidden, HASH_SIZE, HIDDEN_SIZE};
-use keystore2_crypto::{zvec, ZVec};
+pub use diced_open_dice::{
+    check_result, Config, DiceError, Hash, Hidden, Result, HASH_SIZE, HIDDEN_SIZE,
+};
+use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceHash,
-    DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceResult, DiceSign, DiceVerify,
+    DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
     DICE_CDI_SIZE, DICE_ID_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
     DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
-use open_dice_cbor_bindgen::{
-    DiceResult_kDiceResultBufferTooSmall as DICE_RESULT_BUFFER_TOO_SMALL,
-    DiceResult_kDiceResultInvalidInput as DICE_RESULT_INVALID_INPUT,
-    DiceResult_kDiceResultOk as DICE_RESULT_OK,
-    DiceResult_kDiceResultPlatformError as DICE_RESULT_PLATFORM_ERROR,
-};
-use std::ffi::{c_void, NulError};
+use std::ffi::c_void;
 
 /// The size of a private key seed.
 pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
@@ -62,55 +58,6 @@ pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
 pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
 /// The size of a signature.
 pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
-
-/// Open dice wrapper error type.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum Error {
-    /// The libopen-dice backend reported InvalidInput.
-    #[error("Open dice backend: Invalid input")]
-    InvalidInput,
-    /// The libopen-dice backend reported BufferTooSmall.
-    #[error("Open dice backend: Buffer too small")]
-    BufferTooSmall,
-    /// The libopen-dice backend reported PlatformError.
-    #[error("Open dice backend: Platform error")]
-    PlatformError,
-    /// The libopen-dice backend reported an error that is outside of the defined range of errors.
-    /// The returned error code is embedded in this value.
-    #[error("Open dice backend returned an unexpected error code: {0:?}")]
-    Unexpected(u32),
-
-    /// The allocation of a ZVec failed. Most likely due to a failure during the call to mlock.
-    #[error("ZVec allocation failed")]
-    ZVec(#[from] zvec::Error),
-
-    /// Functions that have to convert str to CString may fail if the string has an interior
-    /// nul byte.
-    #[error("Input string has an interior nul byte.")]
-    CStrNulError(#[from] NulError),
-}
-
-/// Open dice result type.
-pub type Result<T> = std::result::Result<T, Error>;
-
-impl From<DiceResult> for Error {
-    fn from(result: DiceResult) -> Self {
-        match result {
-            DICE_RESULT_INVALID_INPUT => Error::InvalidInput,
-            DICE_RESULT_BUFFER_TOO_SMALL => Error::BufferTooSmall,
-            DICE_RESULT_PLATFORM_ERROR => Error::PlatformError,
-            r => Error::Unexpected(r),
-        }
-    }
-}
-
-fn check_result(result: DiceResult) -> Result<()> {
-    if result == DICE_RESULT_OK {
-        Ok(())
-    } else {
-        Err(result.into())
-    }
-}
 
 enum ConfigOwned {
     Inline(InlineConfig),
@@ -236,7 +183,7 @@ where
             // If Error::BufferTooSmall was returned, the allocated certificate
             // buffer was to small for the output. So the buffer is resized to the actual
             // size, and a second attempt is made with the new buffer.
-            Err(Error::BufferTooSmall) => {
+            Err(DiceError::BufferTooSmall) => {
                 let new_size = if actual_size == 0 {
                     // Due to an off spec implementation of open dice cbor, actual size
                     // does not return the required size if the buffer was too small. So
@@ -660,7 +607,7 @@ pub trait ContextImpl: Context + Send {
 /// specification.
 /// See https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/keymint/aidl/android/hardware/security/keymint/ProtectedData.aidl
 pub mod bcc {
-    use super::{check_result, retry_while_adjusting_output_buffer, Result};
+    use super::{check_result, retry_while_adjusting_output_buffer, DiceError, Result};
     use open_dice_bcc_bindgen::{
         BccConfigValues, BccFormatConfigDescriptor, BCC_INPUT_COMPONENT_NAME,
         BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
@@ -668,13 +615,14 @@ pub mod bcc {
     use std::ffi::CString;
 
     /// Safe wrapper around BccFormatConfigDescriptor, see open dice documentation for details.
+    /// TODO(b/267575445): Make `component_name` take &CStr here.
     pub fn format_config_descriptor(
         component_name: Option<&str>,
         component_version: Option<u64>,
         resettable: bool,
     ) -> Result<Vec<u8>> {
         let component_name = match component_name {
-            Some(n) => Some(CString::new(n)?),
+            Some(n) => Some(CString::new(n).map_err(|_| DiceError::CStrNulError)?),
             None => None,
         };
         let input = BccConfigValues {
