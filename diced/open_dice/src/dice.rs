@@ -16,7 +16,7 @@
 //! This module mirrors the content in open-dice/include/dice/dice.h
 
 use open_dice_cbor_bindgen::{
-    DiceConfigType, DiceInputValues, DiceMode, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
+    DiceConfigType, DiceInputValues, DiceMode, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
     DICE_INLINE_CONFIG_SIZE,
 };
 use std::ptr;
@@ -27,6 +27,8 @@ pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
 pub const HIDDEN_SIZE: usize = DICE_HIDDEN_SIZE as usize;
 /// The size of a DICE inline config.
 const INLINE_CONFIG_SIZE: usize = DICE_INLINE_CONFIG_SIZE as usize;
+/// The size of a CDI.
+pub const CDI_SIZE: usize = DICE_CDI_SIZE as usize;
 
 /// Array type of hashes used by DICE.
 pub type Hash = [u8; HASH_SIZE];
@@ -34,6 +36,8 @@ pub type Hash = [u8; HASH_SIZE];
 pub type Hidden = [u8; HIDDEN_SIZE];
 /// Array type of inline configuration values.
 pub type InlineConfig = [u8; INLINE_CONFIG_SIZE];
+/// Array type of CDIs.
+pub type Cdi = [u8; CDI_SIZE];
 
 /// Configuration descriptor for DICE input values.
 #[derive(Debug, Clone, PartialEq, Eq)]
