@@ -20,29 +20,27 @@
 //! let context = dice::dice::OpenDiceCborContext::new()
 //! let parent_cdi_attest = [1u8, dice::CDI_SIZE];
 //! let parent_cdi_seal = [2u8, dice::CDI_SIZE];
-//! let input_values = dice::InputValuesOwned {
-//!     code_hash: [3u8, dice::HASH_SIZE],
-//!     config: dice::ConfigOwned::Descriptor("My descriptor".as_bytes().to_vec()),
-//!     authority_hash: [0u8, dice::HASH_SIZE],
-//!     mode: dice::DiceMode::kDiceModeNormal,
-//!     hidden: [0u8, dice::HIDDEN_SIZE],
+//! let input_values = dice::InputValues::new(
+//!     [3u8, dice::HASH_SIZE], // code_hash
+//!     dice::Config::Descriptor(&"My descriptor".as_bytes().to_vec()),
+//!     [0u8, dice::HASH_SIZE], // authority_hash
+//!     dice::DiceMode::kDiceModeNormal,
+//!     [0u8, dice::HIDDEN_SIZE], // hidden
 //! };
 //! let (cdi_attest, cdi_seal, cert_chain) = context
 //!     .main_flow(&parent_cdi_attest, &parent_cdi_seal, &input_values)?;
 //! ```
 
-use diced_open_dice::InlineConfig;
 pub use diced_open_dice::{
-    check_result, Config, DiceError, Hash, Hidden, Result, HASH_SIZE, HIDDEN_SIZE,
+    check_result, Config, DiceError, Hash, Hidden, InputValues, Result, HASH_SIZE, HIDDEN_SIZE,
 };
 use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceHash,
-    DiceInputValues, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
-    DICE_CDI_SIZE, DICE_ID_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
-    DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
+    DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_CDI_SIZE, DICE_ID_SIZE,
+    DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
 
@@ -58,107 +56,6 @@ pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
 pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
 /// The size of a signature.
 pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
-
-enum ConfigOwned {
-    Inline(InlineConfig),
-    Descriptor(Vec<u8>),
-}
-
-impl From<Config<'_>> for ConfigOwned {
-    fn from(config: Config) -> Self {
-        match config {
-            Config::Inline(inline) => ConfigOwned::Inline(*inline),
-            Config::Descriptor(descriptor) => ConfigOwned::Descriptor(descriptor.to_owned()),
-        }
-    }
-}
-
-/// This trait allows API users to supply DICE input values without copying.
-pub trait InputValues {
-    /// Returns the code hash.
-    fn code_hash(&self) -> &Hash;
-    /// Returns the config.
-    fn config(&self) -> Config;
-    /// Returns the authority hash.
-    fn authority_hash(&self) -> &Hash;
-    /// Returns the authority descriptor.
-    fn authority_descriptor(&self) -> Option<&[u8]>;
-    /// Returns the mode.
-    fn mode(&self) -> DiceMode;
-    /// Returns the hidden value.
-    fn hidden(&self) -> &Hidden;
-}
-
-/// An owning convenience type implementing `InputValues`.
-pub struct InputValuesOwned {
-    code_hash: Hash,
-    config: ConfigOwned,
-    authority_hash: Hash,
-    authority_descriptor: Option<Vec<u8>>,
-    mode: DiceMode,
-    hidden: Hidden,
-}
-
-impl InputValuesOwned {
-    /// Construct a new instance of InputValuesOwned.
-    pub fn new(
-        code_hash: Hash,
-        config: Config,
-        authority_hash: Hash,
-        authority_descriptor: Option<Vec<u8>>,
-        mode: DiceMode,
-        hidden: Hidden,
-    ) -> Self {
-        Self {
-            code_hash,
-            config: config.into(),
-            authority_hash,
-            authority_descriptor,
-            mode,
-            hidden,
-        }
-    }
-}
-
-impl InputValues for InputValuesOwned {
-    fn code_hash(&self) -> &Hash {
-        &self.code_hash
-    }
-    fn config(&self) -> Config {
-        match &self.config {
-            ConfigOwned::Inline(inline) => Config::Inline(inline),
-            ConfigOwned::Descriptor(descriptor) => Config::Descriptor(descriptor.as_slice()),
-        }
-    }
-    fn authority_hash(&self) -> &Hash {
-        &self.authority_hash
-    }
-    fn authority_descriptor(&self) -> Option<&[u8]> {
-        self.authority_descriptor.as_deref()
-    }
-    fn mode(&self) -> DiceMode {
-        self.mode
-    }
-    fn hidden(&self) -> &Hidden {
-        &self.hidden
-    }
-}
-
-fn call_with_input_values<T: InputValues + ?Sized, F, R>(input_values: &T, f: F) -> Result<R>
-where
-    F: FnOnce(*const DiceInputValues) -> Result<R>,
-{
-    let input_values = diced_open_dice::InputValues::new(
-        input_values.code_hash(),
-        None, // code_descriptor
-        input_values.config(),
-        input_values.authority_hash(),
-        input_values.authority_descriptor(),
-        input_values.mode(),
-        Some(input_values.hidden()),
-    );
-    f(input_values.as_ptr())
-}
 
 /// Multiple of the open dice function required preallocated output buffer
 /// which may be too small, this function implements the retry logic to handle
@@ -314,11 +211,11 @@ pub trait ContextImpl: Context + Send {
     ///  * the next seal CDI, and
     ///  * the next attestation certificate.
     /// `(next_attest_cdi, next_seal_cdi, next_attestation_cert)`
-    fn main_flow<T: InputValues + ?Sized>(
+    fn main_flow(
         &mut self,
         current_cdi_attest: &[u8; CDI_SIZE],
         current_cdi_seal: &[u8; CDI_SIZE],
-        input_values: &T,
+        input_values: &InputValues,
     ) -> Result<(CdiAttest, CdiSeal, Cert)> {
         let mut next_attest = CdiAttest::new(CDI_SIZE)?;
         let mut next_seal = CdiSeal::new(CDI_SIZE)?;
@@ -330,10 +227,7 @@ pub trait ContextImpl: Context + Send {
         //   This is fulfilled as per the definition of the arguments `current_cdi_attest`
         //   and `current_cdi_seal.
         // * The fourth argument is a pointer to `DiceInputValues`. It, and its indirect
-        //   references must be valid for the duration of the function call which
-        //   is guaranteed by `call_with_input_values` which puts `DiceInputValues`
-        //   on the stack and initializes it from the `input_values` argument which
-        //   implements the `InputValues` trait.
+        //   references must be valid for the duration of the function call.
         // * The fifth and sixth argument are the length of and the pointer to the
         //   allocated certificate buffer respectively. They are used to return
         //   the generated certificate.
@@ -343,24 +237,22 @@ pub trait ContextImpl: Context + Send {
         //   CDI_SIZE. This is fulfilled if the allocation above succeeded.
         // * No pointers are expected to be valid beyond the scope of the function
         //   call.
-        call_with_input_values(input_values, |input_values| {
-            let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
-                check_result(unsafe {
-                    DiceMainFlow(
-                        self.get_context(),
-                        current_cdi_attest.as_ptr(),
-                        current_cdi_seal.as_ptr(),
-                        input_values,
-                        cert.len(),
-                        cert.as_mut_ptr(),
-                        actual_size as *mut _,
-                        next_attest.as_mut_ptr(),
-                        next_seal.as_mut_ptr(),
-                    )
-                })
-            })?;
-            Ok((next_attest, next_seal, cert))
-        })
+        let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
+            check_result(unsafe {
+                DiceMainFlow(
+                    self.get_context(),
+                    current_cdi_attest.as_ptr(),
+                    current_cdi_seal.as_ptr(),
+                    input_values.as_ptr(),
+                    cert.len(),
+                    cert.as_mut_ptr(),
+                    actual_size as *mut _,
+                    next_attest.as_mut_ptr(),
+                    next_seal.as_mut_ptr(),
+                )
+            })
+        })?;
+        Ok((next_attest, next_seal, cert))
     }
 
     /// Safe wrapper around open-dice DiceHash, see open dice
@@ -501,44 +393,39 @@ pub trait ContextImpl: Context + Send {
 
     /// Safe wrapper around open-dice DiceGenerateCertificate, see open dice
     /// documentation for details.
-    fn generate_certificate<T: InputValues>(
+    fn generate_certificate(
         &mut self,
         subject_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
         authority_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
-        input_values: &T,
+        input_values: &InputValues,
     ) -> Result<Vec<u8>> {
-        // SAFETY (DiceMainFlow):
+        // SAFETY (DiceGenerateCertificate):
         // * The first context argument may be NULL and is unused by the wrapped
         //   implementation.
         // * The second argument and the third argument are const arrays of size
         //   `PRIVATE_KEY_SEED_SIZE`. This is fulfilled as per the definition of the arguments.
         // * The fourth argument is a pointer to `DiceInputValues` it, and its indirect
-        //   references must be valid for the duration of the function call which
-        //   is guaranteed by `call_with_input_values` which puts `DiceInputValues`
-        //   on the stack and initializes it from the `input_values` argument which
-        //   implements the `InputValues` trait.
+        //   references must be valid for the duration of the function call.
         // * The fifth argument and the sixth argument are the length of and the pointer to the
         //   allocated certificate buffer respectively. They are used to return
         //   the generated certificate.
         // * The seventh argument is a pointer to a mutable usize object. It is
         //   used to return the actual size of the output certificate.
         // * All pointers must be valid for the duration of the function call but not beyond.
-        call_with_input_values(input_values, |input_values| {
-            let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
-                check_result(unsafe {
-                    DiceGenerateCertificate(
-                        self.get_context(),
-                        subject_private_key_seed.as_ptr(),
-                        authority_private_key_seed.as_ptr(),
-                        input_values,
-                        cert.len(),
-                        cert.as_mut_ptr(),
-                        actual_size as *mut _,
-                    )
-                })
-            })?;
-            Ok(cert)
-        })
+        let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
+            check_result(unsafe {
+                DiceGenerateCertificate(
+                    self.get_context(),
+                    subject_private_key_seed.as_ptr(),
+                    authority_private_key_seed.as_ptr(),
+                    input_values.as_ptr(),
+                    cert.len(),
+                    cert.as_mut_ptr(),
+                    actual_size as *mut _,
+                )
+            })
+        })?;
+        Ok(cert)
     }
 
     /// Safe wrapper around open-dice BccDiceMainFlow, see open dice
@@ -548,12 +435,12 @@ pub trait ContextImpl: Context + Send {
     ///  * the next seal CDI, and
     ///  * the next bcc adding the new certificate to the given bcc.
     /// `(next_attest_cdi, next_seal_cdi, next_bcc)`
-    fn bcc_main_flow<T: InputValues + ?Sized>(
+    fn bcc_main_flow(
         &mut self,
         current_cdi_attest: &[u8; CDI_SIZE],
         current_cdi_seal: &[u8; CDI_SIZE],
         bcc: &[u8],
-        input_values: &T,
+        input_values: &InputValues,
     ) -> Result<(CdiAttest, CdiSeal, Bcc)> {
         let mut next_attest = CdiAttest::new(CDI_SIZE)?;
         let mut next_seal = CdiSeal::new(CDI_SIZE)?;
@@ -567,10 +454,7 @@ pub trait ContextImpl: Context + Send {
         // * The fourth argument and the fifth argument are the pointer to and size of the buffer
         //   holding the current bcc.
         // * The sixth argument is a pointer to `DiceInputValues` it, and its indirect
-        //   references must be valid for the duration of the function call which
-        //   is guaranteed by `call_with_input_values` which puts `DiceInputValues`
-        //   on the stack and initializes it from the `input_values` argument which
-        //   implements the `InputValues` trait.
+        //   references must be valid for the duration of the function call.
         // * The seventh argument and the eighth argument are the length of and the pointer to the
         //   allocated certificate buffer respectively. They are used to return the generated
         //   certificate.
@@ -580,26 +464,24 @@ pub trait ContextImpl: Context + Send {
         //   size CDI_SIZE. This is fulfilled if the allocation above succeeded.
         // * No pointers are expected to be valid beyond the scope of the function
         //   call.
-        call_with_input_values(input_values, |input_values| {
-            let next_bcc = retry_while_adjusting_output_buffer(|next_bcc, actual_size| {
-                check_result(unsafe {
-                    BccMainFlow(
-                        self.get_context(),
-                        current_cdi_attest.as_ptr(),
-                        current_cdi_seal.as_ptr(),
-                        bcc.as_ptr(),
-                        bcc.len(),
-                        input_values,
-                        next_bcc.len(),
-                        next_bcc.as_mut_ptr(),
-                        actual_size as *mut _,
-                        next_attest.as_mut_ptr(),
-                        next_seal.as_mut_ptr(),
-                    )
-                })
-            })?;
-            Ok((next_attest, next_seal, next_bcc))
-        })
+        let next_bcc = retry_while_adjusting_output_buffer(|next_bcc, actual_size| {
+            check_result(unsafe {
+                BccMainFlow(
+                    self.get_context(),
+                    current_cdi_attest.as_ptr(),
+                    current_cdi_seal.as_ptr(),
+                    bcc.as_ptr(),
+                    bcc.len(),
+                    input_values.as_ptr(),
+                    next_bcc.len(),
+                    next_bcc.as_mut_ptr(),
+                    actual_size as *mut _,
+                    next_attest.as_mut_ptr(),
+                    next_seal.as_mut_ptr(),
+                )
+            })
+        })?;
+        Ok((next_attest, next_seal, next_bcc))
     }
 }
 

@@ -21,8 +21,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 use anyhow::{Context, Result};
 use dice::ContextImpl;
 use diced_open_dice_cbor as dice;
-use diced_utils::cbor;
-use diced_utils::InputValues;
+use diced_utils::{cbor, to_dice_input_values};
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
 use std::io::Write;
@@ -82,7 +81,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
     let input_values_vector = get_input_values_vector();
 
     let (cdi_attest, cdi_seal, mut cert) = dice_ctx
-        .main_flow(UDS, UDS, &InputValues::from(&input_values_vector[0]))
+        .main_flow(UDS, UDS, &to_dice_input_values(&input_values_vector[0]))
         .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
 
     let mut bcc: Vec<u8> = vec![];
@@ -103,7 +102,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
                 "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (1)",
             )?,
             &bcc,
-            &InputValues::from(&input_values_vector[1]),
+            &to_dice_input_values(&input_values_vector[1]),
         )
         .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
     dice_ctx
@@ -115,7 +114,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
                 "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (2)",
             )?,
             &bcc,
-            &InputValues::from(&input_values_vector[2]),
+            &to_dice_input_values(&input_values_vector[2]),
         )
         .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
 }
