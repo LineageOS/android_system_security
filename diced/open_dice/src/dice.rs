@@ -15,11 +15,11 @@
 //! Structs and functions about the types used in DICE.
 //! This module mirrors the content in open-dice/include/dice/dice.h
 
-use core::ptr;
 use open_dice_cbor_bindgen::{
     DiceConfigType, DiceInputValues, DiceMode, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
     DICE_INLINE_CONFIG_SIZE,
 };
+use std::ptr;
 
 /// The size of a DICE hash.
 pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
