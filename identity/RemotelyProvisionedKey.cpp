@@ -21,6 +21,7 @@
 #include <android-base/logging.h>
 #include <android/security/rkp/BnGetKeyCallback.h>
 #include <android/security/rkp/BnGetRegistrationCallback.h>
+#include <android/security/rkp/IGetKeyCallback.h>
 #include <android/security/rkp/IRemoteProvisioning.h>
 #include <binder/IServiceManager.h>
 #include <binder/Status.h>
@@ -38,6 +39,7 @@ using ::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using ::android::hardware::security::keymint::RpcHardwareInfo;
 using ::android::security::rkp::BnGetKeyCallback;
 using ::android::security::rkp::BnGetRegistrationCallback;
+using ::android::security::rkp::IGetKeyCallback;
 using ::android::security::rkp::IRegistration;
 using ::android::security::rkp::IRemoteProvisioning;
 using ::android::security::rkp::RemotelyProvisionedKey;
@@ -96,11 +98,11 @@ class GetKeyCallback : public BnGetKeyCallback {
         keyPromise_.set_value(std::nullopt);
         return Status::ok();
     }
-    Status onError(const String16& error) override {
+    Status onError(IGetKeyCallback::ErrorCode error, const String16& description) override {
         if (called_.test_and_set()) {
             return Status::ok();
         }
-        LOG(ERROR) << "GetKeyCallback failed: " << error;
+        LOG(ERROR) << "GetKeyCallback failed: " << static_cast<int>(error) << ", " << description;
         keyPromise_.set_value(std::nullopt);
         return Status::ok();
     }
@@ -124,7 +126,8 @@ class GetRegistrationCallback : public BnGetRegistrationCallback {
         auto cb = sp<GetKeyCallback>::make(std::move(keyPromise_));
         auto status = registration->getKey(keyId_, cb);
         if (!status.isOk()) {
-            cb->onError(String16("Failed to register GetKeyCallback"));
+            cb->onError(IGetKeyCallback::ErrorCode::ERROR_UNKNOWN,
+                        String16("Failed to register GetKeyCallback"));
         }
         return Status::ok();
     }
