@@ -23,5 +23,7 @@ extern crate core as std;
 mod dice;
 mod error;
 
-pub use dice::{Config, Hash, Hidden, InlineConfig, InputValues, HASH_SIZE, HIDDEN_SIZE};
+pub use dice::{
+    Cdi, Config, Hash, Hidden, InlineConfig, InputValues, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+};
 pub use error::{check_result, DiceError, Result};
