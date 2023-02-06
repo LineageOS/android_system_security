@@ -81,27 +81,25 @@ pub struct InputValues(DiceInputValues);
 impl InputValues {
     /// Creates a new `InputValues`.
     pub fn new(
-        code_hash: &Hash,
-        code_descriptor: Option<&[u8]>,
+        code_hash: Hash,
         config: Config,
-        authority_hash: &Hash,
-        authority_descriptor: Option<&[u8]>,
+        authority_hash: Hash,
         mode: DiceMode,
-        hidden: Option<&Hidden>,
+        hidden: Hidden,
     ) -> Self {
         Self(DiceInputValues {
-            code_hash: *code_hash,
-            code_descriptor: code_descriptor.map_or(ptr::null(), |d| d.as_ptr()),
-            code_descriptor_size: code_descriptor.map_or(0, |d| d.len()),
+            code_hash,
+            code_descriptor: ptr::null(),
+            code_descriptor_size: 0,
             config_type: config.dice_config_type(),
             config_value: config.inline_config(),
             config_descriptor: config.descriptor_ptr(),
             config_descriptor_size: config.descriptor_size(),
-            authority_hash: *authority_hash,
-            authority_descriptor: authority_descriptor.map_or(ptr::null(), |d| d.as_ptr()),
-            authority_descriptor_size: authority_descriptor.map_or(0, |d| d.len()),
+            authority_hash,
+            authority_descriptor: ptr::null(),
+            authority_descriptor_size: 0,
             mode,
-            hidden: hidden.map_or([0; HIDDEN_SIZE], |h| *h),
+            hidden,
         })
     }
 
