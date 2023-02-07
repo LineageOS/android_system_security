@@ -15,8 +15,9 @@
 //! Structs and functions about the types used in DICE.
 //! This module mirrors the content in open-dice/include/dice/dice.h
 
+pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceConfigType, DiceInputValues, DiceMode, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
+    DiceConfigType, DiceInputValues, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
     DICE_INLINE_CONFIG_SIZE,
 };
 use std::ptr;
