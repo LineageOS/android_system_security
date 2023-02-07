@@ -36,6 +36,7 @@ use error::{map_or_log_err, Error};
 use keystore2_selinux as selinux;
 use libc::uid_t;
 use permission::Permission;
+use std::ffi::CString;
 use std::sync::Arc;
 
 /// A DiceNode backend implementation.
@@ -97,11 +98,12 @@ pub fn check_caller_permission<T: selinux::ClassPermission>(perm: T) -> Result<(
 }
 
 fn client_input_values(uid: uid_t) -> Result<BinderInputValues> {
+    let desc = CString::new(format!("{}", uid)).unwrap();
     Ok(BinderInputValues {
         codeHash: [0; dice::HASH_SIZE],
         config: BinderConfig {
-            desc: dice::bcc::format_config_descriptor(Some(&format!("{}", uid)), None, false)
-                .context("In client_input_values: failed to format config descriptor")?,
+            desc: dice::retry_bcc_format_config_descriptor(Some(desc.as_c_str()), None, true)
+                .unwrap(),
         },
         authorityHash: [0; dice::HASH_SIZE],
         authorityDescriptor: None,

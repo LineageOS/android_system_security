@@ -24,6 +24,7 @@ use diced_open_dice_cbor as dice;
 use diced_utils::{cbor, to_dice_input_values};
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
+use std::ffi::CStr;
 use std::io::Write;
 
 /// Sample UDS used to perform the root dice flow by `make_sample_bcc_and_cdis`.
@@ -122,7 +123,7 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
 fn make_input_values(
     code_hash: dice::Hash,
     authority_hash: dice::Hash,
-    config_name: &str,
+    config_name: &CStr,
     config_version: u64,
     config_resettable: bool,
     mode: Mode,
@@ -131,7 +132,7 @@ fn make_input_values(
     Ok(BinderInputValues {
         codeHash: code_hash,
         config: BinderConfig {
-            desc: dice::bcc::format_config_descriptor(
+            desc: dice::retry_bcc_format_config_descriptor(
                 Some(config_name),
                 Some(config_version),
                 config_resettable,
@@ -201,9 +202,9 @@ pub fn get_input_values_vector() -> Vec<BinderInputValues> {
         make_input_values(
             CODE_HASH1,
             AUTHORITY_HASH1,
-            "ABL", // config name
-            1,     // config version
-            true,  // resettable
+            CStr::from_bytes_with_nul(b"ABL\0").unwrap(), // config name
+            1,                                            // config version
+            true,                                         // resettable
             Mode::NORMAL,
             HIDDEN1,
         )
@@ -211,9 +212,9 @@ pub fn get_input_values_vector() -> Vec<BinderInputValues> {
         make_input_values(
             CODE_HASH2,
             AUTHORITY_HASH2,
-            "AVB", // config name
-            1,     // config version
-            true,  // resettable
+            CStr::from_bytes_with_nul(b"AVB\0").unwrap(), // config name
+            1,                                            // config version
+            true,                                         // resettable
             Mode::NORMAL,
             HIDDEN2,
         )
@@ -221,9 +222,9 @@ pub fn get_input_values_vector() -> Vec<BinderInputValues> {
         make_input_values(
             [0; dice::HASH_SIZE], // code hash
             AUTHORITY_HASH3,
-            "Android", // config name
-            12,        // config version
-            true,      // resettable
+            CStr::from_bytes_with_nul(b"Android\0").unwrap(), // config name
+            12,                                               // config version
+            true,                                             // resettable
             Mode::NORMAL,
             [0; dice::HIDDEN_SIZE], // hidden,
         )
