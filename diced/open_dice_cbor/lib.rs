@@ -32,8 +32,8 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, Config, DiceError, Hash, Hidden, InputValues, Result, CDI_SIZE, HASH_SIZE,
-    HIDDEN_SIZE,
+    check_result, retry_bcc_format_config_descriptor, Config, DiceError, Hash, Hidden, InputValues,
+    Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
 };
 use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
@@ -68,6 +68,8 @@ pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
 /// exactly.
 /// The function panics if the callback returns `Ok(())` and the size hint is
 /// larger than the buffer size.
+/// TODO(b/267575445): Remove this method once we migrate all its callers to
+/// `retry_with_bigger_buffer` in `diced_open_dice`.
 fn retry_while_adjusting_output_buffer<F>(mut f: F) -> Result<Vec<u8>>
 where
     F: FnMut(&mut Vec<u8>, &mut usize) -> Result<()>,
@@ -481,60 +483,6 @@ pub trait ContextImpl: Context + Send {
             })
         })?;
         Ok((next_attest, next_seal, next_bcc))
-    }
-}
-
-/// This submodule provides additional support for the Boot Certificate Chain (BCC)
-/// specification.
-/// See https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/keymint/aidl/android/hardware/security/keymint/ProtectedData.aidl
-pub mod bcc {
-    use super::{check_result, retry_while_adjusting_output_buffer, DiceError, Result};
-    use open_dice_bcc_bindgen::{
-        BccConfigValues, BccFormatConfigDescriptor, BCC_INPUT_COMPONENT_NAME,
-        BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
-    };
-    use std::ffi::CString;
-
-    /// Safe wrapper around BccFormatConfigDescriptor, see open dice documentation for details.
-    /// TODO(b/267575445): Make `component_name` take &CStr here.
-    pub fn format_config_descriptor(
-        component_name: Option<&str>,
-        component_version: Option<u64>,
-        resettable: bool,
-    ) -> Result<Vec<u8>> {
-        let component_name = match component_name {
-            Some(n) => Some(CString::new(n).map_err(|_| DiceError::CStrNulError)?),
-            None => None,
-        };
-        let input = BccConfigValues {
-            inputs: if component_name.is_some() { BCC_INPUT_COMPONENT_NAME } else { 0 }
-                | if component_version.is_some() { BCC_INPUT_COMPONENT_VERSION } else { 0 }
-                | if resettable { BCC_INPUT_RESETTABLE } else { 0 },
-            // SAFETY: The as_ref() in the line below is vital to keep the component_name object
-            //         alive. Removing as_ref will move the component_name and the pointer will
-            //         become invalid after this statement.
-            component_name: component_name.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-            component_version: component_version.unwrap_or(0),
-        };
-
-        // SAFETY:
-        // * The first argument is a pointer to the BccConfigValues input assembled above.
-        //   It and its indirections must be valid for the duration of the function call.
-        // * The second argument and the third argument are the length of and the pointer to the
-        //   allocated output buffer respectively. The buffer must be at least as long
-        //   as indicated by the size argument.
-        // * The forth argument is a pointer to the actual size returned by the function.
-        // * All pointers must be valid for the duration of the function call but not beyond.
-        retry_while_adjusting_output_buffer(|config_descriptor, actual_size| {
-            check_result(unsafe {
-                BccFormatConfigDescriptor(
-                    &input as *const BccConfigValues,
-                    config_descriptor.len(),
-                    config_descriptor.as_mut_ptr(),
-                    actual_size as *mut _,
-                )
-            })
-        })
     }
 }
 
