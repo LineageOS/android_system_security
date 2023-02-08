@@ -138,24 +138,6 @@ rust_binary {
     init_rc: ["diced.rc"],
 }
 
-rust_binary {
-    name: "diced.microdroid",
-    srcs: ["src/diced_main.rs"],
-    prefer_rlib: true,
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "libandroid_logger",
-        "libbinder_rs",
-        "libdiced",
-        "libdiced_open_dice_cbor",
-        "libdiced_sample_inputs",
-        "libdiced_utils",
-        "liblog_rust",
-    ],
-    init_rc: ["diced.microdroid.rc"],
-    bootstrap: true,
-}
-
 rust_test {
     name: "diced_test",
     crate_name: "diced_test",
