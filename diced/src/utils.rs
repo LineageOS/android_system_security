@@ -19,7 +19,6 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Mode::Mode as BinderMode,
 };
 use anyhow::{Context, Result};
-use dice::{ContextImpl, DiceMode};
 use diced_open_dice_cbor as dice;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
@@ -38,13 +37,13 @@ pub fn to_dice_input_values(input: &BinderInputValues) -> dice::InputValues {
     )
 }
 
-fn to_dice_mode(binder_mode: BinderMode) -> DiceMode {
+fn to_dice_mode(binder_mode: BinderMode) -> dice::DiceMode {
     match binder_mode {
-        BinderMode::NOT_INITIALIZED => DiceMode::kDiceModeNotInitialized,
-        BinderMode::NORMAL => DiceMode::kDiceModeNormal,
-        BinderMode::DEBUG => DiceMode::kDiceModeDebug,
-        BinderMode::RECOVERY => DiceMode::kDiceModeMaintenance,
-        _ => DiceMode::kDiceModeNotInitialized,
+        BinderMode::NOT_INITIALIZED => dice::DiceMode::kDiceModeNotInitialized,
+        BinderMode::NORMAL => dice::DiceMode::kDiceModeNormal,
+        BinderMode::DEBUG => dice::DiceMode::kDiceModeDebug,
+        BinderMode::RECOVERY => dice::DiceMode::kDiceModeMaintenance,
+        _ => dice::DiceMode::kDiceModeNotInitialized,
     }
 }
 
@@ -66,6 +65,18 @@ pub struct ResidentArtifacts {
     cdi_attest: ZVec,
     cdi_seal: ZVec,
     bcc: Vec<u8>,
+}
+
+impl TryFrom<dice::OwnedDiceArtifacts> for ResidentArtifacts {
+    type Error = anyhow::Error;
+
+    fn try_from(dice_artifacts: dice::OwnedDiceArtifacts) -> Result<Self, Self::Error> {
+        Ok(ResidentArtifacts {
+            cdi_attest: dice_artifacts.cdi_values.cdi_attest[..].try_into()?,
+            cdi_seal: dice_artifacts.cdi_values.cdi_seal[..].try_into()?,
+            bcc: dice_artifacts.bcc[..].to_vec(),
+        })
+    }
 }
 
 impl ResidentArtifacts {
@@ -125,19 +136,18 @@ impl ResidentArtifacts {
     fn execute_step(self, input_values: &BinderInputValues) -> Result<Self> {
         let ResidentArtifacts { cdi_attest, cdi_seal, bcc } = self;
 
-        let (cdi_attest, cdi_seal, bcc) = dice::OpenDiceCborContext::new()
-            .bcc_main_flow(
-                cdi_attest[..].try_into().with_context(|| {
-                    format!("Trying to convert cdi_attest. (length: {})", cdi_attest.len())
-                })?,
-                cdi_seal[..].try_into().with_context(|| {
-                    format!("Trying to convert cdi_seal. (length: {})", cdi_seal.len())
-                })?,
-                &bcc,
-                &to_dice_input_values(input_values),
-            )
-            .context("In ResidentArtifacts::execute_step:")?;
-        Ok(ResidentArtifacts { cdi_attest, cdi_seal, bcc })
+        dice::retry_bcc_main_flow(
+            cdi_attest[..].try_into().with_context(|| {
+                format!("Trying to convert cdi_attest. (length: {})", cdi_attest.len())
+            })?,
+            cdi_seal[..].try_into().with_context(|| {
+                format!("Trying to convert cdi_seal. (length: {})", cdi_seal.len())
+            })?,
+            &bcc,
+            &to_dice_input_values(input_values),
+        )
+        .context("In ResidentArtifacts::execute_step:")?
+        .try_into()
     }
 
     /// Iterate through the iterator of dice input values performing one

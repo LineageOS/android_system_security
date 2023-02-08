@@ -32,12 +32,11 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor, Config,
-    DiceError, Hash, Hidden, InputValues, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
-    PRIVATE_KEY_SEED_SIZE,
+    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor,
+    retry_bcc_main_flow, Config, DiceError, Hash, Hidden, InputValues, OwnedDiceArtifacts, Result,
+    CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 use keystore2_crypto::ZVec;
-use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceGenerateCertificate, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
@@ -363,62 +362,6 @@ pub trait ContextImpl: Context + Send {
         })?;
         Ok(cert)
     }
-
-    /// Safe wrapper around open-dice BccDiceMainFlow, see open dice
-    /// documentation for details.
-    /// Returns a tuple of:
-    ///  * The next attestation CDI,
-    ///  * the next seal CDI, and
-    ///  * the next bcc adding the new certificate to the given bcc.
-    /// `(next_attest_cdi, next_seal_cdi, next_bcc)`
-    fn bcc_main_flow(
-        &mut self,
-        current_cdi_attest: &[u8; CDI_SIZE],
-        current_cdi_seal: &[u8; CDI_SIZE],
-        bcc: &[u8],
-        input_values: &InputValues,
-    ) -> Result<(CdiAttest, CdiSeal, Bcc)> {
-        let mut next_attest = CdiAttest::new(CDI_SIZE)?;
-        let mut next_seal = CdiSeal::new(CDI_SIZE)?;
-
-        // SAFETY (BccMainFlow):
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are const arrays of size CDI_SIZE.
-        //   This is fulfilled as per the definition of the arguments `current_cdi_attest`
-        //   and `current_cdi_seal`.
-        // * The fourth argument and the fifth argument are the pointer to and size of the buffer
-        //   holding the current bcc.
-        // * The sixth argument is a pointer to `DiceInputValues` it, and its indirect
-        //   references must be valid for the duration of the function call.
-        // * The seventh argument and the eighth argument are the length of and the pointer to the
-        //   allocated certificate buffer respectively. They are used to return the generated
-        //   certificate.
-        // * The ninth argument is a pointer to a mutable usize object. It is
-        //   used to return the actual size of the output certificate.
-        // * The tenth argument and the eleventh argument are pointers to mutable buffers of
-        //   size CDI_SIZE. This is fulfilled if the allocation above succeeded.
-        // * No pointers are expected to be valid beyond the scope of the function
-        //   call.
-        let next_bcc = retry_while_adjusting_output_buffer(|next_bcc, actual_size| {
-            check_result(unsafe {
-                BccMainFlow(
-                    self.get_context(),
-                    current_cdi_attest.as_ptr(),
-                    current_cdi_seal.as_ptr(),
-                    bcc.as_ptr(),
-                    bcc.len(),
-                    input_values.as_ptr(),
-                    next_bcc.len(),
-                    next_bcc.as_mut_ptr(),
-                    actual_size as *mut _,
-                    next_attest.as_mut_ptr(),
-                    next_seal.as_mut_ptr(),
-                )
-            })
-        })?;
-        Ok((next_attest, next_seal, next_bcc))
-    }
 }
 
 #[cfg(test)]
@@ -627,10 +570,10 @@ mod test {
     // and changes in any of those functions.
     #[test]
     fn main_flow_and_bcc_main_flow() {
-        let (cdi_attest, cdi_seal, bcc) = make_sample_bcc_and_cdis().unwrap();
-        assert_eq!(&cdi_attest[..], SAMPLE_CDI_ATTEST_TEST_VECTOR);
-        assert_eq!(&cdi_seal[..], SAMPLE_CDI_SEAL_TEST_VECTOR);
-        assert_eq!(&bcc[..], SAMPLE_BCC_TEST_VECTOR);
+        let dice_artifacts = make_sample_bcc_and_cdis().unwrap();
+        assert_eq!(&dice_artifacts.cdi_values.cdi_attest, SAMPLE_CDI_ATTEST_TEST_VECTOR);
+        assert_eq!(&dice_artifacts.cdi_values.cdi_seal, SAMPLE_CDI_SEAL_TEST_VECTOR);
+        assert_eq!(&dice_artifacts.bcc, SAMPLE_BCC_TEST_VECTOR);
     }
 
     static DERIVED_KEY_TEST_VECTOR: &[u8] = &[
