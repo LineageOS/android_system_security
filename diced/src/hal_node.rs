@@ -375,22 +375,15 @@ mod test {
         config_name: &CStr,
         authority: &str,
     ) -> Result<BinderInputValues> {
-        let mut dice_ctx = dice::OpenDiceCborContext::new();
         Ok(BinderInputValues {
-            codeHash: dice_ctx
-                .hash(code.as_bytes())
-                .context("In make_input_values: code hash failed.")?
-                .as_slice()
-                .try_into()?,
+            codeHash: dice::hash(code.as_bytes())
+                .context("In make_input_values: code hash failed.")?,
             config: BinderConfig {
                 desc: dice::retry_bcc_format_config_descriptor(Some(config_name), None, true)
                     .context("In make_input_values: Failed to format config descriptor.")?,
             },
-            authorityHash: dice_ctx
-                .hash(authority.as_bytes())
-                .context("In make_input_values: authority hash failed.")?
-                .as_slice()
-                .try_into()?,
+            authorityHash: dice::hash(authority.as_bytes())
+                .context("In make_input_values: authority hash failed.")?,
             authorityDescriptor: None,
             mode: BinderMode::NORMAL,
             hidden: [0; dice::HIDDEN_SIZE],
