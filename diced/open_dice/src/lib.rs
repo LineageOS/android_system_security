@@ -29,8 +29,9 @@ mod retry;
 
 pub use bcc::bcc_format_config_descriptor;
 pub use dice::{
-    Cdi, Config, DiceMode, Hash, Hidden, InlineConfig, InputValues, CDI_SIZE, HASH_SIZE,
-    HIDDEN_SIZE,
+    derive_cdi_certificate_id, derive_cdi_private_key_seed, Cdi, Config, DiceMode, Hash, Hidden,
+    InlineConfig, InputValues, PrivateKeySeed, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, ID_SIZE,
+    PRIVATE_KEY_SEED_SIZE,
 };
 pub use error::{check_result, DiceError, Result};
 pub use ops::hash;

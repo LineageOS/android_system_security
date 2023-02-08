@@ -203,14 +203,15 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
             .with_effective_artifacts(input_values, |artifacts| {
                 let (cdi_attest, _, _) = artifacts.into_tuple();
                 let mut dice = OpenDiceCborContext::new();
-                let seed = dice
-                    .derive_cdi_private_key_seed(cdi_attest[..].try_into().with_context(|| {
+                let seed = dice::derive_cdi_private_key_seed(
+                    cdi_attest[..].try_into().with_context(|| {
                         format!(
                             "In ResidentHal::sign: Failed to convert cdi_attest (length: {}).",
                             cdi_attest.len()
                         )
-                    })?)
-                    .context("In ResidentHal::sign: Failed to derive seed from cdi_attest.")?;
+                    })?,
+                )
+                .context("In ResidentHal::sign: Failed to derive seed from cdi_attest.")?;
                 let (_public_key, private_key) = dice
                     .keypair_from_seed(seed[..].try_into().with_context(|| {
                         format!(

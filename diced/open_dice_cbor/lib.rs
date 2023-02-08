@@ -32,23 +32,19 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, hash, retry_bcc_format_config_descriptor, Config, DiceError, Hash, Hidden,
-    InputValues, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor, Config,
+    DiceError, Hash, Hidden, InputValues, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+    PRIVATE_KEY_SEED_SIZE,
 };
 use keystore2_crypto::ZVec;
 use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceGenerateCertificate, DiceKdf,
-    DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify, DICE_ID_SIZE,
-    DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
+    DiceGenerateCertificate, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
+    DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
 
-/// The size of a private key seed.
-pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
-/// The size of an ID.
-pub const ID_SIZE: usize = DICE_ID_SIZE as usize;
 /// The size of a private key.
 pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
 /// The size of a public key.
@@ -162,49 +158,6 @@ const INITIAL_OUT_BUFFER_SIZE: usize = 1024;
 /// library calls. Implementations must implement Context::get_context(). As of
 /// this writing, the only implementation is OpenDiceCborContext, which returns NULL.
 pub trait ContextImpl: Context + Send {
-    /// Safe wrapper around open-dice DiceDeriveCdiPrivateKeySeed, see open dice
-    /// documentation for details.
-    fn derive_cdi_private_key_seed(&mut self, cdi_attest: &[u8; CDI_SIZE]) -> Result<ZVec> {
-        let mut seed = ZVec::new(PRIVATE_KEY_SEED_SIZE)?;
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument is expected to be a const array of size CDI_SIZE.
-        // * The third argument is expected to be a non const array of size
-        //   PRIVATE_KEY_SEED_SIZE which is fulfilled if the call to ZVec::new above
-        //   succeeds.
-        // * No pointers are expected to be valid beyond the scope of the function
-        //   call.
-        check_result(unsafe {
-            DiceDeriveCdiPrivateKeySeed(self.get_context(), cdi_attest.as_ptr(), seed.as_mut_ptr())
-        })?;
-        Ok(seed)
-    }
-
-    /// Safe wrapper around open-dice DiceDeriveCdiCertificateId, see open dice
-    /// documentation for details.
-    fn derive_cdi_certificate_id(&mut self, cdi_public_key: &[u8]) -> Result<ZVec> {
-        let mut id = ZVec::new(ID_SIZE)?;
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument is expected to be a const array with a size given by the
-        //   third argument.
-        // * The fourth argument is expected to be a non const array of size
-        //   ID_SIZE which is fulfilled if the call to ZVec::new above succeeds.
-        // * No pointers are expected to be valid beyond the scope of the function
-        //   call.
-        check_result(unsafe {
-            DiceDeriveCdiCertificateId(
-                self.get_context(),
-                cdi_public_key.as_ptr(),
-                cdi_public_key.len(),
-                id.as_mut_ptr(),
-            )
-        })?;
-        Ok(id)
-    }
-
     /// Safe wrapper around open-dice DiceMainFlow, see open dice
     /// documentation for details.
     /// Returns a tuple of:
@@ -522,7 +475,7 @@ mod test {
         let cdi_attest = &seed[..CDI_SIZE];
         assert_eq!(cdi_attest, CDI_ATTEST_TEST_VECTOR);
         let cdi_private_key_seed =
-            ctx.derive_cdi_private_key_seed(cdi_attest.try_into().unwrap()).unwrap();
+            derive_cdi_private_key_seed(cdi_attest.try_into().unwrap()).unwrap();
         assert_eq!(&cdi_private_key_seed[..], CDI_PRIVATE_KEY_SEED_TEST_VECTOR);
         let (pub_key, priv_key) =
             ctx.keypair_from_seed(cdi_private_key_seed[..].try_into().unwrap()).unwrap();
@@ -698,17 +651,5 @@ mod test {
             )
             .unwrap();
         assert_eq!(&derived_key[..], DERIVED_KEY_TEST_VECTOR);
-    }
-
-    static CERT_ID_TEST_VECTOR: &[u8] = &[
-        0x7a, 0x36, 0x45, 0x2c, 0x02, 0xf6, 0x2b, 0xec, 0xf9, 0x80, 0x06, 0x75, 0x87, 0xa5, 0xc1,
-        0x44, 0x0c, 0xd3, 0xc0, 0x6d,
-    ];
-
-    #[test]
-    fn derive_cdi_certificate_id() {
-        let mut ctx = OpenDiceCborContext::new();
-        let cert_id = ctx.derive_cdi_certificate_id("MyPubKey".as_bytes()).unwrap();
-        assert_eq!(&cert_id[..], CERT_ID_TEST_VECTOR);
     }
 }
