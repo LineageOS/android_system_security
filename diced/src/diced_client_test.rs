@@ -22,6 +22,7 @@ use binder::Strong;
 use diced_open_dice_cbor as dice;
 use nix::libc::uid_t;
 use std::convert::TryInto;
+use std::ffi::CString;
 
 static DICE_NODE_SERVICE_NAME: &str = "android.security.dice.IDiceNode";
 static DICE_MAINTENANCE_SERVICE_NAME: &str = "android.security.dice.IDiceMaintenance";
@@ -106,10 +107,11 @@ fn demote_test() {
 }
 
 fn client_input_values(uid: uid_t) -> BinderInputValues {
+    let desc = CString::new(format!("{}", uid)).unwrap();
     BinderInputValues {
         codeHash: [0; dice::HASH_SIZE],
         config: BinderConfig {
-            desc: dice::bcc::format_config_descriptor(Some(&format!("{}", uid)), None, true)
+            desc: dice::retry_bcc_format_config_descriptor(Some(desc.as_c_str()), None, true)
                 .unwrap(),
         },
         authorityHash: [0; dice::HASH_SIZE],

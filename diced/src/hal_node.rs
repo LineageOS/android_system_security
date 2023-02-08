@@ -333,6 +333,7 @@ mod test {
     use diced_open_dice_cbor as dice;
     use diced_sample_inputs;
     use diced_utils as utils;
+    use std::ffi::CStr;
 
     #[derive(Debug, Serialize, Deserialize, Clone)]
     struct InsecureSerializableArtifacts {
@@ -371,7 +372,7 @@ mod test {
 
     fn make_input_values(
         code: &str,
-        config_name: &str,
+        config_name: &CStr,
         authority: &str,
     ) -> Result<BinderInputValues> {
         let mut dice_ctx = dice::OpenDiceCborContext::new();
@@ -382,7 +383,7 @@ mod test {
                 .as_slice()
                 .try_into()?,
             config: BinderConfig {
-                desc: dice::bcc::format_config_descriptor(Some(config_name), None, true)
+                desc: dice::retry_bcc_format_config_descriptor(Some(config_name), None, true)
                     .context("In make_input_values: Failed to format config descriptor.")?,
             },
             authorityHash: dice_ctx
@@ -405,9 +406,21 @@ mod test {
             ResidentArtifacts::new(cdi_attest[..].try_into()?, cdi_seal[..].try_into()?, &bcc)?;
 
         let input_values = &[
-            make_input_values("component 1 code", "component 1", "component 1 authority")?,
-            make_input_values("component 2 code", "component 2", "component 2 authority")?,
-            make_input_values("component 3 code", "component 3", "component 3 authority")?,
+            make_input_values(
+                "component 1 code",
+                CStr::from_bytes_with_nul(b"component 1\0").unwrap(),
+                "component 1 authority",
+            )?,
+            make_input_values(
+                "component 2 code",
+                CStr::from_bytes_with_nul(b"component 2\0").unwrap(),
+                "component 2 authority",
+            )?,
+            make_input_values(
+                "component 3 code",
+                CStr::from_bytes_with_nul(b"component 3\0").unwrap(),
+                "component 3 authority",
+            )?,
         ];
         let new_artifacts = artifacts.execute_steps(input_values)?;
 
@@ -441,9 +454,21 @@ mod test {
 
         let bcc_handover = hal_impl
             .derive(&[
-                make_input_values("component 1 code", "component 1", "component 1 authority")?,
-                make_input_values("component 2 code", "component 2", "component 2 authority")?,
-                make_input_values("component 3 code", "component 3", "component 3 authority")?,
+                make_input_values(
+                    "component 1 code",
+                    CStr::from_bytes_with_nul(b"component 1\0").unwrap(),
+                    "component 1 authority",
+                )?,
+                make_input_values(
+                    "component 2 code",
+                    CStr::from_bytes_with_nul(b"component 2\0").unwrap(),
+                    "component 2 authority",
+                )?,
+                make_input_values(
+                    "component 3 code",
+                    CStr::from_bytes_with_nul(b"component 3\0").unwrap(),
+                    "component 3 authority",
+                )?,
             ])
             .expect("Failed to derive artifacts.");
 
@@ -470,15 +495,23 @@ mod test {
 
         hal_impl
             .demote(&[
-                make_input_values("component 1 code", "component 1", "component 1 authority")?,
-                make_input_values("component 2 code", "component 2", "component 2 authority")?,
+                make_input_values(
+                    "component 1 code",
+                    CStr::from_bytes_with_nul(b"component 1\0").unwrap(),
+                    "component 1 authority",
+                )?,
+                make_input_values(
+                    "component 2 code",
+                    CStr::from_bytes_with_nul(b"component 2\0").unwrap(),
+                    "component 2 authority",
+                )?,
             ])
             .expect("Failed to demote implementation.");
 
         let bcc_handover = hal_impl
             .derive(&[make_input_values(
                 "component 3 code",
-                "component 3",
+                CStr::from_bytes_with_nul(b"component 3\0").unwrap(),
                 "component 3 authority",
             )?])
             .expect("Failed to derive artifacts.");

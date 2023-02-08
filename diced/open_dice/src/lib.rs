@@ -20,8 +20,17 @@
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
+mod bcc;
 mod dice;
 mod error;
+#[cfg(feature = "std")]
+mod retry;
 
-pub use dice::{Config, Hash, Hidden, InlineConfig, InputValues, HASH_SIZE, HIDDEN_SIZE};
+pub use bcc::bcc_format_config_descriptor;
+pub use dice::{
+    Cdi, Config, DiceMode, Hash, Hidden, InlineConfig, InputValues, CDI_SIZE, HASH_SIZE,
+    HIDDEN_SIZE,
+};
 pub use error::{check_result, DiceError, Result};
+#[cfg(feature = "std")]
+pub use retry::retry_bcc_format_config_descriptor;

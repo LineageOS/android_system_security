@@ -71,11 +71,6 @@ impl Error {
     pub fn perm() -> Self {
         Error::Rc(ResponseCode::PERMISSION_DENIED)
     }
-
-    /// Short hand for `Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)`
-    pub fn out_of_keys() -> Self {
-        Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
-    }
 }
 
 /// Helper function to map the binder status we get from calls into KeyMint
