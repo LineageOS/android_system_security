@@ -68,8 +68,7 @@ fn encode_pub_key_ed25519(pub_key: &[u8], stream: &mut dyn Write) -> Result<()> 
 /// by `get_input_values_vector`.
 pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
     let mut dice_ctx = dice::OpenDiceCborContext::new();
-    let private_key_seed = dice_ctx
-        .derive_cdi_private_key_seed(UDS)
+    let private_key_seed = dice::derive_cdi_private_key_seed(UDS)
         .context("In make_sample_bcc_and_cdis: Trying to derive private key seed.")?;
 
     let (public_key, _) =
