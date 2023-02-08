@@ -46,4 +46,25 @@ rust_library {
     ],
 }
 
-// TODO(b/267575445): Add integration tests to check the exposed API
+rust_defaults {
+    name: "libdiced_open_dice_test_defaults",
+    crate_name: "diced_open_dice_test",
+    srcs: ["tests/*.rs"],
+    test_suites: ["general-tests"],
+}
+
+rust_test {
+    name: "libdiced_open_dice.integration_test",
+    defaults: ["libdiced_open_dice_test_defaults"],
+    rustlibs: [
+        "libdiced_open_dice",
+    ],
+}
+
+rust_test {
+    name: "libdiced_open_dice_nostd.integration_test",
+    defaults: ["libdiced_open_dice_test_defaults"],
+    rustlibs: [
+        "libdiced_open_dice_nostd",
+    ],
+}
