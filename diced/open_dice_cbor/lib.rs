@@ -39,7 +39,7 @@ pub use diced_open_dice::{
 use keystore2_crypto::ZVec;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceGenerateCertificate, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
+    DiceGenerateCertificate, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
     DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
@@ -206,42 +206,6 @@ pub trait ContextImpl: Context + Send {
             })
         })?;
         Ok((next_attest, next_seal, cert))
-    }
-
-    /// Safe wrapper around open-dice DiceKdf, see open dice
-    /// documentation for details.
-    fn kdf(&mut self, length: usize, input_key: &[u8], salt: &[u8], info: &[u8]) -> Result<ZVec> {
-        let mut output = ZVec::new(length)?;
-
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument is primitive.
-        // * The third argument and the fourth argument are the pointer to and length of the given
-        //   input key.
-        // * The fifth argument and the sixth argument are the pointer to and length of the given
-        //   salt.
-        // * The seventh argument and the eighth argument are the pointer to and length of the
-        //   given info field.
-        // * The ninth argument is a pointer to the output buffer which must have the
-        //   length given by the `length` argument (see second argument). This is
-        //   fulfilled if the allocation of `output` succeeds.
-        // * All pointers must be valid for the duration of the function call, but not
-        //   longer.
-        check_result(unsafe {
-            DiceKdf(
-                self.get_context(),
-                length,
-                input_key.as_ptr(),
-                input_key.len(),
-                salt.as_ptr(),
-                salt.len(),
-                info.as_ptr(),
-                info.len(),
-                output.as_mut_ptr(),
-            )
-        })?;
-        Ok(output)
     }
 
     /// Safe wrapper around open-dice DiceKeyPairFromSeed, see open dice
@@ -574,25 +538,5 @@ mod test {
         assert_eq!(&dice_artifacts.cdi_values.cdi_attest, SAMPLE_CDI_ATTEST_TEST_VECTOR);
         assert_eq!(&dice_artifacts.cdi_values.cdi_seal, SAMPLE_CDI_SEAL_TEST_VECTOR);
         assert_eq!(&dice_artifacts.bcc, SAMPLE_BCC_TEST_VECTOR);
-    }
-
-    static DERIVED_KEY_TEST_VECTOR: &[u8] = &[
-        0x0e, 0xd6, 0x07, 0x0e, 0x1c, 0x38, 0x2c, 0x76, 0x13, 0xc6, 0x76, 0x25, 0x7e, 0x07, 0x6f,
-        0xdb, 0x1d, 0xb1, 0x0f, 0x3f, 0xed, 0xc5, 0x2b, 0x95, 0xd1, 0x32, 0xf1, 0x63, 0x2f, 0x2a,
-        0x01, 0x5e,
-    ];
-
-    #[test]
-    fn kdf() {
-        let mut ctx = OpenDiceCborContext::new();
-        let derived_key = ctx
-            .kdf(
-                PRIVATE_KEY_SEED_SIZE,
-                "myKey".as_bytes(),
-                "mySalt".as_bytes(),
-                "myInfo".as_bytes(),
-            )
-            .unwrap();
-        assert_eq!(&derived_key[..], DERIVED_KEY_TEST_VECTOR);
     }
 }

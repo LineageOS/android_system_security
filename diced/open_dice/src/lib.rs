@@ -34,6 +34,6 @@ pub use dice::{
     PRIVATE_KEY_SEED_SIZE,
 };
 pub use error::{check_result, DiceError, Result};
-pub use ops::hash;
+pub use ops::{hash, kdf};
 #[cfg(feature = "std")]
 pub use retry::{retry_bcc_format_config_descriptor, retry_bcc_main_flow, OwnedDiceArtifacts};
