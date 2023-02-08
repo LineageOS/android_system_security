@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use diced_open_dice::hash;
+use diced_open_dice::{derive_cdi_certificate_id, hash, ID_SIZE};
 
 #[test]
 fn hash_succeeds() {
@@ -28,4 +28,13 @@ fn hash_succeeds() {
             0xc5, 0x54, 0x2e, 0x93, 0xae, 0x9c, 0xd7, 0x6f
         ]
     );
+}
+
+#[test]
+fn derive_cdi_certificate_id_succeeds() {
+    const EXPECTED_ID: [u8; ID_SIZE] = [
+        0x7a, 0x36, 0x45, 0x2c, 0x02, 0xf6, 0x2b, 0xec, 0xf9, 0x80, 0x06, 0x75, 0x87, 0xa5, 0xc1,
+        0x44, 0x0c, 0xd3, 0xc0, 0x6d,
+    ];
+    assert_eq!(EXPECTED_ID, derive_cdi_certificate_id(b"MyPubKey").unwrap());
 }
