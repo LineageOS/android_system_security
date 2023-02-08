@@ -23,6 +23,7 @@ extern crate core as std;
 mod bcc;
 mod dice;
 mod error;
+mod ops;
 #[cfg(feature = "std")]
 mod retry;
 
@@ -32,5 +33,6 @@ pub use dice::{
     HIDDEN_SIZE,
 };
 pub use error::{check_result, DiceError, Result};
+pub use ops::hash;
 #[cfg(feature = "std")]
 pub use retry::retry_bcc_format_config_descriptor;
