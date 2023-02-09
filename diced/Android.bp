@@ -60,7 +60,6 @@ rust_library {
         "libanyhow",
         "libdiced_open_dice_cbor",
         "libdiced_utils",
-        "libkeystore2_crypto_rust",
     ],
 }
 
@@ -75,7 +74,6 @@ rust_test {
         "libanyhow",
         "libdiced_open_dice_cbor",
         "libdiced_utils",
-        "libkeystore2_crypto_rust",
     ],
 }
 

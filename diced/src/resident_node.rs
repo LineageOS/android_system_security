@@ -36,21 +36,6 @@ pub struct ResidentNode {
 }
 
 impl ResidentNode {
-    /// Creates a new Resident node with the given dice secrets and certificate chain.
-    pub fn new(
-        cdi_attest: &[u8; dice::CDI_SIZE],
-        cdi_seal: &[u8; dice::CDI_SIZE],
-        bcc: Vec<u8>,
-    ) -> Result<Self> {
-        Ok(ResidentNode {
-            artifacts: RwLock::new(
-                ResidentArtifacts::new(cdi_attest, cdi_seal, &bcc)
-                    .context("In ResidentNode::new: Trying to initialize ResidentArtifacts")?,
-            ),
-            demotion_db: Default::default(),
-        })
-    }
-
     fn get_effective_artifacts(
         &self,
         client: BinderInputValues,

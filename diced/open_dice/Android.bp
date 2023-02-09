@@ -22,6 +22,7 @@ rust_library_rlib {
     rustlibs: [
         "libopen_dice_bcc_bindgen_nostd",
         "libopen_dice_cbor_bindgen_nostd",
+        "libzeroize_nostd",
     ],
      whole_static_libs: [
         "libopen_dice_cbor",
@@ -37,6 +38,7 @@ rust_library {
         "libopen_dice_cbor_bindgen",
         // For ZVec
         "libkeystore2_crypto_rust",
+        "libzeroize",
     ],
     features: [
         "std",

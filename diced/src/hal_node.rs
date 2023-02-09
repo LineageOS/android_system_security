@@ -343,6 +343,16 @@ mod test {
         bcc: Vec<u8>,
     }
 
+    impl From<dice::OwnedDiceArtifacts> for InsecureSerializableArtifacts {
+        fn from(dice_artifacts: dice::OwnedDiceArtifacts) -> Self {
+            Self {
+                cdi_attest: dice_artifacts.cdi_values.cdi_attest,
+                cdi_seal: dice_artifacts.cdi_values.cdi_seal,
+                bcc: dice_artifacts.bcc[..].to_vec(),
+            }
+        }
+    }
+
     impl DiceArtifacts for InsecureSerializableArtifacts {
         fn cdi_attest(&self) -> &[u8; dice::CDI_SIZE] {
             &self.cdi_attest
@@ -394,10 +404,8 @@ mod test {
     /// Test the resident artifact batched derivation in process.
     #[test]
     fn derive_with_resident_artifacts() -> Result<()> {
-        let (cdi_attest, cdi_seal, bcc) = diced_sample_inputs::make_sample_bcc_and_cdis()?;
-
-        let artifacts =
-            ResidentArtifacts::new(cdi_attest[..].try_into()?, cdi_seal[..].try_into()?, &bcc)?;
+        let artifacts: ResidentArtifacts =
+            diced_sample_inputs::make_sample_bcc_and_cdis()?.try_into()?;
 
         let input_values = &[
             make_input_values(
@@ -433,18 +441,13 @@ mod test {
     /// the same test vector as the in process test above.
     #[test]
     fn derive_with_insecure_artifacts() -> Result<()> {
-        let (cdi_attest, cdi_seal, bcc) = diced_sample_inputs::make_sample_bcc_and_cdis()?;
+        let dice_artifacts = diced_sample_inputs::make_sample_bcc_and_cdis()?;
 
         // Safety: ResidentHal can only be used in single threaded environments.
         // On-device Rust tests run each test in a separate process.
-        let hal_impl = unsafe {
-            ResidentHal::new(InsecureSerializableArtifacts {
-                cdi_attest: cdi_attest[..].try_into()?,
-                cdi_seal: cdi_seal[..].try_into()?,
-                bcc,
-            })
-        }
-        .expect("Failed to create ResidentHal.");
+        let hal_impl =
+            unsafe { ResidentHal::new(InsecureSerializableArtifacts::from(dice_artifacts)) }
+                .expect("Failed to create ResidentHal.");
 
         let bcc_handover = hal_impl
             .derive(&[
@@ -474,18 +477,13 @@ mod test {
     /// must yield the same outcome as three derivations with the same input values.
     #[test]
     fn demote() -> Result<()> {
-        let (cdi_attest, cdi_seal, bcc) = diced_sample_inputs::make_sample_bcc_and_cdis()?;
+        let dice_artifacts = diced_sample_inputs::make_sample_bcc_and_cdis()?;
 
         // Safety: ResidentHal can only be used in single threaded environments.
         // On-device Rust tests run each test in a separate process.
-        let hal_impl = unsafe {
-            ResidentHal::new(InsecureSerializableArtifacts {
-                cdi_attest: cdi_attest[..].try_into()?,
-                cdi_seal: cdi_seal[..].try_into()?,
-                bcc,
-            })
-        }
-        .expect("Failed to create ResidentHal.");
+        let hal_impl =
+            unsafe { ResidentHal::new(InsecureSerializableArtifacts::from(dice_artifacts)) }
+                .expect("Failed to create ResidentHal.");
 
         hal_impl
             .demote(&[

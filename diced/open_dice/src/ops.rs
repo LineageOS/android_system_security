@@ -18,7 +18,7 @@
 
 use crate::dice::{Hash, HASH_SIZE};
 use crate::error::{check_result, Result};
-use open_dice_cbor_bindgen::DiceHash;
+use open_dice_cbor_bindgen::{DiceHash, DiceKdf};
 use std::ptr;
 
 /// Hashes the provided input using DICE's hash function `DiceHash`.
@@ -35,4 +35,24 @@ pub fn hash(input: &[u8]) -> Result<Hash> {
         )
     })?;
     Ok(output)
+}
+
+/// An implementation of HKDF-SHA512. Derives a key of `derived_key.len()` bytes from `ikm`, `salt`,
+/// and `info`. The derived key is written to the `derived_key`.
+pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Result<()> {
+    // SAFETY: The function writes to the `derived_key`, within the given bounds, and only reads the
+    // input values. The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceKdf(
+            ptr::null_mut(), // context
+            derived_key.len(),
+            ikm.as_ptr(),
+            ikm.len(),
+            salt.as_ptr(),
+            salt.len(),
+            info.as_ptr(),
+            info.len(),
+            derived_key.as_mut_ptr(),
+        )
+    })
 }
