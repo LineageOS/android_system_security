@@ -82,8 +82,8 @@ impl DiceNodeImpl for ResidentNode {
             .context("In ResidentNode::sign: Failed to get effective_artifacts.")?
             .into_tuple();
         let mut dice = OpenDiceCborContext::new();
-        let seed = dice
-            .derive_cdi_private_key_seed(cdi_attest[..].try_into().with_context(|| {
+        let seed =
+            dice::derive_cdi_private_key_seed(cdi_attest[..].try_into().with_context(|| {
                 format!(
                     "In ResidentNode::sign: Failed to convert cdi_attest (length: {}).",
                     cdi_attest.len()

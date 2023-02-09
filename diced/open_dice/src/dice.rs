@@ -15,10 +15,12 @@
 //! Structs and functions about the types used in DICE.
 //! This module mirrors the content in open-dice/include/dice/dice.h
 
+use crate::error::{check_result, Result};
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceConfigType, DiceInputValues, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE,
-    DICE_INLINE_CONFIG_SIZE,
+    DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceInputValues,
+    DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE, DICE_ID_SIZE, DICE_INLINE_CONFIG_SIZE,
+    DICE_PRIVATE_KEY_SEED_SIZE,
 };
 use std::ptr;
 
@@ -30,6 +32,10 @@ pub const HIDDEN_SIZE: usize = DICE_HIDDEN_SIZE as usize;
 const INLINE_CONFIG_SIZE: usize = DICE_INLINE_CONFIG_SIZE as usize;
 /// The size of a CDI.
 pub const CDI_SIZE: usize = DICE_CDI_SIZE as usize;
+/// The size of a private key seed.
+pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
+/// The size of an ID.
+pub const ID_SIZE: usize = DICE_ID_SIZE as usize;
 
 /// Array type of hashes used by DICE.
 pub type Hash = [u8; HASH_SIZE];
@@ -39,6 +45,10 @@ pub type Hidden = [u8; HIDDEN_SIZE];
 pub type InlineConfig = [u8; INLINE_CONFIG_SIZE];
 /// Array type of CDIs.
 pub type Cdi = [u8; CDI_SIZE];
+/// Array type of private key seeds.
+pub type PrivateKeySeed = [u8; PRIVATE_KEY_SEED_SIZE];
+/// Array type of DICE ID.
+pub type DiceId = [u8; ID_SIZE];
 
 /// Configuration descriptor for DICE input values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,4 +122,35 @@ impl InputValues {
     pub fn as_ptr(&self) -> *const DiceInputValues {
         &self.0 as *const DiceInputValues
     }
+}
+
+/// Derives a CDI private key seed from a `cdi_attest` value.
+pub fn derive_cdi_private_key_seed(cdi_attest: &Cdi) -> Result<PrivateKeySeed> {
+    let mut seed = [0u8; PRIVATE_KEY_SEED_SIZE];
+    // SAFETY: The function writes to the buffer within the given bounds, and only reads the
+    // input values. The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceDeriveCdiPrivateKeySeed(
+            ptr::null_mut(), // context
+            cdi_attest.as_ptr(),
+            seed.as_mut_ptr(),
+        )
+    })?;
+    Ok(seed)
+}
+
+/// Derives an ID from the given `cdi_public_key` value.
+pub fn derive_cdi_certificate_id(cdi_public_key: &[u8]) -> Result<DiceId> {
+    let mut id = [0u8; ID_SIZE];
+    // SAFETY: The function writes to the buffer within the given bounds, and only reads the
+    // input values. The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceDeriveCdiCertificateId(
+            ptr::null_mut(), // context
+            cdi_public_key.as_ptr(),
+            cdi_public_key.len(),
+            id.as_mut_ptr(),
+        )
+    })?;
+    Ok(id)
 }
