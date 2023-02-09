@@ -29,11 +29,14 @@ mod retry;
 
 pub use bcc::{bcc_format_config_descriptor, bcc_main_flow};
 pub use dice::{
-    derive_cdi_certificate_id, derive_cdi_private_key_seed, Cdi, CdiValues, Config, DiceMode, Hash,
-    Hidden, InlineConfig, InputValues, PrivateKeySeed, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, ID_SIZE,
-    PRIVATE_KEY_SEED_SIZE,
+    derive_cdi_certificate_id, derive_cdi_private_key_seed, dice_main_flow, Cdi, CdiValues, Config,
+    DiceMode, Hash, Hidden, InlineConfig, InputValues, PrivateKeySeed, CDI_SIZE, HASH_SIZE,
+    HIDDEN_SIZE, ID_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 pub use error::{check_result, DiceError, Result};
 pub use ops::{hash, kdf};
 #[cfg(feature = "std")]
-pub use retry::{retry_bcc_format_config_descriptor, retry_bcc_main_flow, OwnedDiceArtifacts};
+pub use retry::{
+    retry_bcc_format_config_descriptor, retry_bcc_main_flow, retry_dice_main_flow,
+    OwnedDiceArtifacts,
+};

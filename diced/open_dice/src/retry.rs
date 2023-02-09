@@ -18,7 +18,7 @@
 //! std environment.
 
 use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow};
-use crate::dice::{Cdi, CdiValues, InputValues};
+use crate::dice::{dice_main_flow, Cdi, CdiValues, InputValues};
 use crate::error::{DiceError, Result};
 use std::ffi::CStr;
 
@@ -97,4 +97,26 @@ pub fn retry_bcc_main_flow(
         )
     })?;
     Ok(OwnedDiceArtifacts { cdi_values: next_cdi_values, bcc: next_bcc })
+}
+
+/// Executes the main DICE flow.
+///
+/// Given a full set of input values and the current CDI values, computes the
+/// next CDI values and a matching certificate.
+pub fn retry_dice_main_flow(
+    current_cdi_attest: &Cdi,
+    current_cdi_seal: &Cdi,
+    input_values: &InputValues,
+) -> Result<(CdiValues, Vec<u8>)> {
+    let mut next_cdi_values = CdiValues::default();
+    let next_cdi_certificate = retry_with_bigger_buffer(|next_cdi_certificate| {
+        dice_main_flow(
+            current_cdi_attest,
+            current_cdi_seal,
+            input_values,
+            next_cdi_certificate,
+            &mut next_cdi_values,
+        )
+    })?;
+    Ok((next_cdi_values, next_cdi_certificate))
 }
