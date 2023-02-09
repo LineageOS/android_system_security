@@ -23,6 +23,7 @@ use open_dice_cbor_bindgen::{
     DICE_PRIVATE_KEY_SEED_SIZE,
 };
 use std::ptr;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// The size of a DICE hash.
 pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
@@ -49,6 +50,15 @@ pub type Cdi = [u8; CDI_SIZE];
 pub type PrivateKeySeed = [u8; PRIVATE_KEY_SEED_SIZE];
 /// Array type of DICE ID.
 pub type DiceId = [u8; ID_SIZE];
+
+/// CDI Values.
+#[derive(Zeroize, ZeroizeOnDrop, Default)]
+pub struct CdiValues {
+    /// Attestation CDI.
+    pub cdi_attest: Cdi,
+    /// Sealing CDI.
+    pub cdi_seal: Cdi,
+}
 
 /// Configuration descriptor for DICE input values.
 #[derive(Debug, Clone, PartialEq, Eq)]
