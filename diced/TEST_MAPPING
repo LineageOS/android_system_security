@@ -13,9 +13,6 @@
       "name": "diced_sample_inputs_test"
     },
     {
-      "name": "diced_test"
-    },
-    {
       "name": "diced_vendor_test"
     }
   ]

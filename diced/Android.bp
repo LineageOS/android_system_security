@@ -78,26 +78,6 @@ rust_test {
 }
 
 rust_library {
-    name: "libdiced",
-    crate_name: "diced",
-    srcs: ["src/lib.rs"],
-
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "android.security.dice-rust",
-        "libdiced_open_dice_cbor",
-        "libanyhow",
-        "libbinder_rs",
-        "libdiced_utils",
-        "libkeystore2_crypto_rust",
-        "libkeystore2_selinux",
-        "liblibc",
-        "liblog_rust",
-        "libthiserror",
-    ],
-}
-
-rust_library {
     name: "libdiced_vendor",
     crate_name: "diced",
     srcs: ["src/lib_vendor.rs"],
@@ -110,31 +90,6 @@ rust_library {
         "libbinder_rs",
         "libdiced_utils",
         "libkeystore2_crypto_rust",
-        "liblibc",
-        "liblog_rust",
-        "libnix",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-    ],
-}
-
-rust_test {
-    name: "diced_test",
-    crate_name: "diced_test",
-    srcs: ["src/lib.rs"],
-    test_suites: ["general-tests"],
-    auto_gen_config: true,
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "android.security.dice-rust",
-        "libanyhow",
-        "libbinder_rs",
-        "libdiced_open_dice_cbor",
-        "libdiced_utils",
-        "libkeystore2_crypto_rust",
-        "libkeystore2_selinux",
-        "libkeystore2_vintf_rust",
         "liblibc",
         "liblog_rust",
         "libnix",
