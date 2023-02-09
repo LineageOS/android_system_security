@@ -17,9 +17,21 @@
 //! memory allocation on heap, currently we only expose these functions in
 //! std environment.
 
-use crate::bcc::bcc_format_config_descriptor;
+use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow};
+use crate::dice::{Cdi, CdiValues, InputValues};
 use crate::error::{DiceError, Result};
 use std::ffi::CStr;
+
+/// Artifacts stores a set of dice artifacts comprising CDI_ATTEST, CDI_SEAL,
+/// and the BCC formatted attestation certificate chain.
+/// As we align with the DICE standards today, this is the certificate chain
+/// is also called DICE certificate chain.
+pub struct OwnedDiceArtifacts {
+    /// CDI Values.
+    pub cdi_values: CdiValues,
+    /// Boot Certificate Chain.
+    pub bcc: Vec<u8>,
+}
 
 /// Retries the given function with bigger output buffer size.
 fn retry_with_bigger_buffer<F>(mut f: F) -> Result<Vec<u8>>
@@ -61,4 +73,28 @@ pub fn retry_bcc_format_config_descriptor(
     retry_with_bigger_buffer(|buffer| {
         bcc_format_config_descriptor(name, version, resettable, buffer)
     })
+}
+
+/// Executes the main BCC flow.
+///
+/// Given a full set of input values along with the current BCC and CDI values,
+/// computes the next CDI values and matching updated BCC.
+pub fn retry_bcc_main_flow(
+    current_cdi_attest: &Cdi,
+    current_cdi_seal: &Cdi,
+    bcc: &[u8],
+    input_values: &InputValues,
+) -> Result<OwnedDiceArtifacts> {
+    let mut next_cdi_values = CdiValues::default();
+    let next_bcc = retry_with_bigger_buffer(|next_bcc| {
+        bcc_main_flow(
+            current_cdi_attest,
+            current_cdi_seal,
+            bcc,
+            input_values,
+            &mut next_cdi_values,
+            next_bcc,
+        )
+    })?;
+    Ok(OwnedDiceArtifacts { cdi_values: next_cdi_values, bcc: next_bcc })
 }
