@@ -16,9 +16,7 @@
 
 mod error;
 mod permission;
-mod proxy_node_hal;
 
-pub use crate::proxy_node_hal::ProxyNodeHal;
 use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Bcc::Bcc, BccHandover::BccHandover, Config::Config as BinderConfig,
     InputValues::InputValues as BinderInputValues, Mode::Mode, Signature::Signature,
