@@ -79,9 +79,9 @@ pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
 
     let input_values_vector = get_input_values_vector();
 
-    let (cdi_attest, cdi_seal, mut cert) = dice_ctx
-        .main_flow(UDS, UDS, &to_dice_input_values(&input_values_vector[0]))
-        .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
+    let (cdi_values, mut cert) =
+        dice::retry_dice_main_flow(UDS, UDS, &to_dice_input_values(&input_values_vector[0]))
+            .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
 
     let mut bcc: Vec<u8> = vec![];
 
@@ -93,12 +93,8 @@ pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
     bcc.append(&mut cert);
 
     let dice_artifacts = dice::retry_bcc_main_flow(
-        &cdi_attest[..].try_into().context(
-            "In make_sample_bcc_and_cdis: Failed to convert cdi_attest to array reference. (1)",
-        )?,
-        &cdi_seal[..].try_into().context(
-            "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (1)",
-        )?,
+        &cdi_values.cdi_attest,
+        &cdi_values.cdi_seal,
         &bcc,
         &to_dice_input_values(&input_values_vector[1]),
     )
