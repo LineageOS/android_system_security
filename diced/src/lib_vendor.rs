@@ -17,4 +17,4 @@
 
 mod error_vendor;
 pub mod hal_node;
-pub use diced_open_dice_cbor as dice;
+pub use diced_open_dice as dice;

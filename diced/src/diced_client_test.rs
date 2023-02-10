@@ -19,8 +19,8 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 use android_security_dice::aidl::android::security::dice::IDiceMaintenance::IDiceMaintenance;
 use android_security_dice::aidl::android::security::dice::IDiceNode::IDiceNode;
 use binder::Strong;
+use diced_open_dice as dice;
 use diced_open_dice::DiceArtifacts;
-use diced_open_dice_cbor as dice;
 use nix::libc::uid_t;
 use std::convert::TryInto;
 use std::ffi::CString;
