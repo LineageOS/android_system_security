@@ -14,9 +14,10 @@
 
 //! This module mirrors the content in open-dice/include/dice/android/bcc.h
 
+use crate::dice::{Cdi, CdiValues, InputValues};
 use crate::error::{check_result, Result};
 use open_dice_bcc_bindgen::{
-    BccConfigValues, BccFormatConfigDescriptor, BCC_INPUT_COMPONENT_NAME,
+    BccConfigValues, BccFormatConfigDescriptor, BccMainFlow, BCC_INPUT_COMPONENT_NAME,
     BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
 };
 use std::{ffi::CStr, ptr};
@@ -53,4 +54,39 @@ pub fn bcc_format_config_descriptor(
         BccFormatConfigDescriptor(&values, buffer.len(), buffer.as_mut_ptr(), &mut buffer_size)
     })?;
     Ok(buffer_size)
+}
+
+/// Executes the main BCC flow.
+///
+/// Given a full set of input values along with the current BCC and CDI values,
+/// computes the next CDI values and matching updated BCC.
+pub fn bcc_main_flow(
+    current_cdi_attest: &Cdi,
+    current_cdi_seal: &Cdi,
+    current_bcc: &[u8],
+    input_values: &InputValues,
+    next_cdi_values: &mut CdiValues,
+    next_bcc: &mut [u8],
+) -> Result<usize> {
+    let mut next_bcc_size = 0;
+    // SAFETY: `BccMainFlow` only reads the current `bcc` and CDI values and writes
+    // to `next_bcc` and next CDI values within its bounds. It also reads
+    // `input_values` as a constant input and doesn't store any pointer.
+    // The first argument can be null and is not used in the current implementation.
+    check_result(unsafe {
+        BccMainFlow(
+            ptr::null_mut(), // context
+            current_cdi_attest.as_ptr(),
+            current_cdi_seal.as_ptr(),
+            current_bcc.as_ptr(),
+            current_bcc.len(),
+            input_values.as_ptr(),
+            next_bcc.len(),
+            next_bcc.as_mut_ptr(),
+            &mut next_bcc_size,
+            next_cdi_values.cdi_attest.as_mut_ptr(),
+            next_cdi_values.cdi_seal.as_mut_ptr(),
+        )
+    })?;
+    Ok(next_bcc_size)
 }

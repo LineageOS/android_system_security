@@ -32,16 +32,15 @@
 //! ```
 
 pub use diced_open_dice::{
-    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor, Config,
-    DiceError, Hash, Hidden, InputValues, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
-    PRIVATE_KEY_SEED_SIZE,
+    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor,
+    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceError, Hash, Hidden, InputValues,
+    OwnedDiceArtifacts, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 use keystore2_crypto::ZVec;
-use open_dice_bcc_bindgen::BccMainFlow;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceGenerateCertificate, DiceKdf, DiceKeypairFromSeed, DiceMainFlow, DiceSign, DiceVerify,
-    DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
+    DiceGenerateCertificate, DiceKeypairFromSeed, DiceSign, DiceVerify, DICE_PRIVATE_KEY_SIZE,
+    DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
 
@@ -158,93 +157,6 @@ const INITIAL_OUT_BUFFER_SIZE: usize = 1024;
 /// library calls. Implementations must implement Context::get_context(). As of
 /// this writing, the only implementation is OpenDiceCborContext, which returns NULL.
 pub trait ContextImpl: Context + Send {
-    /// Safe wrapper around open-dice DiceMainFlow, see open dice
-    /// documentation for details.
-    /// Returns a tuple of:
-    ///  * The next attestation CDI,
-    ///  * the next seal CDI, and
-    ///  * the next attestation certificate.
-    /// `(next_attest_cdi, next_seal_cdi, next_attestation_cert)`
-    fn main_flow(
-        &mut self,
-        current_cdi_attest: &[u8; CDI_SIZE],
-        current_cdi_seal: &[u8; CDI_SIZE],
-        input_values: &InputValues,
-    ) -> Result<(CdiAttest, CdiSeal, Cert)> {
-        let mut next_attest = CdiAttest::new(CDI_SIZE)?;
-        let mut next_seal = CdiSeal::new(CDI_SIZE)?;
-
-        // SAFETY (DiceMainFlow):
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are const arrays of size CDI_SIZE.
-        //   This is fulfilled as per the definition of the arguments `current_cdi_attest`
-        //   and `current_cdi_seal.
-        // * The fourth argument is a pointer to `DiceInputValues`. It, and its indirect
-        //   references must be valid for the duration of the function call.
-        // * The fifth and sixth argument are the length of and the pointer to the
-        //   allocated certificate buffer respectively. They are used to return
-        //   the generated certificate.
-        // * The seventh argument is a pointer to a mutable usize object. It is
-        //   used to return the actual size of the output certificate.
-        // * The eighth argument and the ninth argument are pointers to mutable buffers of size
-        //   CDI_SIZE. This is fulfilled if the allocation above succeeded.
-        // * No pointers are expected to be valid beyond the scope of the function
-        //   call.
-        let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
-            check_result(unsafe {
-                DiceMainFlow(
-                    self.get_context(),
-                    current_cdi_attest.as_ptr(),
-                    current_cdi_seal.as_ptr(),
-                    input_values.as_ptr(),
-                    cert.len(),
-                    cert.as_mut_ptr(),
-                    actual_size as *mut _,
-                    next_attest.as_mut_ptr(),
-                    next_seal.as_mut_ptr(),
-                )
-            })
-        })?;
-        Ok((next_attest, next_seal, cert))
-    }
-
-    /// Safe wrapper around open-dice DiceKdf, see open dice
-    /// documentation for details.
-    fn kdf(&mut self, length: usize, input_key: &[u8], salt: &[u8], info: &[u8]) -> Result<ZVec> {
-        let mut output = ZVec::new(length)?;
-
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument is primitive.
-        // * The third argument and the fourth argument are the pointer to and length of the given
-        //   input key.
-        // * The fifth argument and the sixth argument are the pointer to and length of the given
-        //   salt.
-        // * The seventh argument and the eighth argument are the pointer to and length of the
-        //   given info field.
-        // * The ninth argument is a pointer to the output buffer which must have the
-        //   length given by the `length` argument (see second argument). This is
-        //   fulfilled if the allocation of `output` succeeds.
-        // * All pointers must be valid for the duration of the function call, but not
-        //   longer.
-        check_result(unsafe {
-            DiceKdf(
-                self.get_context(),
-                length,
-                input_key.as_ptr(),
-                input_key.len(),
-                salt.as_ptr(),
-                salt.len(),
-                info.as_ptr(),
-                info.len(),
-                output.as_mut_ptr(),
-            )
-        })?;
-        Ok(output)
-    }
-
     /// Safe wrapper around open-dice DiceKeyPairFromSeed, see open dice
     /// documentation for details.
     fn keypair_from_seed(&mut self, seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(Vec<u8>, ZVec)> {
@@ -362,62 +274,6 @@ pub trait ContextImpl: Context + Send {
             })
         })?;
         Ok(cert)
-    }
-
-    /// Safe wrapper around open-dice BccDiceMainFlow, see open dice
-    /// documentation for details.
-    /// Returns a tuple of:
-    ///  * The next attestation CDI,
-    ///  * the next seal CDI, and
-    ///  * the next bcc adding the new certificate to the given bcc.
-    /// `(next_attest_cdi, next_seal_cdi, next_bcc)`
-    fn bcc_main_flow(
-        &mut self,
-        current_cdi_attest: &[u8; CDI_SIZE],
-        current_cdi_seal: &[u8; CDI_SIZE],
-        bcc: &[u8],
-        input_values: &InputValues,
-    ) -> Result<(CdiAttest, CdiSeal, Bcc)> {
-        let mut next_attest = CdiAttest::new(CDI_SIZE)?;
-        let mut next_seal = CdiSeal::new(CDI_SIZE)?;
-
-        // SAFETY (BccMainFlow):
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are const arrays of size CDI_SIZE.
-        //   This is fulfilled as per the definition of the arguments `current_cdi_attest`
-        //   and `current_cdi_seal`.
-        // * The fourth argument and the fifth argument are the pointer to and size of the buffer
-        //   holding the current bcc.
-        // * The sixth argument is a pointer to `DiceInputValues` it, and its indirect
-        //   references must be valid for the duration of the function call.
-        // * The seventh argument and the eighth argument are the length of and the pointer to the
-        //   allocated certificate buffer respectively. They are used to return the generated
-        //   certificate.
-        // * The ninth argument is a pointer to a mutable usize object. It is
-        //   used to return the actual size of the output certificate.
-        // * The tenth argument and the eleventh argument are pointers to mutable buffers of
-        //   size CDI_SIZE. This is fulfilled if the allocation above succeeded.
-        // * No pointers are expected to be valid beyond the scope of the function
-        //   call.
-        let next_bcc = retry_while_adjusting_output_buffer(|next_bcc, actual_size| {
-            check_result(unsafe {
-                BccMainFlow(
-                    self.get_context(),
-                    current_cdi_attest.as_ptr(),
-                    current_cdi_seal.as_ptr(),
-                    bcc.as_ptr(),
-                    bcc.len(),
-                    input_values.as_ptr(),
-                    next_bcc.len(),
-                    next_bcc.as_mut_ptr(),
-                    actual_size as *mut _,
-                    next_attest.as_mut_ptr(),
-                    next_seal.as_mut_ptr(),
-                )
-            })
-        })?;
-        Ok((next_attest, next_seal, next_bcc))
     }
 }
 
@@ -627,29 +483,9 @@ mod test {
     // and changes in any of those functions.
     #[test]
     fn main_flow_and_bcc_main_flow() {
-        let (cdi_attest, cdi_seal, bcc) = make_sample_bcc_and_cdis().unwrap();
-        assert_eq!(&cdi_attest[..], SAMPLE_CDI_ATTEST_TEST_VECTOR);
-        assert_eq!(&cdi_seal[..], SAMPLE_CDI_SEAL_TEST_VECTOR);
-        assert_eq!(&bcc[..], SAMPLE_BCC_TEST_VECTOR);
-    }
-
-    static DERIVED_KEY_TEST_VECTOR: &[u8] = &[
-        0x0e, 0xd6, 0x07, 0x0e, 0x1c, 0x38, 0x2c, 0x76, 0x13, 0xc6, 0x76, 0x25, 0x7e, 0x07, 0x6f,
-        0xdb, 0x1d, 0xb1, 0x0f, 0x3f, 0xed, 0xc5, 0x2b, 0x95, 0xd1, 0x32, 0xf1, 0x63, 0x2f, 0x2a,
-        0x01, 0x5e,
-    ];
-
-    #[test]
-    fn kdf() {
-        let mut ctx = OpenDiceCborContext::new();
-        let derived_key = ctx
-            .kdf(
-                PRIVATE_KEY_SEED_SIZE,
-                "myKey".as_bytes(),
-                "mySalt".as_bytes(),
-                "myInfo".as_bytes(),
-            )
-            .unwrap();
-        assert_eq!(&derived_key[..], DERIVED_KEY_TEST_VECTOR);
+        let dice_artifacts = make_sample_bcc_and_cdis().unwrap();
+        assert_eq!(&dice_artifacts.cdi_values.cdi_attest, SAMPLE_CDI_ATTEST_TEST_VECTOR);
+        assert_eq!(&dice_artifacts.cdi_values.cdi_seal, SAMPLE_CDI_SEAL_TEST_VECTOR);
+        assert_eq!(&dice_artifacts.bcc, SAMPLE_BCC_TEST_VECTOR);
     }
 }

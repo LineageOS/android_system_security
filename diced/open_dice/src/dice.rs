@@ -19,10 +19,11 @@ use crate::error::{check_result, Result};
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceInputValues,
-    DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE, DICE_ID_SIZE, DICE_INLINE_CONFIG_SIZE,
-    DICE_PRIVATE_KEY_SEED_SIZE,
+    DiceMainFlow, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE, DICE_ID_SIZE,
+    DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE,
 };
 use std::ptr;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// The size of a DICE hash.
 pub const HASH_SIZE: usize = DICE_HASH_SIZE as usize;
@@ -49,6 +50,15 @@ pub type Cdi = [u8; CDI_SIZE];
 pub type PrivateKeySeed = [u8; PRIVATE_KEY_SEED_SIZE];
 /// Array type of DICE ID.
 pub type DiceId = [u8; ID_SIZE];
+
+/// CDI Values.
+#[derive(Zeroize, ZeroizeOnDrop, Default)]
+pub struct CdiValues {
+    /// Attestation CDI.
+    pub cdi_attest: Cdi,
+    /// Sealing CDI.
+    pub cdi_seal: Cdi,
+}
 
 /// Configuration descriptor for DICE input values.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,4 +163,36 @@ pub fn derive_cdi_certificate_id(cdi_public_key: &[u8]) -> Result<DiceId> {
         )
     })?;
     Ok(id)
+}
+
+/// Executes the main DICE flow.
+///
+/// Given a full set of input values and the current CDI values, computes the
+/// next CDI values and a matching certificate.
+/// Returns the actual size of the next CDI certificate.
+pub fn dice_main_flow(
+    current_cdi_attest: &Cdi,
+    current_cdi_seal: &Cdi,
+    input_values: &InputValues,
+    next_cdi_certificate: &mut [u8],
+    next_cdi_values: &mut CdiValues,
+) -> Result<usize> {
+    let mut next_cdi_certificate_actual_size = 0;
+    // SAFETY: The function only reads the current CDI values and inputs and writes
+    // to `next_cdi_certificate` and next CDI values within its bounds.
+    // The first argument can be null and is not used in the current implementation.
+    check_result(unsafe {
+        DiceMainFlow(
+            ptr::null_mut(), // context
+            current_cdi_attest.as_ptr(),
+            current_cdi_seal.as_ptr(),
+            input_values.as_ptr(),
+            next_cdi_certificate.len(),
+            next_cdi_certificate.as_mut_ptr(),
+            &mut next_cdi_certificate_actual_size,
+            next_cdi_values.cdi_attest.as_mut_ptr(),
+            next_cdi_values.cdi_seal.as_mut_ptr(),
+        )
+    })?;
+    Ok(next_cdi_certificate_actual_size)
 }

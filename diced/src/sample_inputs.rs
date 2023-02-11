@@ -22,7 +22,6 @@ use anyhow::{Context, Result};
 use dice::ContextImpl;
 use diced_open_dice_cbor as dice;
 use diced_utils::{cbor, to_dice_input_values};
-use keystore2_crypto::ZVec;
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::io::Write;
@@ -66,7 +65,7 @@ fn encode_pub_key_ed25519(pub_key: &[u8], stream: &mut dyn Write) -> Result<()> 
 
 /// Derives a tuple of (CDI_ATTEST, CDI_SEAL, BCC) derived of the vector of input values returned
 /// by `get_input_values_vector`.
-pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
+pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
     let mut dice_ctx = dice::OpenDiceCborContext::new();
     let private_key_seed = dice::derive_cdi_private_key_seed(UDS)
         .context("In make_sample_bcc_and_cdis: Trying to derive private key seed.")?;
@@ -80,9 +79,9 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
 
     let input_values_vector = get_input_values_vector();
 
-    let (cdi_attest, cdi_seal, mut cert) = dice_ctx
-        .main_flow(UDS, UDS, &to_dice_input_values(&input_values_vector[0]))
-        .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
+    let (cdi_values, mut cert) =
+        dice::retry_dice_main_flow(UDS, UDS, &to_dice_input_values(&input_values_vector[0]))
+            .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
 
     let mut bcc: Vec<u8> = vec![];
 
@@ -93,30 +92,20 @@ pub fn make_sample_bcc_and_cdis() -> Result<(ZVec, ZVec, Vec<u8>)> {
 
     bcc.append(&mut cert);
 
-    let (cdi_attest, cdi_seal, bcc) = dice_ctx
-        .bcc_main_flow(
-            &cdi_attest[..].try_into().context(
-                "In make_sample_bcc_and_cdis: Failed to convert cdi_attest to array reference. (1)",
-            )?,
-            &cdi_seal[..].try_into().context(
-                "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (1)",
-            )?,
-            &bcc,
-            &to_dice_input_values(&input_values_vector[1]),
-        )
-        .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
-    dice_ctx
-        .bcc_main_flow(
-            &cdi_attest[..].try_into().context(
-                "In make_sample_bcc_and_cdis: Failed to convert cdi_attest to array reference. (2)",
-            )?,
-            &cdi_seal[..].try_into().context(
-                "In make_sample_bcc_and_cdis: Failed to convert cdi_seal to array reference. (2)",
-            )?,
-            &bcc,
-            &to_dice_input_values(&input_values_vector[2]),
-        )
-        .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
+    let dice_artifacts = dice::retry_bcc_main_flow(
+        &cdi_values.cdi_attest,
+        &cdi_values.cdi_seal,
+        &bcc,
+        &to_dice_input_values(&input_values_vector[1]),
+    )
+    .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
+    dice::retry_bcc_main_flow(
+        &dice_artifacts.cdi_values.cdi_attest,
+        &dice_artifacts.cdi_values.cdi_seal,
+        &dice_artifacts.bcc,
+        &to_dice_input_values(&input_values_vector[2]),
+    )
+    .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
 }
 
 fn make_input_values(
