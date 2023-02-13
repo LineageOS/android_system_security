@@ -30,7 +30,7 @@ rust_library {
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libanyhow",
-        "libdiced_open_dice_cbor",
+        "libdiced_open_dice",
         "libkeystore2_crypto_rust",
     ],
 }
@@ -44,7 +44,7 @@ rust_test {
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libanyhow",
-        "libdiced_open_dice_cbor",
+        "libdiced_open_dice",
         "libkeystore2_crypto_rust",
     ],
 }
