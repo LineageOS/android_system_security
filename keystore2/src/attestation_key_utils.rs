@@ -54,11 +54,9 @@ pub enum AttestationKeyInfo {
 }
 
 fn use_rkpd() -> bool {
-    let mutable_property = "persist.device_config.remote_key_provisioning_native.enable_rkpd";
-    let fixed_property = "remote_provisioning.enable_rkpd";
-    let default_value = false;
-    system_properties::read_bool(mutable_property, default_value).unwrap_or(default_value)
-        || system_properties::read_bool(fixed_property, default_value).unwrap_or(default_value)
+    let property = "remote_provisioning.enable_rkpd";
+    let default_value = true;
+    system_properties::read_bool(property, default_value).unwrap_or(default_value)
 }
 
 /// This function loads and, optionally, assigns the caller's remote provisioned
