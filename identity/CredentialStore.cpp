@@ -47,7 +47,7 @@ using ::android::security::rkp::IRemoteProvisioning;
 
 bool useRkpd() {
     return android::base::GetBoolProperty("remote_provisioning.enable_rkpd",
-                                          /*default_value=*/false);
+                                          /*default_value=*/true);
 }
 
 }  // namespace
