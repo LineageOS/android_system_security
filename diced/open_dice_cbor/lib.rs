@@ -39,8 +39,8 @@ pub use diced_open_dice::{
 use keystore2_crypto::ZVec;
 pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
-    DiceGenerateCertificate, DiceKeypairFromSeed, DiceSign, DiceVerify, DICE_PRIVATE_KEY_SIZE,
-    DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
+    DiceKeypairFromSeed, DiceSign, DiceVerify, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE,
+    DICE_SIGNATURE_SIZE,
 };
 use std::ffi::c_void;
 
@@ -50,60 +50,6 @@ pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
 pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
 /// The size of a signature.
 pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
-
-/// Multiple of the open dice function required preallocated output buffer
-/// which may be too small, this function implements the retry logic to handle
-/// too small buffer allocations.
-/// The callback `F` must expect a mutable reference to a buffer and a size hint
-/// field. The callback is called repeatedly as long as it returns
-/// `Err(Error::BufferTooSmall)`. If the size hint remains 0, the buffer size is
-/// doubled with each iteration. If the size hint is set by the callback, the buffer
-/// will be set to accommodate at least this many bytes.
-/// If the callback returns `Ok(())`, the buffer is truncated to the size hint
-/// exactly.
-/// The function panics if the callback returns `Ok(())` and the size hint is
-/// larger than the buffer size.
-/// TODO(b/267575445): Remove this method once we migrate all its callers to
-/// `retry_with_bigger_buffer` in `diced_open_dice`.
-fn retry_while_adjusting_output_buffer<F>(mut f: F) -> Result<Vec<u8>>
-where
-    F: FnMut(&mut Vec<u8>, &mut usize) -> Result<()>,
-{
-    let mut buffer = vec![0; INITIAL_OUT_BUFFER_SIZE];
-    let mut actual_size: usize = 0;
-    loop {
-        match f(&mut buffer, &mut actual_size) {
-            // If Error::BufferTooSmall was returned, the allocated certificate
-            // buffer was to small for the output. So the buffer is resized to the actual
-            // size, and a second attempt is made with the new buffer.
-            Err(DiceError::BufferTooSmall) => {
-                let new_size = if actual_size == 0 {
-                    // Due to an off spec implementation of open dice cbor, actual size
-                    // does not return the required size if the buffer was too small. So
-                    // we have to try and approach it gradually.
-                    buffer.len() * 2
-                } else {
-                    actual_size
-                };
-                buffer.resize(new_size, 0);
-                continue;
-            }
-            Err(e) => return Err(e),
-            Ok(()) => {
-                if actual_size > buffer.len() {
-                    panic!(
-                        "actual_size larger than buffer size: open-dice function
-                         may have written past the end of the buffer."
-                    );
-                }
-                // Truncate the certificate buffer to the actual size because it may be
-                // smaller than the original allocation.
-                buffer.truncate(actual_size);
-                return Ok(buffer);
-            }
-        }
-    }
-}
 
 /// Some libopen-dice variants use a context. Developers that want to customize these
 /// bindings may want to implement their own Context factory that creates a context
@@ -150,8 +96,6 @@ pub type Cert = Vec<u8>;
 
 /// Type alias for Vec<u8> indicating that it holds a BCC certificate chain.
 pub type Bcc = Vec<u8>;
-
-const INITIAL_OUT_BUFFER_SIZE: usize = 1024;
 
 /// ContextImpl is a mixin trait that implements the safe wrappers around the open dice
 /// library calls. Implementations must implement Context::get_context(). As of
@@ -237,43 +181,6 @@ pub trait ContextImpl: Context + Send {
                 public_key.as_ptr(),
             )
         })
-    }
-
-    /// Safe wrapper around open-dice DiceGenerateCertificate, see open dice
-    /// documentation for details.
-    fn generate_certificate(
-        &mut self,
-        subject_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
-        authority_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
-        input_values: &InputValues,
-    ) -> Result<Vec<u8>> {
-        // SAFETY (DiceGenerateCertificate):
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are const arrays of size
-        //   `PRIVATE_KEY_SEED_SIZE`. This is fulfilled as per the definition of the arguments.
-        // * The fourth argument is a pointer to `DiceInputValues` it, and its indirect
-        //   references must be valid for the duration of the function call.
-        // * The fifth argument and the sixth argument are the length of and the pointer to the
-        //   allocated certificate buffer respectively. They are used to return
-        //   the generated certificate.
-        // * The seventh argument is a pointer to a mutable usize object. It is
-        //   used to return the actual size of the output certificate.
-        // * All pointers must be valid for the duration of the function call but not beyond.
-        let cert = retry_while_adjusting_output_buffer(|cert, actual_size| {
-            check_result(unsafe {
-                DiceGenerateCertificate(
-                    self.get_context(),
-                    subject_private_key_seed.as_ptr(),
-                    authority_private_key_seed.as_ptr(),
-                    input_values.as_ptr(),
-                    cert.len(),
-                    cert.as_mut_ptr(),
-                    actual_size as *mut _,
-                )
-            })
-        })?;
-        Ok(cert)
     }
 }
 
