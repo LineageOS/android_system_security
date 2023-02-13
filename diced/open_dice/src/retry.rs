@@ -18,8 +18,9 @@
 //! std environment.
 
 use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow};
-use crate::dice::{dice_main_flow, Cdi, CdiValues, InputValues};
+use crate::dice::{dice_main_flow, Cdi, CdiValues, InputValues, PRIVATE_KEY_SEED_SIZE};
 use crate::error::{DiceError, Result};
+use crate::ops::generate_certificate;
 use std::ffi::CStr;
 
 /// Artifacts stores a set of dice artifacts comprising CDI_ATTEST, CDI_SEAL,
@@ -119,4 +120,24 @@ pub fn retry_dice_main_flow(
         )
     })?;
     Ok((next_cdi_values, next_cdi_certificate))
+}
+
+/// Generates an X.509 certificate from the given `subject_private_key_seed` and
+/// `input_values`, and signed by `authority_private_key_seed`.
+/// The subject private key seed is supplied here so the implementation can choose
+/// between asymmetric mechanisms, for example ECDSA vs Ed25519.
+/// Returns the generated certificate.
+pub fn retry_generate_certificate(
+    subject_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
+    authority_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
+    input_values: &InputValues,
+) -> Result<Vec<u8>> {
+    retry_with_bigger_buffer(|certificate| {
+        generate_certificate(
+            subject_private_key_seed,
+            authority_private_key_seed,
+            input_values,
+            certificate,
+        )
+    })
 }
