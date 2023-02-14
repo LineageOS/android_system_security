@@ -16,9 +16,12 @@
 //! It contains the set of functions that implement various operations that the
 //! main DICE functions depend on.
 
-use crate::dice::{Hash, InputValues, HASH_SIZE, PRIVATE_KEY_SEED_SIZE};
+use crate::dice::{
+    Hash, InputValues, PublicKey, Signature, HASH_SIZE, PRIVATE_KEY_SEED_SIZE, PRIVATE_KEY_SIZE,
+    SIGNATURE_SIZE,
+};
 use crate::error::{check_result, Result};
-use open_dice_cbor_bindgen::{DiceGenerateCertificate, DiceHash, DiceKdf};
+use open_dice_cbor_bindgen::{DiceGenerateCertificate, DiceHash, DiceKdf, DiceSign, DiceVerify};
 use std::ptr;
 
 /// Hashes the provided input using DICE's hash function `DiceHash`.
@@ -53,6 +56,38 @@ pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Resu
             info.as_ptr(),
             info.len(),
             derived_key.as_mut_ptr(),
+        )
+    })
+}
+
+/// Signs the `message` with the give `private_key` using `DiceSign`.
+pub fn sign(message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Signature> {
+    let mut signature = [0u8; SIGNATURE_SIZE];
+    // SAFETY: The function writes to the `signature` within the given bounds, and only reads the
+    // message and the private key. The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceSign(
+            ptr::null_mut(), // context
+            message.as_ptr(),
+            message.len(),
+            private_key.as_ptr(),
+            signature.as_mut_ptr(),
+        )
+    })?;
+    Ok(signature)
+}
+
+/// Verifies the `signature` of the `message` with the given `public_key` using `DiceVerify`.
+pub fn verify(message: &[u8], signature: &Signature, public_key: &PublicKey) -> Result<()> {
+    // SAFETY: only reads the messages, signature and public key as constant values.
+    // The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceVerify(
+            ptr::null_mut(), // context
+            message.as_ptr(),
+            message.len(),
+            signature.as_ptr(),
+            public_key.as_ptr(),
         )
     })
 }
