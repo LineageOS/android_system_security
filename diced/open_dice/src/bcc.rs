@@ -14,10 +14,10 @@
 
 //! This module mirrors the content in open-dice/include/dice/android/bcc.h
 
-use crate::dice::{Cdi, CdiValues, InputValues};
-use crate::error::{check_result, Result};
+use crate::dice::{Cdi, CdiValues, InputValues, CDI_SIZE};
+use crate::error::{check_result, DiceError, Result};
 use open_dice_bcc_bindgen::{
-    BccConfigValues, BccFormatConfigDescriptor, BccHandoverMainFlow, BccMainFlow,
+    BccConfigValues, BccFormatConfigDescriptor, BccHandoverMainFlow, BccHandoverParse, BccMainFlow,
     BCC_INPUT_COMPONENT_NAME, BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
 };
 use std::{ffi::CStr, ptr};
@@ -119,4 +119,60 @@ pub fn bcc_handover_main_flow(
     })?;
 
     Ok(next_bcc_handover_size)
+}
+
+/// A BCC handover combines the BCC and CDIs in a single CBOR object.
+/// This struct is used as return of the function `bcc_handover_parse`, its lifetime is tied
+/// to the lifetime of the raw BCC handover slice.
+pub struct BccHandover<'a> {
+    /// Attestation CDI.
+    pub cdi_attest: &'a Cdi,
+    /// Sealing CDI.
+    pub cdi_seal: &'a Cdi,
+    /// Boot Certificate Chain.
+    pub bcc: Option<&'a [u8]>,
+}
+
+/// A BCC handover combines the BCC and CDIs in a single CBOR object.
+/// This function parses the `bcc_handover` to extracts the BCC and CDIs.
+/// The lifetime of the returned `BccHandover` is tied to the given `bcc_handover` slice.
+pub fn bcc_handover_parse(bcc_handover: &[u8]) -> Result<BccHandover> {
+    let mut cdi_attest: *const u8 = ptr::null();
+    let mut cdi_seal: *const u8 = ptr::null();
+    let mut bcc: *const u8 = ptr::null();
+    let mut bcc_size = 0;
+    // SAFETY: The `bcc_handover` is only read and never stored and the returned pointers should all
+    // point within the address range of the `bcc_handover` or be NULL.
+    check_result(unsafe {
+        BccHandoverParse(
+            bcc_handover.as_ptr(),
+            bcc_handover.len(),
+            &mut cdi_attest,
+            &mut cdi_seal,
+            &mut bcc,
+            &mut bcc_size,
+        )
+    })?;
+    let cdi_attest = sub_slice(bcc_handover, cdi_attest, CDI_SIZE)?;
+    let cdi_seal = sub_slice(bcc_handover, cdi_seal, CDI_SIZE)?;
+    let bcc = sub_slice(bcc_handover, bcc, bcc_size).ok();
+    Ok(BccHandover {
+        cdi_attest: cdi_attest.try_into().map_err(|_| DiceError::PlatformError)?,
+        cdi_seal: cdi_seal.try_into().map_err(|_| DiceError::PlatformError)?,
+        bcc,
+    })
+}
+
+/// Gets a slice the `addr` points to and of length `len`.
+/// The slice should be contained in the buffer.
+fn sub_slice(buffer: &[u8], addr: *const u8, len: usize) -> Result<&[u8]> {
+    if addr.is_null() || !buffer.as_ptr_range().contains(&addr) {
+        return Err(DiceError::PlatformError);
+    }
+    // SAFETY: This is safe because addr is not null and is within the range of the buffer.
+    let start: usize = unsafe {
+        addr.offset_from(buffer.as_ptr()).try_into().map_err(|_| DiceError::PlatformError)?
+    };
+    let end = start.checked_add(len).ok_or(DiceError::PlatformError)?;
+    buffer.get(start..end).ok_or(DiceError::PlatformError)
 }
