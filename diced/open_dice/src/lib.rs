@@ -27,7 +27,7 @@ mod ops;
 #[cfg(feature = "std")]
 mod retry;
 
-pub use bcc::{bcc_format_config_descriptor, bcc_main_flow};
+pub use bcc::{bcc_format_config_descriptor, bcc_handover_main_flow, bcc_main_flow};
 pub use dice::{
     derive_cdi_certificate_id, derive_cdi_private_key_seed, dice_main_flow, Cdi, CdiValues, Config,
     DiceMode, Hash, Hidden, InlineConfig, InputValues, PrivateKeySeed, CDI_SIZE, HASH_SIZE,
