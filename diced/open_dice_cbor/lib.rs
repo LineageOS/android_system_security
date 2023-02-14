@@ -33,23 +33,18 @@
 
 pub use diced_open_dice::{
     check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor,
-    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceError, Hash, Hidden, InputValues,
+    retry_bcc_main_flow, retry_dice_main_flow, sign, Config, DiceError, Hash, Hidden, InputValues,
     OwnedDiceArtifacts, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 use keystore2_crypto::ZVec;
 pub use open_dice_cbor_bindgen::DiceMode;
-use open_dice_cbor_bindgen::{
-    DiceKeypairFromSeed, DiceSign, DiceVerify, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE,
-    DICE_SIGNATURE_SIZE,
-};
+use open_dice_cbor_bindgen::{DiceKeypairFromSeed, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE};
 use std::ffi::c_void;
 
 /// The size of a private key.
 pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
 /// The size of a public key.
 pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
-/// The size of a signature.
-pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
 
 /// Some libopen-dice variants use a context. Developers that want to customize these
 /// bindings may want to implement their own Context factory that creates a context
@@ -126,62 +121,6 @@ pub trait ContextImpl: Context + Send {
         })?;
         Ok((public_key, private_key))
     }
-
-    /// Safe wrapper around open-dice DiceSign, see open dice
-    /// documentation for details.
-    fn sign(&mut self, message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Vec<u8>> {
-        let mut signature = vec![0u8; SIGNATURE_SIZE];
-
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are the pointer to and length of the given
-        //   message buffer.
-        // * The fourth argument is a const buffer of size `PRIVATE_KEY_SIZE`. This is fulfilled
-        //   by the definition of `private key`.
-        // * The fifth argument is mutable buffer of size `SIGNATURE_SIZE`. This is fulfilled
-        //   by the allocation above.
-        // * All pointers must be valid for the duration of the function call but not beyond.
-        check_result(unsafe {
-            DiceSign(
-                self.get_context(),
-                message.as_ptr(),
-                message.len(),
-                private_key.as_ptr(),
-                signature.as_mut_ptr(),
-            )
-        })?;
-        Ok(signature)
-    }
-
-    /// Safe wrapper around open-dice DiceVerify, see open dice
-    /// documentation for details.
-    fn verify(
-        &mut self,
-        message: &[u8],
-        signature: &[u8; SIGNATURE_SIZE],
-        public_key: &[u8; PUBLIC_KEY_SIZE],
-    ) -> Result<()> {
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument and the third argument are the pointer to and length of the given
-        //   message buffer.
-        // * The fourth argument is a const buffer of size `SIGNATURE_SIZE`. This is fulfilled
-        //   by the definition of `signature`.
-        // * The fifth argument is a const buffer of size `PUBLIC_KEY_SIZE`. This is fulfilled
-        //   by the definition of `public_key`.
-        // * All pointers must be valid for the duration of the function call but not beyond.
-        check_result(unsafe {
-            DiceVerify(
-                self.get_context(),
-                message.as_ptr(),
-                message.len(),
-                signature.as_ptr(),
-                public_key.as_ptr(),
-            )
-        })
-    }
 }
 
 #[cfg(test)]
@@ -245,29 +184,18 @@ mod test {
         assert_eq!(&pub_key, PUB_KEY_TEST_VECTOR);
         assert_eq!(&priv_key[..], PRIV_KEY_TEST_VECTOR);
         let mut signature =
-            ctx.sign("MyMessage".as_bytes(), priv_key[..].try_into().unwrap()).unwrap();
+            diced_open_dice::sign(b"MyMessage", priv_key[..].try_into().unwrap()).unwrap();
         assert_eq!(&signature, SIGNATURE_TEST_VECTOR);
-        assert!(ctx
-            .verify(
-                "MyMessage".as_bytes(),
-                signature[..].try_into().unwrap(),
-                pub_key[..].try_into().unwrap()
-            )
+        assert!(diced_open_dice::verify(b"MyMessage", &signature, pub_key[..].try_into().unwrap())
             .is_ok());
-        assert!(ctx
-            .verify(
-                "MyMessage_fail".as_bytes(),
-                signature[..].try_into().unwrap(),
-                pub_key[..].try_into().unwrap()
-            )
-            .is_err());
+        assert!(diced_open_dice::verify(
+            b"MyMessage_fail",
+            &signature,
+            pub_key[..].try_into().unwrap()
+        )
+        .is_err());
         signature[0] += 1;
-        assert!(ctx
-            .verify(
-                "MyMessage".as_bytes(),
-                signature[..].try_into().unwrap(),
-                pub_key[..].try_into().unwrap()
-            )
+        assert!(diced_open_dice::verify(b"MyMessage", &signature, pub_key[..].try_into().unwrap())
             .is_err());
     }
 
