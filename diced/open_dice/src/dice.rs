@@ -20,7 +20,8 @@ pub use open_dice_cbor_bindgen::DiceMode;
 use open_dice_cbor_bindgen::{
     DiceConfigType, DiceDeriveCdiCertificateId, DiceDeriveCdiPrivateKeySeed, DiceInputValues,
     DiceMainFlow, DICE_CDI_SIZE, DICE_HASH_SIZE, DICE_HIDDEN_SIZE, DICE_ID_SIZE,
-    DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE,
+    DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
+    DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
 use std::ptr;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -35,6 +36,12 @@ const INLINE_CONFIG_SIZE: usize = DICE_INLINE_CONFIG_SIZE as usize;
 pub const CDI_SIZE: usize = DICE_CDI_SIZE as usize;
 /// The size of a private key seed.
 pub const PRIVATE_KEY_SEED_SIZE: usize = DICE_PRIVATE_KEY_SEED_SIZE as usize;
+/// The size of a private key.
+pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
+/// The size of a public key.
+pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
+/// The size of a signature.
+pub const SIGNATURE_SIZE: usize = DICE_SIGNATURE_SIZE as usize;
 /// The size of an ID.
 pub const ID_SIZE: usize = DICE_ID_SIZE as usize;
 
@@ -48,6 +55,10 @@ pub type InlineConfig = [u8; INLINE_CONFIG_SIZE];
 pub type Cdi = [u8; CDI_SIZE];
 /// Array type of private key seeds.
 pub type PrivateKeySeed = [u8; PRIVATE_KEY_SEED_SIZE];
+/// Array type of the public key.
+pub type PublicKey = [u8; PUBLIC_KEY_SIZE];
+/// Array type of the signature.
+pub type Signature = [u8; SIGNATURE_SIZE];
 /// Array type of DICE ID.
 pub type DiceId = [u8; ID_SIZE];
 

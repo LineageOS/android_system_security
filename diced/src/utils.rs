@@ -19,7 +19,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Mode::Mode as BinderMode,
 };
 use anyhow::{Context, Result};
-use diced_open_dice_cbor as dice;
+use diced_open_dice as dice;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
 

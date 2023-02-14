@@ -220,7 +220,7 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
                         )
                     })?)
                     .context("In ResidentHal::sign: Failed to derive keypair from seed.")?;
-                dice.sign(
+                let signature = dice::sign(
                     message,
                     private_key[..].try_into().with_context(|| {
                         format!(
@@ -229,7 +229,8 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
                         )
                     })?,
                 )
-                .context("In ResidentHal::sign: Failed to sign.")
+                .context("In ResidentHal::sign: Failed to sign.")?;
+                Ok(signature.to_vec())
             })
             .context("In ResidentHal::sign:")?;
         Ok(Signature { data: signature })
