@@ -17,8 +17,8 @@
 use crate::dice::{Cdi, CdiValues, InputValues};
 use crate::error::{check_result, Result};
 use open_dice_bcc_bindgen::{
-    BccConfigValues, BccFormatConfigDescriptor, BccMainFlow, BCC_INPUT_COMPONENT_NAME,
-    BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
+    BccConfigValues, BccFormatConfigDescriptor, BccHandoverMainFlow, BccMainFlow,
+    BCC_INPUT_COMPONENT_NAME, BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
 };
 use std::{ffi::CStr, ptr};
 
@@ -89,4 +89,34 @@ pub fn bcc_main_flow(
         )
     })?;
     Ok(next_bcc_size)
+}
+
+/// Executes the main BCC handover flow.
+///
+/// A BCC handover combines the BCC and CDIs in a single CBOR object.
+/// This function takes the current boot stage's BCC handover bundle and produces a
+/// bundle for the next stage.
+pub fn bcc_handover_main_flow(
+    current_bcc_handover: &[u8],
+    input_values: &InputValues,
+    next_bcc_handover: &mut [u8],
+) -> Result<usize> {
+    let mut next_bcc_handover_size = 0;
+    // SAFETY - The function only reads `current_bcc_handover` and writes to `next_bcc_handover`
+    // within its bounds,
+    // It also reads `input_values` as a constant input and doesn't store any pointer.
+    // The first argument can be null and is not used in the current implementation.
+    check_result(unsafe {
+        BccHandoverMainFlow(
+            ptr::null_mut(), // context
+            current_bcc_handover.as_ptr(),
+            current_bcc_handover.len(),
+            input_values.as_ptr(),
+            next_bcc_handover.len(),
+            next_bcc_handover.as_mut_ptr(),
+            &mut next_bcc_handover_size,
+        )
+    })?;
+
+    Ok(next_bcc_handover_size)
 }
