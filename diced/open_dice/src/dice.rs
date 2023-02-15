@@ -63,7 +63,7 @@ pub type Signature = [u8; SIGNATURE_SIZE];
 pub type DiceId = [u8; ID_SIZE];
 
 /// CDI Values.
-#[derive(Zeroize, ZeroizeOnDrop, Default)]
+#[derive(Debug, Zeroize, ZeroizeOnDrop, Default)]
 pub struct CdiValues {
     /// Attestation CDI.
     pub cdi_attest: Cdi,
