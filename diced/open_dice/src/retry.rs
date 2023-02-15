@@ -27,6 +27,7 @@ use std::ffi::CStr;
 /// and the BCC formatted attestation certificate chain.
 /// As we align with the DICE standards today, this is the certificate chain
 /// is also called DICE certificate chain.
+#[derive(Debug)]
 pub struct OwnedDiceArtifacts {
     /// CDI Values.
     pub cdi_values: CdiValues,
