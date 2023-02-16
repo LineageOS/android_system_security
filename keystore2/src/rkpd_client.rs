@@ -57,8 +57,11 @@ impl<T> SafeSender<T> {
 
     fn send(&self, value: T) {
         if let Some(inner) = self.inner.lock().unwrap().take() {
-            // assert instead of unwrap, because on failure send returns Err(value)
-            assert!(inner.send(value).is_ok(), "thread state is terminally broken");
+            // It's possible for the corresponding receiver to time out and be dropped. In this
+            // case send() will fail. This error is not actionable though, so only log the error.
+            if inner.send(value).is_err() {
+                log::error!("SafeSender::send() failed");
+            }
         }
     }
 }
@@ -202,8 +205,14 @@ async fn get_rkpd_attestation_key_from_registration_async(
         .context(ks_err!("Trying to get key."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
-        Err(e) => Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
-            .context(ks_err!("Waiting for RKPD key timed out: {:?}", e)),
+        Err(e) => {
+            // Make a best effort attempt to cancel the timed out request.
+            if let Err(e) = registration.cancelGetKey(&cb) {
+                log::error!("IRegistration::cancelGetKey failed: {:?}", e);
+            }
+            Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
+                .context(ks_err!("Waiting for RKPD key timed out: {:?}", e))
+        }
         Ok(v) => v.unwrap(),
     }
 }
@@ -375,7 +384,7 @@ mod tests {
         }
 
         fn cancelGetKey(&self, _: &Strong<dyn IGetKeyCallback>) -> binder::Result<()> {
-            todo!()
+            Ok(())
         }
 
         fn storeUpgradedKeyAsync(
