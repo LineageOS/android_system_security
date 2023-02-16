@@ -124,6 +124,7 @@ pub fn bcc_handover_main_flow(
 /// A BCC handover combines the BCC and CDIs in a single CBOR object.
 /// This struct is used as return of the function `bcc_handover_parse`, its lifetime is tied
 /// to the lifetime of the raw BCC handover slice.
+#[derive(Debug)]
 pub struct BccHandover<'a> {
     /// Attestation CDI.
     pub cdi_attest: &'a Cdi,
@@ -173,6 +174,5 @@ fn sub_slice(buffer: &[u8], addr: *const u8, len: usize) -> Result<&[u8]> {
     let start: usize = unsafe {
         addr.offset_from(buffer.as_ptr()).try_into().map_err(|_| DiceError::PlatformError)?
     };
-    let end = start.checked_add(len).ok_or(DiceError::PlatformError)?;
-    buffer.get(start..end).ok_or(DiceError::PlatformError)
+    start.checked_add(len).and_then(|end| buffer.get(start..end)).ok_or(DiceError::PlatformError)
 }
