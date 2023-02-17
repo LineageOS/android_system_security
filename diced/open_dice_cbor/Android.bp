@@ -16,27 +16,6 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
-rust_library {
-    name: "libdiced_open_dice_cbor",
-    crate_name: "diced_open_dice_cbor",
-    srcs: ["lib.rs"],
-
-    rustlibs: [
-        "libdiced_open_dice",
-        // For ZVec
-        "libkeystore2_crypto_rust",
-        "libopen_dice_cbor_bindgen",
-    ],
-    static_libs: [
-        "libopen_dice_cbor",
-    ],
-    vendor_available: true,
-    apex_available: [
-        "//apex_available:platform",
-        "com.android.virt",
-    ],
-}
-
 rust_test {
     name: "diced_open_dice_cbor_test",
     crate_name: "diced_open_dice_cbor_test",
@@ -46,10 +25,5 @@ rust_test {
     rustlibs: [
         "libdiced_open_dice",
         "libdiced_sample_inputs",
-        "libkeystore2_crypto_rust",
-        "libopen_dice_cbor_bindgen",
-    ],
-    static_libs: [
-        "libopen_dice_cbor",
     ],
 }
