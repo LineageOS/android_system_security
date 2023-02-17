@@ -53,6 +53,7 @@ rust_library {
     visibility: [
         "//system/security/diced:__subpackages__",
         "//packages/modules/Virtualization:__subpackages__",
+        "//hardware/interfaces/security/dice/aidl:__subpackages__",
     ],
 }
 
