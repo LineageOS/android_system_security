@@ -62,13 +62,31 @@ pub type Signature = [u8; SIGNATURE_SIZE];
 /// Array type of DICE ID.
 pub type DiceId = [u8; ID_SIZE];
 
+/// A trait for types that represent Dice artifacts, which include:
+///
+/// - Attestation CDI
+/// - Sealing CDI
+/// - Boot Certificate Chain
+///
+/// Types that implement this trait provide an access these artifacts.
+pub trait DiceArtifacts {
+    /// Returns a reference to the attestation CDI.
+    fn cdi_attest(&self) -> &[u8; CDI_SIZE];
+
+    /// Returns a reference to the sealing CDI.
+    fn cdi_seal(&self) -> &[u8; CDI_SIZE];
+
+    /// Returns a reference to the Boot Certificate Chain, if present.
+    fn bcc(&self) -> Option<&[u8]>;
+}
+
 /// CDI Values.
 #[derive(Debug, Zeroize, ZeroizeOnDrop, Default)]
 pub struct CdiValues {
     /// Attestation CDI.
-    pub cdi_attest: Cdi,
+    pub cdi_attest: [u8; CDI_SIZE],
     /// Sealing CDI.
-    pub cdi_seal: Cdi,
+    pub cdi_seal: [u8; CDI_SIZE],
 }
 
 /// Configuration descriptor for DICE input values.
