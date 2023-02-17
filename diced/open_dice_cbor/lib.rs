@@ -126,6 +126,7 @@ pub trait ContextImpl: Context + Send {
 #[cfg(test)]
 mod test {
     use super::*;
+    use diced_open_dice::DiceArtifacts;
     use diced_sample_inputs::make_sample_bcc_and_cdis;
     use std::convert::TryInto;
 
@@ -319,8 +320,8 @@ mod test {
     #[test]
     fn main_flow_and_bcc_main_flow() {
         let dice_artifacts = make_sample_bcc_and_cdis().unwrap();
-        assert_eq!(&dice_artifacts.cdi_values.cdi_attest, SAMPLE_CDI_ATTEST_TEST_VECTOR);
-        assert_eq!(&dice_artifacts.cdi_values.cdi_seal, SAMPLE_CDI_SEAL_TEST_VECTOR);
-        assert_eq!(&dice_artifacts.bcc, SAMPLE_BCC_TEST_VECTOR);
+        assert_eq!(dice_artifacts.cdi_attest(), SAMPLE_CDI_ATTEST_TEST_VECTOR);
+        assert_eq!(dice_artifacts.cdi_seal(), SAMPLE_CDI_SEAL_TEST_VECTOR);
+        assert_eq!(dice_artifacts.bcc(), Some(SAMPLE_BCC_TEST_VECTOR));
     }
 }
