@@ -17,11 +17,13 @@
 //! main DICE functions depend on.
 
 use crate::dice::{
-    Hash, InputValues, PublicKey, Signature, HASH_SIZE, PRIVATE_KEY_SEED_SIZE, PRIVATE_KEY_SIZE,
-    SIGNATURE_SIZE,
+    Hash, InputValues, PrivateKey, PublicKey, Signature, HASH_SIZE, PRIVATE_KEY_SEED_SIZE,
+    PRIVATE_KEY_SIZE, PUBLIC_KEY_SIZE, SIGNATURE_SIZE,
 };
 use crate::error::{check_result, Result};
-use open_dice_cbor_bindgen::{DiceGenerateCertificate, DiceHash, DiceKdf, DiceSign, DiceVerify};
+use open_dice_cbor_bindgen::{
+    DiceGenerateCertificate, DiceHash, DiceKdf, DiceKeypairFromSeed, DiceSign, DiceVerify,
+};
 use std::ptr;
 
 /// Hashes the provided input using DICE's hash function `DiceHash`.
@@ -58,6 +60,25 @@ pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Resu
             derived_key.as_mut_ptr(),
         )
     })
+}
+
+/// Deterministically generates a public and private key pair from `seed`.
+/// Since this is deterministic, `seed` is as sensitive as a private key and can
+/// be used directly as the private key.
+pub fn keypair_from_seed(seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(PublicKey, PrivateKey)> {
+    let mut public_key = [0u8; PUBLIC_KEY_SIZE];
+    let mut private_key = PrivateKey::default();
+    // SAFETY: The function writes to the `public_key` and `private_key` within the given bounds,
+    // and only reads the `seed`. The first argument context is not used in this function.
+    check_result(unsafe {
+        DiceKeypairFromSeed(
+            ptr::null_mut(), // context
+            seed.as_ptr(),
+            public_key.as_mut_ptr(),
+            private_key.as_mut_ptr(),
+        )
+    })?;
+    Ok((public_key, private_key))
 }
 
 /// Signs the `message` with the give `private_key` using `DiceSign`.
