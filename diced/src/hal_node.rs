@@ -34,9 +34,8 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 };
 use anyhow::{Context, Result};
 use binder::{BinderFeatures, Result as BinderResult, Strong};
-use dice::{ContextImpl, OpenDiceCborContext};
+use diced_open_dice as dice;
 pub use diced_open_dice::DiceArtifacts;
-use diced_open_dice_cbor as dice;
 use diced_utils as utils;
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{
@@ -203,7 +202,6 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
         let signature: Vec<u8> = self
             .with_effective_artifacts(input_values, |artifacts| {
                 let (cdi_attest, _, _) = artifacts.into_tuple();
-                let mut dice = OpenDiceCborContext::new();
                 let seed = dice::derive_cdi_private_key_seed(
                     cdi_attest[..].try_into().with_context(|| {
                         format!(
@@ -213,24 +211,10 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
                     })?,
                 )
                 .context("In ResidentHal::sign: Failed to derive seed from cdi_attest.")?;
-                let (_public_key, private_key) = dice
-                    .keypair_from_seed(seed[..].try_into().with_context(|| {
-                        format!(
-                            "In ResidentHal::sign: Failed to convert seed (length: {}).",
-                            seed.len()
-                        )
-                    })?)
+                let (_public_key, private_key) = dice::keypair_from_seed(seed.as_array())
                     .context("In ResidentHal::sign: Failed to derive keypair from seed.")?;
-                let signature = dice::sign(
-                    message,
-                    private_key[..].try_into().with_context(|| {
-                        format!(
-                            "In ResidentHal::sign: Failed to convert private_key (length: {}).",
-                            private_key.len()
-                        )
-                    })?,
-                )
-                .context("In ResidentHal::sign: Failed to sign.")?;
+                let signature = dice::sign(message, private_key.as_array())
+                    .context("In ResidentHal::sign: Failed to sign.")?;
                 Ok(signature.to_vec())
             })
             .context("In ResidentHal::sign:")?;
@@ -333,7 +317,7 @@ mod test {
         InputValues::InputValues as BinderInputValues, Mode::Mode as BinderMode,
     };
     use anyhow::{anyhow, Context, Result};
-    use diced_open_dice_cbor as dice;
+    use diced_open_dice as dice;
     use diced_sample_inputs;
     use diced_utils as utils;
     use std::ffi::CStr;
