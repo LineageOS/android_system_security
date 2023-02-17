@@ -58,6 +58,7 @@ rust_library {
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libanyhow",
+        "libdiced_open_dice",
         "libdiced_open_dice_cbor",
         "libdiced_utils",
     ],
@@ -72,6 +73,7 @@ rust_test {
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libanyhow",
+        "libdiced_open_dice",
         "libdiced_open_dice_cbor",
         "libdiced_utils",
     ],
@@ -85,6 +87,7 @@ rust_library {
     vendor_available: true,
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
+        "libdiced_open_dice",
         "libdiced_open_dice_cbor",
         "libanyhow",
         "libbinder_rs",
@@ -108,6 +111,7 @@ rust_test {
     rustlibs: [
         "android.hardware.security.dice-V1-rust",
         "libanyhow",
+        "libdiced_open_dice",
         "libdiced_open_dice_cbor",
         "libdiced_sample_inputs",
         "libdiced_utils",
@@ -138,6 +142,7 @@ rust_test {
         "android.security.dice-rust",
         "libanyhow",
         "libbinder_rs",
+        "libdiced_open_dice",
         "libdiced_open_dice_cbor",
         "libdiced_sample_inputs",
         "libdiced_utils",

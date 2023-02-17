@@ -18,8 +18,9 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Bcc::Bcc, BccHandover::BccHandover, InputValues::InputValues as BinderInputValues,
     Mode::Mode as BinderMode,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use diced_open_dice as dice;
+use diced_open_dice::DiceArtifacts;
 use keystore2_crypto::ZVec;
 use std::convert::TryInto;
 
@@ -61,6 +62,7 @@ pub fn make_bcc_handover(
 /// and the BCC formatted attestation certificate chain. The sensitive secrets are
 /// stored in zeroing vectors, and it implements functionality to perform DICE
 /// derivation steps using libopen-dice-cbor.
+/// TODO(b/268322533): Remove this struct with the unused HAL service dice
 pub struct ResidentArtifacts {
     cdi_attest: ZVec,
     cdi_seal: ZVec,
@@ -72,9 +74,9 @@ impl TryFrom<dice::OwnedDiceArtifacts> for ResidentArtifacts {
 
     fn try_from(dice_artifacts: dice::OwnedDiceArtifacts) -> Result<Self, Self::Error> {
         Ok(ResidentArtifacts {
-            cdi_attest: dice_artifacts.cdi_values.cdi_attest[..].try_into()?,
-            cdi_seal: dice_artifacts.cdi_values.cdi_seal[..].try_into()?,
-            bcc: dice_artifacts.bcc[..].to_vec(),
+            cdi_attest: dice_artifacts.cdi_attest().to_vec().try_into()?,
+            cdi_seal: dice_artifacts.cdi_seal().to_vec().try_into()?,
+            bcc: dice_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?.to_vec(),
         })
     }
 }
@@ -104,9 +106,9 @@ impl ResidentArtifacts {
     /// because DiceArtifacts returns array references of appropriate size.
     pub fn new_from<T: DiceArtifacts + ?Sized>(artifacts: &T) -> Result<Self> {
         Ok(ResidentArtifacts {
-            cdi_attest: artifacts.cdi_attest()[..].try_into()?,
-            cdi_seal: artifacts.cdi_seal()[..].try_into()?,
-            bcc: artifacts.bcc(),
+            cdi_attest: artifacts.cdi_attest().to_vec().try_into()?,
+            cdi_seal: artifacts.cdi_seal().to_vec().try_into()?,
+            bcc: artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?.to_vec(),
         })
     }
 
@@ -163,20 +165,6 @@ impl ResidentArtifacts {
     }
 }
 
-/// An object that implements this trait provides the typical DICE artifacts.
-/// CDI_ATTEST, CDI_SEAL, and a certificate chain up to the public key that
-/// can be derived from CDI_ATTEST. Implementations should check the length of
-/// the stored CDI_* secrets on creation so that any valid instance returns the
-/// correct secrets in an infallible way.
-pub trait DiceArtifacts {
-    /// Returns CDI_ATTEST.
-    fn cdi_attest(&self) -> &[u8; dice::CDI_SIZE];
-    /// Returns CDI_SEAL.
-    fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE];
-    /// Returns the attestation certificate chain in BCC format.
-    fn bcc(&self) -> Vec<u8>;
-}
-
 /// Implement this trait to provide read and write access to a secure artifact
 /// storage that can be used by the ResidentHal implementation.
 pub trait UpdatableDiceArtifacts {
@@ -199,8 +187,8 @@ impl DiceArtifacts for ResidentArtifacts {
     fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE] {
         self.cdi_seal[..].try_into().unwrap()
     }
-    fn bcc(&self) -> Vec<u8> {
-        self.bcc.clone()
+    fn bcc(&self) -> Option<&[u8]> {
+        Some(&self.bcc)
     }
 }
 

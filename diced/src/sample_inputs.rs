@@ -18,11 +18,11 @@
 use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Config::Config as BinderConfig, InputValues::InputValues as BinderInputValues, Mode::Mode,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use dice::ContextImpl;
+use diced_open_dice::DiceArtifacts;
 use diced_open_dice_cbor as dice;
 use diced_utils::{cbor, to_dice_input_values};
-use std::convert::TryInto;
 use std::ffi::CStr;
 use std::io::Write;
 
@@ -100,9 +100,9 @@ pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
     )
     .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
     dice::retry_bcc_main_flow(
-        &dice_artifacts.cdi_values.cdi_attest,
-        &dice_artifacts.cdi_values.cdi_seal,
-        &dice_artifacts.bcc,
+        dice_artifacts.cdi_attest(),
+        dice_artifacts.cdi_seal(),
+        dice_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?,
         &to_dice_input_values(&input_values_vector[2]),
     )
     .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
