@@ -18,7 +18,9 @@
 //! std environment.
 
 use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow};
-use crate::dice::{dice_main_flow, Cdi, CdiValues, InputValues, PRIVATE_KEY_SEED_SIZE};
+use crate::dice::{
+    dice_main_flow, Cdi, CdiValues, DiceArtifacts, InputValues, CDI_SIZE, PRIVATE_KEY_SEED_SIZE,
+};
 use crate::error::{DiceError, Result};
 use crate::ops::generate_certificate;
 use std::ffi::CStr;
@@ -30,9 +32,23 @@ use std::ffi::CStr;
 #[derive(Debug)]
 pub struct OwnedDiceArtifacts {
     /// CDI Values.
-    pub cdi_values: CdiValues,
+    cdi_values: CdiValues,
     /// Boot Certificate Chain.
-    pub bcc: Vec<u8>,
+    bcc: Vec<u8>,
+}
+
+impl DiceArtifacts for OwnedDiceArtifacts {
+    fn cdi_attest(&self) -> &[u8; CDI_SIZE] {
+        &self.cdi_values.cdi_attest
+    }
+
+    fn cdi_seal(&self) -> &[u8; CDI_SIZE] {
+        &self.cdi_values.cdi_seal
+    }
+
+    fn bcc(&self) -> Option<&[u8]> {
+        Some(&self.bcc)
+    }
 }
 
 /// Retries the given function with bigger output buffer size.

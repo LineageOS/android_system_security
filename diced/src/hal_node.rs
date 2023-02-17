@@ -35,6 +35,7 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 use anyhow::{Context, Result};
 use binder::{BinderFeatures, Result as BinderResult, Strong};
 use dice::{ContextImpl, OpenDiceCborContext};
+pub use diced_open_dice::DiceArtifacts;
 use diced_open_dice_cbor as dice;
 use diced_utils as utils;
 use nix::sys::wait::{waitpid, WaitStatus};
@@ -47,7 +48,7 @@ use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
 use std::sync::{Arc, RwLock};
 use utils::ResidentArtifacts;
-pub use utils::{DiceArtifacts, UpdatableDiceArtifacts};
+pub use utils::UpdatableDiceArtifacts;
 
 /// PipeReader is a simple wrapper around raw pipe file descriptors.
 /// It takes ownership of the file descriptor and closes it on drop. It provides `read_all`, which
@@ -331,7 +332,7 @@ mod test {
         BccHandover::BccHandover, Config::Config as BinderConfig,
         InputValues::InputValues as BinderInputValues, Mode::Mode as BinderMode,
     };
-    use anyhow::{Context, Result};
+    use anyhow::{anyhow, Context, Result};
     use diced_open_dice_cbor as dice;
     use diced_sample_inputs;
     use diced_utils as utils;
@@ -346,11 +347,11 @@ mod test {
 
     impl From<dice::OwnedDiceArtifacts> for InsecureSerializableArtifacts {
         fn from(dice_artifacts: dice::OwnedDiceArtifacts) -> Self {
-            Self {
-                cdi_attest: dice_artifacts.cdi_values.cdi_attest,
-                cdi_seal: dice_artifacts.cdi_values.cdi_seal,
-                bcc: dice_artifacts.bcc[..].to_vec(),
-            }
+            let mut cdi_attest = [0u8; dice::CDI_SIZE];
+            cdi_attest.copy_from_slice(dice_artifacts.cdi_attest());
+            let mut cdi_seal = [0u8; dice::CDI_SIZE];
+            cdi_seal.copy_from_slice(dice_artifacts.cdi_seal());
+            Self { cdi_attest, cdi_seal, bcc: dice_artifacts.bcc().expect("bcc is none").to_vec() }
         }
     }
 
@@ -361,8 +362,8 @@ mod test {
         fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE] {
             &self.cdi_seal
         }
-        fn bcc(&self) -> Vec<u8> {
-            self.bcc.clone()
+        fn bcc(&self) -> Option<&[u8]> {
+            Some(&self.bcc)
         }
     }
 
@@ -377,7 +378,7 @@ mod test {
             Ok(Self {
                 cdi_attest: *new_artifacts.cdi_attest(),
                 cdi_seal: *new_artifacts.cdi_seal(),
-                bcc: new_artifacts.bcc(),
+                bcc: new_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?.to_vec(),
             })
         }
     }
@@ -430,7 +431,7 @@ mod test {
         let result = utils::make_bcc_handover(
             new_artifacts.cdi_attest(),
             new_artifacts.cdi_seal(),
-            &new_artifacts.bcc(),
+            new_artifacts.bcc().unwrap(),
         )?;
 
         assert_eq!(result, make_derive_test_vector());
