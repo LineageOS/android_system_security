@@ -53,8 +53,6 @@ pub type Hidden = [u8; HIDDEN_SIZE];
 pub type InlineConfig = [u8; INLINE_CONFIG_SIZE];
 /// Array type of CDIs.
 pub type Cdi = [u8; CDI_SIZE];
-/// Array type of private key seeds.
-pub type PrivateKeySeed = [u8; PRIVATE_KEY_SEED_SIZE];
 /// Array type of the public key.
 pub type PublicKey = [u8; PUBLIC_KEY_SIZE];
 /// Array type of the signature.
@@ -80,6 +78,8 @@ pub trait DiceArtifacts {
     fn bcc(&self) -> Option<&[u8]>;
 }
 
+/// TODO(b/268587826): Clean up the memory cache after zeroing out the memory
+/// for sensitive data like CDI values and private key.
 /// CDI Values.
 #[derive(Debug, Zeroize, ZeroizeOnDrop, Default)]
 pub struct CdiValues {
@@ -87,6 +87,49 @@ pub struct CdiValues {
     pub cdi_attest: [u8; CDI_SIZE],
     /// Sealing CDI.
     pub cdi_seal: [u8; CDI_SIZE],
+}
+
+/// Private key seed. The data is zeroed out when the struct is dropped.
+#[derive(Zeroize, ZeroizeOnDrop, Default)]
+pub struct PrivateKeySeed([u8; PRIVATE_KEY_SEED_SIZE]);
+
+impl PrivateKeySeed {
+    /// Returns an array reference of the private key seed.
+    pub fn as_array(&self) -> &[u8; PRIVATE_KEY_SEED_SIZE] {
+        &self.0
+    }
+
+    /// Returns a mutable pointer to the slice buffer of the private key seed.
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.0.as_mut_ptr()
+    }
+}
+
+/// Private key. The data is zeroed out when the struct is dropped.
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct PrivateKey([u8; PRIVATE_KEY_SIZE]);
+
+impl Default for PrivateKey {
+    /// Creates a new `PrivateKey` instance with all bytes set to 0.
+    ///
+    /// Since the size of the private key array is too large to be initialized
+    /// with a default value, this implementation sets all the bytes in the array
+    /// to 0 using the `[0u8; PRIVATE_KEY_SIZE]` syntax.
+    fn default() -> Self {
+        Self([0u8; PRIVATE_KEY_SIZE])
+    }
+}
+
+impl PrivateKey {
+    /// Returns an array reference of the private key.
+    pub fn as_array(&self) -> &[u8; PRIVATE_KEY_SIZE] {
+        &self.0
+    }
+
+    /// Returns a mutable pointer to the slice buffer of the private key.
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.0.as_mut_ptr()
+    }
 }
 
 /// Configuration descriptor for DICE input values.
@@ -165,7 +208,7 @@ impl InputValues {
 
 /// Derives a CDI private key seed from a `cdi_attest` value.
 pub fn derive_cdi_private_key_seed(cdi_attest: &Cdi) -> Result<PrivateKeySeed> {
-    let mut seed = [0u8; PRIVATE_KEY_SEED_SIZE];
+    let mut seed = PrivateKeySeed::default();
     // SAFETY: The function writes to the buffer within the given bounds, and only reads the
     // input values. The first argument context is not used in this function.
     check_result(unsafe {
