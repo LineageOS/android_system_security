@@ -18,11 +18,10 @@
 use android_hardware_security_dice::aidl::android::hardware::security::dice::{
     Config::Config as BinderConfig, InputValues::InputValues as BinderInputValues, Mode::Mode,
 };
-use anyhow::{Context, Result};
-use dice::ContextImpl;
-use diced_open_dice_cbor as dice;
+use anyhow::{anyhow, Context, Result};
+use diced_open_dice as dice;
+use diced_open_dice::DiceArtifacts;
 use diced_utils::{cbor, to_dice_input_values};
-use std::convert::TryInto;
 use std::ffi::CStr;
 use std::io::Write;
 
@@ -66,16 +65,11 @@ fn encode_pub_key_ed25519(pub_key: &[u8], stream: &mut dyn Write) -> Result<()> 
 /// Derives a tuple of (CDI_ATTEST, CDI_SEAL, BCC) derived of the vector of input values returned
 /// by `get_input_values_vector`.
 pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
-    let mut dice_ctx = dice::OpenDiceCborContext::new();
     let private_key_seed = dice::derive_cdi_private_key_seed(UDS)
         .context("In make_sample_bcc_and_cdis: Trying to derive private key seed.")?;
 
-    let (public_key, _) =
-        dice_ctx
-            .keypair_from_seed(&private_key_seed[..].try_into().context(
-                "In make_sample_bcc_and_cids: Failed to convert seed to array reference.",
-            )?)
-            .context("In make_sample_bcc_and_cids: Failed to generate key pair.")?;
+    let (public_key, _) = dice::keypair_from_seed(private_key_seed.as_array())
+        .context("In make_sample_bcc_and_cids: Failed to generate key pair.")?;
 
     let input_values_vector = get_input_values_vector();
 
@@ -100,9 +94,9 @@ pub fn make_sample_bcc_and_cdis() -> Result<dice::OwnedDiceArtifacts> {
     )
     .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
     dice::retry_bcc_main_flow(
-        &dice_artifacts.cdi_values.cdi_attest,
-        &dice_artifacts.cdi_values.cdi_seal,
-        &dice_artifacts.bcc,
+        dice_artifacts.cdi_attest(),
+        dice_artifacts.cdi_seal(),
+        dice_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?,
         &to_dice_input_values(&input_values_vector[2]),
     )
     .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")

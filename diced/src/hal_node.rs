@@ -34,8 +34,8 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 };
 use anyhow::{Context, Result};
 use binder::{BinderFeatures, Result as BinderResult, Strong};
-use dice::{ContextImpl, OpenDiceCborContext};
-use diced_open_dice_cbor as dice;
+use diced_open_dice as dice;
+pub use diced_open_dice::DiceArtifacts;
 use diced_utils as utils;
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{
@@ -47,7 +47,7 @@ use std::io::{Read, Write};
 use std::os::unix::io::RawFd;
 use std::sync::{Arc, RwLock};
 use utils::ResidentArtifacts;
-pub use utils::{DiceArtifacts, UpdatableDiceArtifacts};
+pub use utils::UpdatableDiceArtifacts;
 
 /// PipeReader is a simple wrapper around raw pipe file descriptors.
 /// It takes ownership of the file descriptor and closes it on drop. It provides `read_all`, which
@@ -202,7 +202,6 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
         let signature: Vec<u8> = self
             .with_effective_artifacts(input_values, |artifacts| {
                 let (cdi_attest, _, _) = artifacts.into_tuple();
-                let mut dice = OpenDiceCborContext::new();
                 let seed = dice::derive_cdi_private_key_seed(
                     cdi_attest[..].try_into().with_context(|| {
                         format!(
@@ -212,24 +211,10 @@ impl<T: UpdatableDiceArtifacts + Serialize + DeserializeOwned + Clone + Send> Di
                     })?,
                 )
                 .context("In ResidentHal::sign: Failed to derive seed from cdi_attest.")?;
-                let (_public_key, private_key) = dice
-                    .keypair_from_seed(seed[..].try_into().with_context(|| {
-                        format!(
-                            "In ResidentHal::sign: Failed to convert seed (length: {}).",
-                            seed.len()
-                        )
-                    })?)
+                let (_public_key, private_key) = dice::keypair_from_seed(seed.as_array())
                     .context("In ResidentHal::sign: Failed to derive keypair from seed.")?;
-                let signature = dice::sign(
-                    message,
-                    private_key[..].try_into().with_context(|| {
-                        format!(
-                            "In ResidentHal::sign: Failed to convert private_key (length: {}).",
-                            private_key.len()
-                        )
-                    })?,
-                )
-                .context("In ResidentHal::sign: Failed to sign.")?;
+                let signature = dice::sign(message, private_key.as_array())
+                    .context("In ResidentHal::sign: Failed to sign.")?;
                 Ok(signature.to_vec())
             })
             .context("In ResidentHal::sign:")?;
@@ -331,8 +316,8 @@ mod test {
         BccHandover::BccHandover, Config::Config as BinderConfig,
         InputValues::InputValues as BinderInputValues, Mode::Mode as BinderMode,
     };
-    use anyhow::{Context, Result};
-    use diced_open_dice_cbor as dice;
+    use anyhow::{anyhow, Context, Result};
+    use diced_open_dice as dice;
     use diced_sample_inputs;
     use diced_utils as utils;
     use std::ffi::CStr;
@@ -346,11 +331,11 @@ mod test {
 
     impl From<dice::OwnedDiceArtifacts> for InsecureSerializableArtifacts {
         fn from(dice_artifacts: dice::OwnedDiceArtifacts) -> Self {
-            Self {
-                cdi_attest: dice_artifacts.cdi_values.cdi_attest,
-                cdi_seal: dice_artifacts.cdi_values.cdi_seal,
-                bcc: dice_artifacts.bcc[..].to_vec(),
-            }
+            let mut cdi_attest = [0u8; dice::CDI_SIZE];
+            cdi_attest.copy_from_slice(dice_artifacts.cdi_attest());
+            let mut cdi_seal = [0u8; dice::CDI_SIZE];
+            cdi_seal.copy_from_slice(dice_artifacts.cdi_seal());
+            Self { cdi_attest, cdi_seal, bcc: dice_artifacts.bcc().expect("bcc is none").to_vec() }
         }
     }
 
@@ -361,8 +346,8 @@ mod test {
         fn cdi_seal(&self) -> &[u8; dice::CDI_SIZE] {
             &self.cdi_seal
         }
-        fn bcc(&self) -> Vec<u8> {
-            self.bcc.clone()
+        fn bcc(&self) -> Option<&[u8]> {
+            Some(&self.bcc)
         }
     }
 
@@ -377,7 +362,7 @@ mod test {
             Ok(Self {
                 cdi_attest: *new_artifacts.cdi_attest(),
                 cdi_seal: *new_artifacts.cdi_seal(),
-                bcc: new_artifacts.bcc(),
+                bcc: new_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?.to_vec(),
             })
         }
     }
@@ -430,7 +415,7 @@ mod test {
         let result = utils::make_bcc_handover(
             new_artifacts.cdi_attest(),
             new_artifacts.cdi_seal(),
-            &new_artifacts.bcc(),
+            new_artifacts.bcc().unwrap(),
         )?;
 
         assert_eq!(result, make_derive_test_vector());

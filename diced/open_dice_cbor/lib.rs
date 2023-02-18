@@ -12,120 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Implements safe wrappers around the public API of libopen-dice.
-//! ## Example:
-//! ```
-//! use diced_open_dice_cbor as dice;
-//!
-//! let context = dice::dice::OpenDiceCborContext::new()
-//! let parent_cdi_attest = [1u8, dice::CDI_SIZE];
-//! let parent_cdi_seal = [2u8, dice::CDI_SIZE];
-//! let input_values = dice::InputValues::new(
-//!     [3u8, dice::HASH_SIZE], // code_hash
-//!     dice::Config::Descriptor(&"My descriptor".as_bytes().to_vec()),
-//!     [0u8, dice::HASH_SIZE], // authority_hash
-//!     dice::DiceMode::kDiceModeNormal,
-//!     [0u8, dice::HIDDEN_SIZE], // hidden
-//! };
-//! let (cdi_attest, cdi_seal, cert_chain) = context
-//!     .main_flow(&parent_cdi_attest, &parent_cdi_seal, &input_values)?;
-//! ```
-
-pub use diced_open_dice::{
-    check_result, derive_cdi_private_key_seed, hash, retry_bcc_format_config_descriptor,
-    retry_bcc_main_flow, retry_dice_main_flow, sign, Config, DiceError, Hash, Hidden, InputValues,
-    OwnedDiceArtifacts, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, PRIVATE_KEY_SEED_SIZE,
-};
-use keystore2_crypto::ZVec;
-pub use open_dice_cbor_bindgen::DiceMode;
-use open_dice_cbor_bindgen::{DiceKeypairFromSeed, DICE_PRIVATE_KEY_SIZE, DICE_PUBLIC_KEY_SIZE};
-use std::ffi::c_void;
-
-/// The size of a private key.
-pub const PRIVATE_KEY_SIZE: usize = DICE_PRIVATE_KEY_SIZE as usize;
-/// The size of a public key.
-pub const PUBLIC_KEY_SIZE: usize = DICE_PUBLIC_KEY_SIZE as usize;
-
-/// Some libopen-dice variants use a context. Developers that want to customize these
-/// bindings may want to implement their own Context factory that creates a context
-/// useable by their preferred backend.
-pub trait Context {
-    /// # Safety
-    /// The return value of get_context is passed to any open dice function.
-    /// Implementations must explain why the context pointer returned is safe
-    /// to be used by the open dice library.
-    unsafe fn get_context(&mut self) -> *mut c_void;
-}
-
-impl<T: Context + Send> ContextImpl for T {}
-
-/// This represents a context for the open dice library. The wrapped open dice instance, which
-/// is based on boringssl and cbor, does not use a context, so that this type is empty.
-#[derive(Default)]
-pub struct OpenDiceCborContext();
-
-impl OpenDiceCborContext {
-    /// Construct a new instance of OpenDiceCborContext.
-    pub fn new() -> Self {
-        Default::default()
-    }
-}
-
-impl Context for OpenDiceCborContext {
-    unsafe fn get_context(&mut self) -> *mut c_void {
-        // # Safety
-        // The open dice cbor implementation does not use a context. It is safe
-        // to return NULL.
-        std::ptr::null_mut()
-    }
-}
-
-/// Type alias for ZVec indicating that it holds a CDI_ATTEST secret.
-pub type CdiAttest = ZVec;
-
-/// Type alias for ZVec indicating that it holds a CDI_SEAL secret.
-pub type CdiSeal = ZVec;
-
-/// Type alias for Vec<u8> indicating that it hold a DICE certificate.
-pub type Cert = Vec<u8>;
-
-/// Type alias for Vec<u8> indicating that it holds a BCC certificate chain.
-pub type Bcc = Vec<u8>;
-
-/// ContextImpl is a mixin trait that implements the safe wrappers around the open dice
-/// library calls. Implementations must implement Context::get_context(). As of
-/// this writing, the only implementation is OpenDiceCborContext, which returns NULL.
-pub trait ContextImpl: Context + Send {
-    /// Safe wrapper around open-dice DiceKeyPairFromSeed, see open dice
-    /// documentation for details.
-    fn keypair_from_seed(&mut self, seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(Vec<u8>, ZVec)> {
-        let mut private_key = ZVec::new(PRIVATE_KEY_SIZE)?;
-        let mut public_key = vec![0u8; PUBLIC_KEY_SIZE];
-
-        // SAFETY:
-        // * The first context argument may be NULL and is unused by the wrapped
-        //   implementation.
-        // * The second argument is a pointer to a const buffer of size `PRIVATE_KEY_SEED_SIZE`
-        //   fulfilled by the definition of the argument.
-        // * The third argument and the fourth argument are mutable buffers of size
-        //   `PRIVATE_KEY_SIZE` and `PUBLIC_KEY_SIZE` respectively. This is fulfilled by the
-        //   allocations above.
-        // * All pointers must be valid for the duration of the function call but not beyond.
-        check_result(unsafe {
-            DiceKeypairFromSeed(
-                self.get_context(),
-                seed.as_ptr(),
-                public_key.as_mut_ptr(),
-                private_key.as_mut_ptr(),
-            )
-        })?;
-        Ok((public_key, private_key))
-    }
-}
-
+// TODO(b/267575445): Move the tests to other target and remove the folder `open_dice_cbor` completely.
 #[cfg(test)]
 mod test {
-    use super::*;
+    use diced_open_dice::DiceArtifacts;
     use diced_sample_inputs::make_sample_bcc_and_cdis;
     use std::convert::TryInto;
 
@@ -171,32 +61,23 @@ mod test {
 
     #[test]
     fn hash_derive_sign_verify() {
-        let mut ctx = OpenDiceCborContext::new();
         let seed = diced_open_dice::hash("MySeedString".as_bytes()).unwrap();
         assert_eq!(seed, SEED_TEST_VECTOR);
-        let cdi_attest = &seed[..CDI_SIZE];
+        let cdi_attest = &seed[..diced_open_dice::CDI_SIZE];
         assert_eq!(cdi_attest, CDI_ATTEST_TEST_VECTOR);
         let cdi_private_key_seed =
-            derive_cdi_private_key_seed(cdi_attest.try_into().unwrap()).unwrap();
-        assert_eq!(&cdi_private_key_seed[..], CDI_PRIVATE_KEY_SEED_TEST_VECTOR);
+            diced_open_dice::derive_cdi_private_key_seed(cdi_attest.try_into().unwrap()).unwrap();
+        assert_eq!(cdi_private_key_seed.as_array(), CDI_PRIVATE_KEY_SEED_TEST_VECTOR);
         let (pub_key, priv_key) =
-            ctx.keypair_from_seed(cdi_private_key_seed[..].try_into().unwrap()).unwrap();
+            diced_open_dice::keypair_from_seed(cdi_private_key_seed.as_array()).unwrap();
         assert_eq!(&pub_key, PUB_KEY_TEST_VECTOR);
-        assert_eq!(&priv_key[..], PRIV_KEY_TEST_VECTOR);
-        let mut signature =
-            diced_open_dice::sign(b"MyMessage", priv_key[..].try_into().unwrap()).unwrap();
+        assert_eq!(priv_key.as_array(), PRIV_KEY_TEST_VECTOR);
+        let mut signature = diced_open_dice::sign(b"MyMessage", priv_key.as_array()).unwrap();
         assert_eq!(&signature, SIGNATURE_TEST_VECTOR);
-        assert!(diced_open_dice::verify(b"MyMessage", &signature, pub_key[..].try_into().unwrap())
-            .is_ok());
-        assert!(diced_open_dice::verify(
-            b"MyMessage_fail",
-            &signature,
-            pub_key[..].try_into().unwrap()
-        )
-        .is_err());
+        assert!(diced_open_dice::verify(b"MyMessage", &signature, &pub_key).is_ok());
+        assert!(diced_open_dice::verify(b"MyMessage_fail", &signature, &pub_key).is_err());
         signature[0] += 1;
-        assert!(diced_open_dice::verify(b"MyMessage", &signature, pub_key[..].try_into().unwrap())
-            .is_err());
+        assert!(diced_open_dice::verify(b"MyMessage", &signature, &pub_key).is_err());
     }
 
     static SAMPLE_CDI_ATTEST_TEST_VECTOR: &[u8] = &[
@@ -319,8 +200,8 @@ mod test {
     #[test]
     fn main_flow_and_bcc_main_flow() {
         let dice_artifacts = make_sample_bcc_and_cdis().unwrap();
-        assert_eq!(&dice_artifacts.cdi_values.cdi_attest, SAMPLE_CDI_ATTEST_TEST_VECTOR);
-        assert_eq!(&dice_artifacts.cdi_values.cdi_seal, SAMPLE_CDI_SEAL_TEST_VECTOR);
-        assert_eq!(&dice_artifacts.bcc, SAMPLE_BCC_TEST_VECTOR);
+        assert_eq!(dice_artifacts.cdi_attest(), SAMPLE_CDI_ATTEST_TEST_VECTOR);
+        assert_eq!(dice_artifacts.cdi_seal(), SAMPLE_CDI_SEAL_TEST_VECTOR);
+        assert_eq!(dice_artifacts.bcc(), Some(SAMPLE_BCC_TEST_VECTOR));
     }
 }

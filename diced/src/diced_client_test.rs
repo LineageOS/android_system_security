@@ -19,7 +19,8 @@ use android_hardware_security_dice::aidl::android::hardware::security::dice::{
 use android_security_dice::aidl::android::security::dice::IDiceMaintenance::IDiceMaintenance;
 use android_security_dice::aidl::android::security::dice::IDiceNode::IDiceNode;
 use binder::Strong;
-use diced_open_dice_cbor as dice;
+use diced_open_dice as dice;
+use diced_open_dice::DiceArtifacts;
 use nix::libc::uid_t;
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -54,11 +55,10 @@ fn equivalence_test() {
             .unwrap();
 
     let artifacts = artifacts.execute_steps(input_values.iter()).unwrap();
-    let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
-        cdi_attest[..].try_into().unwrap(),
-        cdi_seal[..].try_into().unwrap(),
-        &bcc,
+        artifacts.cdi_attest(),
+        artifacts.cdi_seal(),
+        artifacts.bcc().expect("bcc is none"),
     )
     .unwrap();
     // TODO when we have a parser/verifier, check equivalence rather
@@ -94,11 +94,10 @@ fn demote_test() {
     .unwrap();
 
     let artifacts = artifacts.execute_steps(input_values.iter()).unwrap();
-    let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
-        cdi_attest[..].try_into().unwrap(),
-        cdi_seal[..].try_into().unwrap(),
-        &bcc,
+        artifacts.cdi_attest(),
+        artifacts.cdi_seal(),
+        artifacts.bcc().expect("bcc is none"),
     )
     .unwrap();
     // TODO b/204938506 when we have a parser/verifier, check equivalence rather
@@ -156,11 +155,10 @@ fn demote_self_test() {
     let client = [client];
 
     let artifacts = artifacts.execute_steps(input_values.iter().chain(client.iter())).unwrap();
-    let (cdi_attest, cdi_seal, bcc) = artifacts.into_tuple();
     let from_former = diced_utils::make_bcc_handover(
-        cdi_attest[..].try_into().unwrap(),
-        cdi_seal[..].try_into().unwrap(),
-        &bcc,
+        artifacts.cdi_attest(),
+        artifacts.cdi_seal(),
+        artifacts.bcc().expect("bcc is none"),
     )
     .unwrap();
     // TODO b/204938506 when we have a parser/verifier, check equivalence rather
