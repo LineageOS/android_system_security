@@ -612,7 +612,7 @@ impl KeystoreSecurityLevel {
                         })
                     },
                 )
-                .context("While generating Key with remote provisioned attestation key.")
+                .context(ks_err!("While generating Key with remote provisioned attestation key."))
                 .map(|(mut result, _)| {
                     result.certificateChain.push(attestation_certs);
                     result
@@ -635,7 +635,7 @@ impl KeystoreSecurityLevel {
                         self.keymint.generateKey(&params, dynamic_attest_key.as_ref())
                     })
                 })
-                .context("While generating Key with remote provisioned attestation key.")
+                .context(ks_err!("While generating Key with remote provisioned attestation key."))
                 .map(|(mut result, _)| {
                     result.certificateChain.push(attestation_certs);
                     result
@@ -651,7 +651,7 @@ impl KeystoreSecurityLevel {
                 );
                 self.keymint.generateKey(&params, None)
             })
-            .context("While generating Key without explicit attestation key."),
+            .context(ks_err!("While generating Key without explicit attestation key.")),
         }
         .context(ks_err!())?;
 
@@ -684,7 +684,7 @@ impl KeystoreSecurityLevel {
         };
 
         // import_key requires the rebind permission.
-        check_key_permission(KeyPerm::Rebind, &key, &None).context("In import_key.")?;
+        check_key_permission(KeyPerm::Rebind, &key, &None).context(ks_err!("In import_key."))?;
 
         let params = self
             .add_required_parameters(caller_uid, params, &key)
@@ -694,7 +694,7 @@ impl KeystoreSecurityLevel {
             .iter()
             .find(|p| p.tag == Tag::ALGORITHM)
             .ok_or(error::Error::Km(ErrorCode::INVALID_ARGUMENT))
-            .context("No KeyParameter 'Algorithm'.")
+            .context(ks_err!("No KeyParameter 'Algorithm'."))
             .and_then(|p| match &p.value {
                 KeyParameterValue::Algorithm(Algorithm::AES)
                 | KeyParameterValue::Algorithm(Algorithm::HMAC)
@@ -780,7 +780,7 @@ impl KeystoreSecurityLevel {
                     )
                 })
             })
-            .context("Failed to load wrapping key.")?;
+            .context(ks_err!("Failed to load wrapping key."))?;
 
         let (wrapping_key_blob, wrapping_blob_metadata) =
             wrapping_key_entry.take_key_blob_info().ok_or_else(error::Error::sys).context(
