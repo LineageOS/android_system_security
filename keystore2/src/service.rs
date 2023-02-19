@@ -205,17 +205,18 @@ impl KeystoreService {
             let mut db = db.borrow_mut();
             if let Some((key_id_guard, _key_entry)) = entry {
                 db.set_blob(&key_id_guard, SubComponentType::CERT, public_cert, None)
-                    .context("Failed to update cert subcomponent.")?;
+                    .context(ks_err!("Failed to update cert subcomponent."))?;
 
                 db.set_blob(&key_id_guard, SubComponentType::CERT_CHAIN, certificate_chain, None)
-                    .context("Failed to update cert chain subcomponent.")?;
+                    .context(ks_err!("Failed to update cert chain subcomponent."))?;
                 return Ok(());
             }
 
             // If we reach this point we have to check the special condition where a certificate
             // entry may be made.
             if !(public_cert.is_none() && certificate_chain.is_some()) {
-                return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND)).context("No key to update.");
+                return Err(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+                    .context(ks_err!("No key to update."));
             }
 
             // So we know that we have a certificate chain and no public cert.
@@ -230,13 +231,13 @@ impl KeystoreService {
                 (Domain::SELINUX, Some(_)) => key.clone(),
                 _ => {
                     return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT))
-                        .context("Domain must be APP or SELINUX to insert a certificate.")
+                        .context(ks_err!("Domain must be APP or SELINUX to insert a certificate."))
                 }
             };
 
             // Security critical: This must return on failure. Do not remove the `?`;
             check_key_permission(KeyPerm::Rebind, &key, &None)
-                .context("Caller does not have permission to insert this certificate.")?;
+                .context(ks_err!("Caller does not have permission to insert this certificate."))?;
 
             db.store_new_certificate(
                 &key,
@@ -244,7 +245,7 @@ impl KeystoreService {
                 certificate_chain.unwrap(),
                 &KEYSTORE_UUID,
             )
-            .context("Failed to insert new certificate.")?;
+            .context(ks_err!("Failed to insert new certificate."))?;
             Ok(())
         })
         .context(ks_err!())
@@ -295,7 +296,8 @@ impl KeystoreService {
         DB.with(|db| {
             LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
                 db.borrow_mut().unbind_key(key, KeyType::Client, caller_uid, |k, av| {
-                    check_key_permission(KeyPerm::Delete, k, &av).context("During delete_key.")
+                    check_key_permission(KeyPerm::Delete, k, &av)
+                        .context(ks_err!("During delete_key."))
                 })
             })
         })
