@@ -40,12 +40,13 @@ rust_library {
     rustlibs: [
         "libopen_dice_bcc_bindgen",
         "libopen_dice_cbor_bindgen",
-        // For ZVec
-        "libkeystore2_crypto_rust",
         "libzeroize",
     ],
     features: [
         "std",
+    ],
+    shared_libs: [
+        "libcrypto",
     ],
     whole_static_libs: [
         "libopen_dice_bcc",
@@ -158,11 +159,6 @@ rust_bindgen {
     name: "libopen_dice_cbor_bindgen",
     defaults: ["libopen_dice_cbor_bindgen.rust_defaults"],
     whole_static_libs: ["libopen_dice_cbor"],
-    // TODO(b/267575445): Remove the visibility to open_dice_cbor once everything
-    // in open_dice_cbor is moved to open_dice
-    visibility: [
-        "//system/security/diced/open_dice_cbor",
-    ],
 }
 
 rust_bindgen {
