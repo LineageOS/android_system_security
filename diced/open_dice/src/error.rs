@@ -29,16 +29,6 @@ pub enum DiceError {
     BufferTooSmall,
     /// Platform error.
     PlatformError,
-    /// The allocation of a ZVec failed.
-    #[cfg(feature = "std")]
-    ZVecError(keystore2_crypto::zvec::Error),
-}
-
-#[cfg(feature = "std")]
-impl From<keystore2_crypto::zvec::Error> for DiceError {
-    fn from(e: keystore2_crypto::zvec::Error) -> Self {
-        Self::ZVecError(e)
-    }
 }
 
 /// This makes `DiceError` accepted by anyhow.
@@ -51,8 +41,6 @@ impl fmt::Display for DiceError {
             Self::InvalidInput => write!(f, "invalid input"),
             Self::BufferTooSmall => write!(f, "buffer too small"),
             Self::PlatformError => write!(f, "platform error"),
-            #[cfg(feature = "std")]
-            Self::ZVecError(e) => write!(f, "ZVec allocation failed {e}"),
         }
     }
 }
