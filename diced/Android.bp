@@ -28,10 +28,7 @@ rust_library {
     vendor_available: true,
 
     rustlibs: [
-        "android.hardware.security.dice-V1-rust",
         "libanyhow",
-        "libdiced_open_dice",
-        "libkeystore2_crypto_rust",
     ],
 }
 
@@ -42,10 +39,7 @@ rust_test {
     test_suites: ["general-tests"],
     auto_gen_config: true,
     rustlibs: [
-        "android.hardware.security.dice-V1-rust",
         "libanyhow",
-        "libdiced_open_dice",
-        "libkeystore2_crypto_rust",
     ],
 }
 
@@ -56,7 +50,6 @@ rust_library {
     vendor_available: true,
 
     rustlibs: [
-        "android.hardware.security.dice-V1-rust",
         "libanyhow",
         "libdiced_open_dice",
         "libdiced_utils",
@@ -70,77 +63,8 @@ rust_test {
     test_suites: ["general-tests"],
     auto_gen_config: true,
     rustlibs: [
-        "android.hardware.security.dice-V1-rust",
         "libanyhow",
         "libdiced_open_dice",
         "libdiced_utils",
-    ],
-}
-
-rust_library {
-    name: "libdiced_vendor",
-    crate_name: "diced",
-    srcs: ["src/lib_vendor.rs"],
-
-    vendor_available: true,
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "libdiced_open_dice",
-        "libanyhow",
-        "libbinder_rs",
-        "libdiced_utils",
-        "libkeystore2_crypto_rust",
-        "liblibc",
-        "liblog_rust",
-        "libnix",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-    ],
-}
-
-rust_test {
-    name: "diced_vendor_test",
-    crate_name: "diced_vendor_test",
-    srcs: ["src/lib_vendor.rs"],
-    test_suites: ["general-tests"],
-    auto_gen_config: true,
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "libanyhow",
-        "libdiced_open_dice",
-        "libdiced_sample_inputs",
-        "libdiced_utils",
-        "libbinder_rs",
-        "libkeystore2_crypto_rust",
-        "liblibc",
-        "liblog_rust",
-        "libnix",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-    ],
-}
-
-rust_test {
-    name: "diced_client_test",
-    srcs: [
-        "src/diced_client_test.rs",
-    ],
-    require_root: true,
-    auto_gen_config: true,
-    test_suites: [
-        "general-tests",
-    ],
-
-    rustlibs: [
-        "android.hardware.security.dice-V1-rust",
-        "android.security.dice-rust",
-        "libanyhow",
-        "libbinder_rs",
-        "libdiced_open_dice",
-        "libdiced_sample_inputs",
-        "libdiced_utils",
-        "libnix",
     ],
 }
