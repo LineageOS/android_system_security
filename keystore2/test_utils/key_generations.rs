@@ -1047,3 +1047,38 @@ pub fn import_transport_key(
         transport_key,
     )
 }
+
+/// Generate EC key with purpose AGREE_KEY.
+pub fn generate_ec_agree_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    ec_curve: EcCurve,
+    digest: Digest,
+    domain: Domain,
+    nspace: i64,
+    alias: Option<String>,
+) -> binder::Result<KeyMetadata> {
+    let gen_params = AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::AGREE_KEY)
+        .digest(digest)
+        .ec_curve(ec_curve);
+
+    match sec_level.generateKey(
+        &KeyDescriptor { domain, nspace, alias, blob: None },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    ) {
+        Ok(key_metadata) => {
+            assert!(key_metadata.certificate.is_some());
+            if domain == Domain::BLOB {
+                assert!(key_metadata.key.blob.is_some());
+            }
+
+            Ok(key_metadata)
+        }
+        Err(e) => Err(e),
+    }
+}
