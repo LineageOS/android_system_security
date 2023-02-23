@@ -41,7 +41,7 @@ use android_hardware_security_keymint::binder::{StatusCode, Strong};
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::{Context, Result};
 use binder::FromIBinder;
-use keystore2_vintf::get_aidl_instances;
+use binder::get_declared_instances;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex, RwLock};
 use std::{cell::RefCell, sync::Once};
@@ -183,7 +183,7 @@ fn keymint_service_name_by_version(
     version: i32,
 ) -> Result<Option<(i32, String)>> {
     let keymint_instances =
-        get_aidl_instances("android.hardware.security.keymint", version as usize, "IKeyMintDevice");
+        get_declared_instances("android.hardware.security.keymint.IKeyMintDevice").unwrap();
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
@@ -229,7 +229,7 @@ fn connect_keymint(
                 Ok(sl)
             }
         })
-        .context(ks_err!())?;
+        .context(ks_err!("Get service name by version"))?;
 
     let (keymint, hal_version) = if let Some((version, service_name)) = service_name {
         let km: Strong<dyn IKeyMintDevice> =
@@ -334,7 +334,8 @@ pub fn get_keymint_device(
     if let Some((dev, hw_info, uuid)) = devices_map.dev_by_sec_level(security_level) {
         Ok((dev, hw_info, uuid))
     } else {
-        let (dev, hw_info) = connect_keymint(security_level).context(ks_err!())?;
+        let (dev, hw_info) =
+            connect_keymint(security_level).context(ks_err!("Cannot connect to Keymint"))?;
         devices_map.insert(*security_level, dev, hw_info);
         // Unwrap must succeed because we just inserted it.
         Ok(devices_map.dev_by_sec_level(security_level).unwrap())
@@ -368,7 +369,7 @@ static TIME_STAMP_SERVICE_NAME: &str = "android.hardware.security.secureclock.IS
 /// to connect to the legacy wrapper.
 fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
     let secureclock_instances =
-        get_aidl_instances("android.hardware.security.secureclock", 1, "ISecureClock");
+        get_declared_instances("android.hardware.security.secureclock.ISecureClock").unwrap();
 
     let secure_clock_available =
         secureclock_instances.iter().any(|instance| *instance == "default");
@@ -419,7 +420,7 @@ static REMOTE_PROVISIONING_HAL_SERVICE_NAME: &str =
 /// Get the service name of a remotely provisioned component corresponding to given security level.
 pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -> Result<String> {
     let remotely_prov_instances =
-        get_aidl_instances("android.hardware.security.keymint", 1, "IRemotelyProvisionedComponent");
+        get_declared_instances(REMOTE_PROVISIONING_HAL_SERVICE_NAME).unwrap();
 
     match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
