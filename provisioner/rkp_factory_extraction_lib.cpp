@@ -17,6 +17,7 @@
 #include "rkp_factory_extraction_lib.h"
 
 #include <aidl/android/hardware/security/keymint/IRemotelyProvisionedComponent.h>
+#include <android-base/properties.h>
 #include <android/binder_manager.h>
 #include <cppbor.h>
 #include <cstddef>
@@ -198,6 +199,8 @@ void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedCompon
 }
 
 CborResult<Array> composeCertificateRequestV3(const std::vector<uint8_t>& csr) {
+    const std::string kFingerprintProp = "ro.build.fingerprint";
+
     auto [parsedCsr, _, csrErrMsg] = cppbor::parse(csr);
     if (!parsedCsr) {
         return {nullptr, csrErrMsg};
@@ -206,6 +209,13 @@ CborResult<Array> composeCertificateRequestV3(const std::vector<uint8_t>& csr) {
         return {nullptr, "CSR is not a CBOR array."};
     }
 
+    if (!::android::base::WaitForPropertyCreation(kFingerprintProp)) {
+        return {nullptr, "Unable to read build fingerprint"};
+    }
+
+    Map unverifiedDeviceInfo =
+        Map().add("fingerprint", ::android::base::GetProperty(kFingerprintProp, /*default=*/""));
+    parsedCsr->asArray()->add(std::move(unverifiedDeviceInfo));
     return {std::unique_ptr<Array>(parsedCsr.release()->asArray()), ""};
 }
 
