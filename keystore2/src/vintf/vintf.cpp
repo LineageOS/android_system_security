@@ -26,18 +26,6 @@ rust::Vec<rust::String> convert(const std::set<std::string>& names) {
     return result;
 }
 
-rust::Vec<rust::String> get_hal_names() {
-    const auto manifest = android::vintf::VintfObject::GetDeviceHalManifest();
-    const auto names = manifest->getHalNames();
-    return convert(names);
-}
-
-rust::Vec<rust::String> get_hal_names_and_versions() {
-    const auto manifest = android::vintf::VintfObject::GetDeviceHalManifest();
-    const auto names = manifest->getHalNamesAndVersions();
-    return convert(names);
-}
-
 rust::Vec<rust::String> get_hidl_instances(rust::Str package, size_t major_version,
                                            size_t minor_version, rust::Str interfaceName) {
     android::vintf::Version version(major_version, minor_version);
