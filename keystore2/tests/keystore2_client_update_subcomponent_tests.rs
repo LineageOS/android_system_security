@@ -80,6 +80,71 @@ fn keystore2_update_subcomponent_fail() {
     assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
 }
 
+/// Try to update non-existing asymmetric key public cert only. Test should fail
+/// to update with error response code `KEY_NOT_FOUND`.
+#[test]
+fn keystore2_update_subcomponent_no_key_entry_cert_fail() {
+    let alias = "update_no_key_entry_cert_only_component_fail_key";
+    let keystore2 = get_keystore_service();
+    let other_cert: [u8; 32] = [123; 32];
+
+    let result = key_generations::map_ks_error(keystore2.updateSubcomponent(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        Some(&other_cert),
+        None,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
+}
+
+/// Try to update non existing key with the only given certificate-chain, test should succeed
+/// in creating a new keystore entry with the given certificate-chain.
+#[test]
+fn keystore2_update_subcomponent_no_key_entry_cert_chain_success() {
+    let alias = "update_no_key_entry_cert_chain_only_component_success";
+    let keystore2 = get_keystore_service();
+    let cert_entries =
+        vec![(Domain::SELINUX, key_generations::SELINUX_SHELL_NAMESPACE), (Domain::APP, -1)];
+    let other_cert_chain: [u8; 32] = [12; 32];
+
+    for (domain, nspace) in cert_entries {
+        keystore2
+            .updateSubcomponent(
+                &KeyDescriptor { domain, nspace, alias: Some(alias.to_string()), blob: None },
+                None,
+                Some(&other_cert_chain),
+            )
+            .expect("updateSubcomponent should have succeeded.");
+
+        let key_entry_response = keystore2
+            .getKeyEntry(&KeyDescriptor {
+                domain,
+                nspace,
+                alias: Some(alias.to_string()),
+                blob: None,
+            })
+            .unwrap();
+        assert_eq!(Some(other_cert_chain.to_vec()), key_entry_response.metadata.certificateChain);
+        assert!(key_entry_response.metadata.certificate.is_none(), "Unexpected certificate entry");
+        assert!(key_entry_response.metadata.authorizations.is_empty(), "Unexpected authorizations");
+        assert_eq!(key_entry_response.metadata.keySecurityLevel, SecurityLevel::SOFTWARE);
+
+        keystore2
+            .deleteKey(&KeyDescriptor {
+                domain,
+                nspace,
+                alias: Some(alias.to_string()),
+                blob: None,
+            })
+            .unwrap();
+    }
+}
+
 /// Generate a key and grant it to two users. For one user grant it with only `GET_INFO` access
 /// permission and for another user grant it with GET_INFO and UPDATE access permissions. In a
 /// grantee context where key is granted with only GET_INFO access permission, try to update
