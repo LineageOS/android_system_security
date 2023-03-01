@@ -25,8 +25,6 @@ rust_library {
     name: "libdiced_utils",
     crate_name: "diced_utils",
     srcs: ["src/utils.rs"],
-    vendor_available: true,
-
     rustlibs: [
         "libanyhow",
     ],
@@ -47,8 +45,6 @@ rust_library {
     name: "libdiced_sample_inputs",
     crate_name: "diced_sample_inputs",
     srcs: ["src/sample_inputs.rs"],
-    vendor_available: true,
-
     rustlibs: [
         "libanyhow",
         "libdiced_open_dice",
