@@ -54,7 +54,6 @@ rust_library {
         "libciborium",
         "libcoset",
         "libdiced_open_dice",
-        "libdiced_utils",
     ],
 }
 
@@ -69,6 +68,5 @@ rust_test {
         "libciborium",
         "libcoset",
         "libdiced_open_dice",
-        "libdiced_utils",
     ],
 }
