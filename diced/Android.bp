@@ -47,6 +47,8 @@ rust_library {
     srcs: ["src/sample_inputs.rs"],
     rustlibs: [
         "libanyhow",
+        "libciborium",
+        "libcoset",
         "libdiced_open_dice",
         "libdiced_utils",
     ],
@@ -60,6 +62,8 @@ rust_test {
     auto_gen_config: true,
     rustlibs: [
         "libanyhow",
+        "libciborium",
+        "libcoset",
         "libdiced_open_dice",
         "libdiced_utils",
     ],
