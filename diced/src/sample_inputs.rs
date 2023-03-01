@@ -16,14 +16,13 @@
 //! as well as tuple of CDIs and BCC derived thereof.
 
 use anyhow::{anyhow, Context, Result};
-use ciborium::value::Value;
-use coset::{iana, Algorithm, CborSerializable, CoseKey, KeyOperation, KeyType, Label};
+use ciborium::{de, ser, value::Value};
+use coset::{iana, Algorithm, AsCborValue, CoseKey, KeyOperation, KeyType, Label};
 use diced_open_dice::{
     derive_cdi_private_key_seed, keypair_from_seed, retry_bcc_format_config_descriptor,
     retry_bcc_main_flow, retry_dice_main_flow, Config, DiceArtifacts, DiceMode, InputValues,
     OwnedDiceArtifacts, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
 };
-use diced_utils::cbor;
 use std::ffi::CStr;
 
 /// Sample UDS used to perform the root dice flow by `make_sample_bcc_and_cdis`.
@@ -75,7 +74,7 @@ const AUTHORITY_HASH_ANDROID: [u8; HASH_SIZE] = [
     0x0a, 0xde, 0x29, 0x24, 0xff, 0x2e, 0xfa, 0xc7, 0x10, 0xd5, 0x73, 0xd4, 0xc6, 0xdf, 0x62, 0x9f,
 ];
 
-fn ed25519_public_key_to_cbor(public_key: &[u8]) -> Result<Vec<u8>> {
+fn ed25519_public_key_to_cbor_value(public_key: &[u8]) -> Result<Value> {
     let key = CoseKey {
         kty: KeyType::Assigned(iana::KeyType::OKP),
         alg: Some(Algorithm::Assigned(iana::Algorithm::EdDSA)),
@@ -89,7 +88,7 @@ fn ed25519_public_key_to_cbor(public_key: &[u8]) -> Result<Vec<u8>> {
         ],
         ..Default::default()
     };
-    key.to_vec()
+    key.to_cbor_value()
         .map_err(|e| anyhow!(format!("Failed to serialize the key to CBOR data. Error: {e}")))
 }
 
@@ -101,15 +100,12 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
     let private_key_seed = derive_cdi_private_key_seed(UDS)
         .context("In make_sample_bcc_and_cdis: Trying to derive private key seed.")?;
 
-    // Sets the root public key in DICE chain (BCC).
+    // Gets the root public key in DICE chain (BCC).
     let (public_key, _) = keypair_from_seed(private_key_seed.as_array())
         .context("In make_sample_bcc_and_cids: Failed to generate key pair.")?;
-    let mut bcc: Vec<u8> = vec![];
-    cbor::encode_header(4 /* CBOR ARRAY */, 2, &mut bcc)
-        .context("In make_sample_bcc_and_cdis: Trying to encode array header.")?;
-    bcc.extend(ed25519_public_key_to_cbor(&public_key)?);
+    let ed25519_public_key_value = ed25519_public_key_to_cbor_value(&public_key)?;
 
-    // Appends ABL certificate to DICE chain.
+    // Gets the ABL certificate to as the root certificate of DICE chain.
     let config_descriptor = retry_bcc_format_config_descriptor(
         Some(CStr::from_bytes_with_nul(b"ABL\0").unwrap()),
         Some(1), // version
@@ -122,9 +118,14 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
         DiceMode::kDiceModeNormal,
         HIDDEN_ABL,
     );
-    let (cdi_values, mut cert) = retry_dice_main_flow(UDS, UDS, &input_values)
+    let (cdi_values, cert) = retry_dice_main_flow(UDS, UDS, &input_values)
         .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
-    bcc.append(&mut cert);
+    let bcc_value = Value::Array(vec![
+        ed25519_public_key_value,
+        de::from_reader(&cert[..]).context("Deserialize root DICE certificate failed")?,
+    ]);
+    let mut bcc: Vec<u8> = vec![];
+    ser::into_writer(&bcc_value, &mut bcc)?;
 
     // Appends AVB certificate to DICE chain.
     let config_descriptor = retry_bcc_format_config_descriptor(
