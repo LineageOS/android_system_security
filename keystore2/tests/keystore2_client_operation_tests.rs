@@ -45,7 +45,6 @@ pub fn create_operations(
     let base_gid = 99 * AID_USER_OFFSET + 10001;
     let base_uid = 99 * AID_USER_OFFSET + 10001;
     (0..max_ops)
-        .into_iter()
         .map(|i| {
             execute_op_run_as_child(
                 target_ctx,
@@ -312,7 +311,6 @@ fn keystore2_ops_prune_test() {
 
     // Create multiple operations in this process to trigger cannibalizing sibling operations.
     let mut ops: Vec<binder::Result<CreateOperationResponse>> = (0..MAX_OPS)
-        .into_iter()
         .map(|_| {
             sec_level.createOperation(
                 &key_metadata.key,
