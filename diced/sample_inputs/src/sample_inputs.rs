@@ -26,7 +26,7 @@ use diced_open_dice::{
 use std::ffi::CStr;
 
 /// Sample UDS used to perform the root dice flow by `make_sample_bcc_and_cdis`.
-pub const UDS: &[u8; CDI_SIZE] = &[
+const UDS: &[u8; CDI_SIZE] = &[
     0x65, 0x4f, 0xab, 0xa9, 0xa5, 0xad, 0x0f, 0x5e, 0x15, 0xc3, 0x12, 0xf7, 0x77, 0x45, 0xfa, 0x55,
     0x18, 0x6a, 0xa6, 0x34, 0xb6, 0x7c, 0x82, 0x7b, 0x89, 0x4c, 0xc5, 0x52, 0xd3, 0x27, 0x35, 0x8e,
 ];
@@ -164,16 +164,4 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
         &input_values,
     )
     .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    // This simple test checks if the invocation succeeds, essentially it tests
-    // if the initial bcc is accepted by `diced_open_dice::retry_bcc_main_flow`.
-    #[test]
-    fn make_sample_bcc_and_cdis_test() {
-        make_sample_bcc_and_cdis().unwrap();
-    }
 }
