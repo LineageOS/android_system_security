@@ -24,7 +24,7 @@ package {
 rust_library {
     name: "libdiced_sample_inputs",
     crate_name: "diced_sample_inputs",
-    srcs: ["src/sample_inputs.rs"],
+    srcs: ["src/lib.rs"],
     rustlibs: [
         "libanyhow",
         "libciborium",
@@ -34,15 +34,12 @@ rust_library {
 }
 
 rust_test {
-    name: "diced_sample_inputs_test",
+    name: "libdiced_sample_inputs.integration_test",
     crate_name: "diced_sample_inputs_test",
-    srcs: ["src/sample_inputs.rs"],
+    srcs: ["tests/*.rs"],
     test_suites: ["general-tests"],
-    auto_gen_config: true,
     rustlibs: [
-        "libanyhow",
-        "libciborium",
-        "libcoset",
         "libdiced_open_dice",
+        "libdiced_sample_inputs",
     ],
 }
