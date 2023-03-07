@@ -583,40 +583,6 @@ impl KeystoreSecurityLevel {
                 )
                 .context(ks_err!("Using user generated attestation key."))
                 .map(|(result, _)| result),
-            Some(AttestationKeyInfo::RemoteProvisioned {
-                key_id_guard,
-                attestation_key,
-                attestation_certs,
-            }) => self
-                .upgrade_keyblob_if_required_with(
-                    &*self.keymint,
-                    Some(key_id_guard),
-                    &KeyBlob::Ref(&attestation_key.keyBlob),
-                    Some(self.rem_prov_state.get_uuid()),
-                    &[],
-                    |blob| {
-                        map_km_error({
-                            let _wp = self.watch_millis(
-                                concat!(
-                                    "In KeystoreSecurityLevel::generate_key (RemoteProvisioned): ",
-                                    "calling generate_key.",
-                                ),
-                                5000, // Generate can take a little longer.
-                            );
-                            let dynamic_attest_key = Some(AttestationKey {
-                                keyBlob: blob.to_vec(),
-                                attestKeyParams: vec![],
-                                issuerSubjectName: attestation_key.issuerSubjectName.clone(),
-                            });
-                            self.keymint.generateKey(&params, dynamic_attest_key.as_ref())
-                        })
-                    },
-                )
-                .context(ks_err!("While generating Key with remote provisioned attestation key."))
-                .map(|(mut result, _)| {
-                    result.certificateChain.push(attestation_certs);
-                    result
-                }),
             Some(AttestationKeyInfo::RkpdProvisioned { attestation_key, attestation_certs }) => {
                 self.upgrade_rkpd_keyblob_if_required_with(&attestation_key.keyBlob, &[], |blob| {
                     map_km_error({

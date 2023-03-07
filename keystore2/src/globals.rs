@@ -34,7 +34,6 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     IKeyMintDevice::IKeyMintDevice, KeyMintHardwareInfo::KeyMintHardwareInfo,
     SecurityLevel::SecurityLevel,
 };
-use android_hardware_security_rkp::aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent::IRemotelyProvisionedComponent;
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
     ISecureClock::ISecureClock,
 };
@@ -134,26 +133,6 @@ impl<T: FromIBinder + ?Sized> Default for DevicesMap<T> {
     }
 }
 
-struct RemotelyProvisionedDevicesMap<T: FromIBinder + ?Sized> {
-    devices_by_sec_level: HashMap<SecurityLevel, Strong<T>>,
-}
-
-impl<T: FromIBinder + ?Sized> Default for RemotelyProvisionedDevicesMap<T> {
-    fn default() -> Self {
-        Self { devices_by_sec_level: HashMap::<SecurityLevel, Strong<T>>::new() }
-    }
-}
-
-impl<T: FromIBinder + ?Sized> RemotelyProvisionedDevicesMap<T> {
-    fn dev_by_sec_level(&self, sec_level: &SecurityLevel) -> Option<Strong<T>> {
-        self.devices_by_sec_level.get(sec_level).map(|dev| (*dev).clone())
-    }
-
-    fn insert(&mut self, sec_level: SecurityLevel, dev: Strong<T>) {
-        self.devices_by_sec_level.insert(sec_level, dev);
-    }
-}
-
 lazy_static! {
     /// The path where keystore stores all its keys.
     pub static ref DB_PATH: RwLock<PathBuf> = RwLock::new(
@@ -164,10 +143,6 @@ lazy_static! {
     static ref KEY_MINT_DEVICES: Mutex<DevicesMap<dyn IKeyMintDevice>> = Default::default();
     /// Timestamp service.
     static ref TIME_STAMP_DEVICE: Mutex<Option<Strong<dyn ISecureClock>>> = Default::default();
-    /// RemotelyProvisionedComponent HAL devices.
-    static ref REMOTELY_PROVISIONED_COMPONENT_DEVICES:
-            Mutex<RemotelyProvisionedDevicesMap<dyn IRemotelyProvisionedComponent>> =
-                    Default::default();
     /// A single on-demand worker thread that handles deferred tasks with two different
     /// priorities.
     pub static ref ASYNC_TASK: Arc<AsyncTask> = Default::default();
@@ -465,30 +440,4 @@ pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -
     }
     .ok_or(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
     .context(ks_err!())
-}
-
-fn connect_remotely_provisioned_component(
-    security_level: &SecurityLevel,
-) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
-    let service_name = get_remotely_provisioned_component_name(security_level)?;
-    let rem_prov_hal: Strong<dyn IRemotelyProvisionedComponent> =
-        map_binder_status_code(binder::get_interface(&service_name))
-            .context(ks_err!("Trying to connect to RemotelyProvisionedComponent service."))?;
-    Ok(rem_prov_hal)
-}
-
-/// Get a remote provisiong component device for the given security level either from the cache or
-/// by making a new connection. Returns the device.
-pub fn get_remotely_provisioned_component(
-    security_level: &SecurityLevel,
-) -> Result<Strong<dyn IRemotelyProvisionedComponent>> {
-    let mut devices_map = REMOTELY_PROVISIONED_COMPONENT_DEVICES.lock().unwrap();
-    if let Some(dev) = devices_map.dev_by_sec_level(security_level) {
-        Ok(dev)
-    } else {
-        let dev = connect_remotely_provisioned_component(security_level).context(ks_err!())?;
-        devices_map.insert(*security_level, dev);
-        // Unwrap must succeed because we just inserted it.
-        Ok(devices_map.dev_by_sec_level(security_level).unwrap())
-    }
 }
