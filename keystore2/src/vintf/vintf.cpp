@@ -34,11 +34,3 @@ rust::Vec<rust::String> get_hidl_instances(rust::Str package, size_t major_versi
                                                   static_cast<std::string>(interfaceName));
     return convert(names);
 }
-
-rust::Vec<rust::String> get_aidl_instances(rust::Str package, size_t version,
-                                           rust::Str interfaceName) {
-    const auto manifest = android::vintf::VintfObject::GetDeviceHalManifest();
-    const auto names = manifest->getAidlInstances(static_cast<std::string>(package), version,
-                                                  static_cast<std::string>(interfaceName));
-    return convert(names);
-}
