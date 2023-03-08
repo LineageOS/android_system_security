@@ -27,10 +27,6 @@ mod ffi {
             minor_version: usize,
             interface_name: &str,
         ) -> Vec<String>;
-
-        /// Gets the instances of the given package, version, and interface tuple.
-        /// Note that this is not a zero-cost shim: it will make copies of the strings.
-        fn get_aidl_instances(package: &str, version: usize, interface_name: &str) -> Vec<String>;
     }
 }
 
