@@ -24,12 +24,12 @@
 #include <android/hardware/security/keymint/RpcHardwareInfo.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
+#include <rkp/support/rkpd_client.h>
 #include <vintf/VintfObject.h>
 
 #include "Credential.h"
 #include "CredentialData.h"
 #include "CredentialStore.h"
-#include "RemotelyProvisionedKey.h"
 #include "Session.h"
 #include "Util.h"
 #include "WritableCredential.h"
@@ -39,7 +39,8 @@ namespace security {
 namespace identity {
 namespace {
 
-using ::android::security::rkp::IRemoteProvisioning;
+using ::android::security::rkp::RemotelyProvisionedKey;
+using ::android::security::rkp::support::getRpcKey;
 
 }  // namespace
 
@@ -183,17 +184,7 @@ Status CredentialStore::setRemotelyProvisionedAttestationKey(
     LOG(INFO) << "Fetching attestation key from RKPD";
 
     uid_t callingUid = android::IPCThreadState::self()->getCallingUid();
-    auto rpcKeyFuture = getRpcKeyFuture(rpc_, callingUid);
-    if (!rpcKeyFuture) {
-        return Status::fromServiceSpecificError(ERROR_GENERIC, "Error in getRpcKeyFuture()");
-    }
-
-    if (rpcKeyFuture->wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
-        return Status::fromServiceSpecificError(
-            ERROR_GENERIC, "Waiting for remotely provisioned attestation key timed out");
-    }
-
-    std::optional<::android::security::rkp::RemotelyProvisionedKey> key = rpcKeyFuture->get();
+    std::optional<RemotelyProvisionedKey> key = getRpcKey(rpc_, callingUid);
     if (!key) {
         return Status::fromServiceSpecificError(
             ERROR_GENERIC, "Failed to get remotely provisioned attestation key");
