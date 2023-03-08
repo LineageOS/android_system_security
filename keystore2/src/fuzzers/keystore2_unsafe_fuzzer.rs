@@ -14,11 +14,9 @@
 
 //! Fuzzes unsafe APIs of libkeystore2 module
 
-#![feature(slice_internals)]
 #![no_main]
 
 use binder::get_declared_instances;
-use core::slice::memchr;
 use keystore2::{legacy_blob::LegacyBlobLoader, utils::ui_opts_2_compat};
 use keystore2_aaid::get_aaid;
 use keystore2_apc_compat::ApcHal;
@@ -38,7 +36,7 @@ const MAX_SIZE_MODIFIER: usize = 1024;
 
 /// CString does not contain any internal 0 bytes
 fn get_valid_cstring_data(data: &[u8]) -> &[u8] {
-    match memchr::memchr(0, data) {
+    match data.iter().position(|&b| b == 0) {
         Some(idx) => &data[0..idx],
         None => data,
     }
