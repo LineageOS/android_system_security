@@ -63,19 +63,15 @@ use utils as db_utils;
 use utils::SqlField;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    HardwareAuthToken::HardwareAuthToken,
-    HardwareAuthenticatorType::HardwareAuthenticatorType, SecurityLevel::SecurityLevel,
+    HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
+    SecurityLevel::SecurityLevel,
+};
+use android_security_metrics::aidl::android::security::metrics::{
+    RkpError::RkpError as MetricsRkpError, Storage::Storage as MetricsStorage,
+    StorageStats::StorageStats,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
-};
-use android_security_remoteprovisioning::aidl::android::security::remoteprovisioning::{
-    AttestationPoolStatus::AttestationPoolStatus,
-};
-use android_security_metrics::aidl::android::security::metrics::{
-    StorageStats::StorageStats,
-    Storage::Storage as MetricsStorage,
-    RkpError::RkpError as MetricsRkpError,
 };
 
 use keystore2_crypto::ZVec;
@@ -1983,73 +1979,6 @@ impl KeystoreDB {
         .context(ks_err!())
     }
 
-    /// Counts the number of keys that will expire by the provided epoch date and the number of
-    /// keys not currently assigned to a domain.
-    pub fn get_attestation_pool_status(
-        &mut self,
-        date: i64,
-        km_uuid: &Uuid,
-    ) -> Result<AttestationPoolStatus> {
-        let _wp = wd::watch_millis("KeystoreDB::get_attestation_pool_status", 500);
-
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
-            let mut stmt = tx.prepare(
-                "SELECT data
-                 FROM persistent.keymetadata
-                 WHERE tag = ? AND keyentryid IN
-                     (SELECT id
-                      FROM persistent.keyentry
-                      WHERE alias IS NOT NULL
-                            AND key_type = ?
-                            AND km_uuid = ?
-                            AND state = ?);",
-            )?;
-            let times = stmt
-                .query_map(
-                    params![
-                        KeyMetaData::AttestationExpirationDate,
-                        KeyType::Attestation,
-                        km_uuid,
-                        KeyLifeCycle::Live
-                    ],
-                    |row| row.get(0),
-                )?
-                .collect::<rusqlite::Result<Vec<DateTime>>>()
-                .context("Failed to execute metadata statement")?;
-            let expiring =
-                times.iter().filter(|time| time < &&DateTime::from_millis_epoch(date)).count()
-                    as i32;
-            stmt = tx.prepare(
-                "SELECT alias, domain
-                 FROM persistent.keyentry
-                 WHERE key_type = ? AND km_uuid = ? AND state = ?;",
-            )?;
-            let rows = stmt
-                .query_map(params![KeyType::Attestation, km_uuid, KeyLifeCycle::Live], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
-                })?
-                .collect::<rusqlite::Result<Vec<(Option<String>, Option<u32>)>>>()
-                .context("Failed to execute keyentry statement")?;
-            let mut unassigned = 0i32;
-            let mut attested = 0i32;
-            let total = rows.len() as i32;
-            for (alias, domain) in rows {
-                match (alias, domain) {
-                    (Some(_alias), None) => {
-                        attested += 1;
-                        unassigned += 1;
-                    }
-                    (Some(_alias), Some(_domain)) => {
-                        attested += 1;
-                    }
-                    _ => {}
-                }
-            }
-            Ok(AttestationPoolStatus { expiring, unassigned, attested, total }).no_gc()
-        })
-        .context(ks_err!())
-    }
-
     fn query_kid_for_attestation_key_and_cert_chain(
         &self,
         tx: &Transaction,
@@ -3552,62 +3481,6 @@ pub mod tests {
         assert_eq!(cert_chain.private_key.to_vec(), loaded_values.priv_key);
         assert_eq!(cert_chain.batch_cert, loaded_values.batch_cert);
         assert_eq!(cert_chain.cert_chain, loaded_values.cert_chain);
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_attestation_pool_status() -> Result<()> {
-        let mut db = new_test_db()?;
-        let namespace: i64 = 30;
-        load_attestation_key_pool(
-            &mut db, 10, /* expiration */
-            namespace, 0x01, /* base_byte */
-        )?;
-        load_attestation_key_pool(&mut db, 20 /* expiration */, namespace + 1, 0x02)?;
-        load_attestation_key_pool(&mut db, 40 /* expiration */, namespace + 2, 0x03)?;
-        let mut status = db.get_attestation_pool_status(9 /* expiration */, &KEYSTORE_UUID)?;
-        assert_eq!(status.expiring, 0);
-        assert_eq!(status.attested, 3);
-        assert_eq!(status.unassigned, 0);
-        assert_eq!(status.total, 3);
-        assert_eq!(
-            db.get_attestation_pool_status(15 /* expiration */, &KEYSTORE_UUID)?.expiring,
-            1
-        );
-        assert_eq!(
-            db.get_attestation_pool_status(25 /* expiration */, &KEYSTORE_UUID)?.expiring,
-            2
-        );
-        assert_eq!(
-            db.get_attestation_pool_status(60 /* expiration */, &KEYSTORE_UUID)?.expiring,
-            3
-        );
-        let public_key: Vec<u8> = vec![0x01, 0x02, 0x03];
-        let private_key: Vec<u8> = vec![0x04, 0x05, 0x06];
-        let raw_public_key: Vec<u8> = vec![0x07, 0x08, 0x09];
-        let cert_chain: Vec<u8> = vec![0x0a, 0x0b, 0x0c];
-        let batch_cert: Vec<u8> = vec![0x0d, 0x0e, 0x0f];
-        db.create_attestation_key_entry(
-            &public_key,
-            &raw_public_key,
-            &private_key,
-            &KEYSTORE_UUID,
-        )?;
-        status = db.get_attestation_pool_status(0 /* expiration */, &KEYSTORE_UUID)?;
-        assert_eq!(status.attested, 3);
-        assert_eq!(status.unassigned, 0);
-        assert_eq!(status.total, 4);
-        db.store_signed_attestation_certificate_chain(
-            &raw_public_key,
-            &batch_cert,
-            &cert_chain,
-            20,
-            &KEYSTORE_UUID,
-        )?;
-        status = db.get_attestation_pool_status(0 /* expiration */, &KEYSTORE_UUID)?;
-        assert_eq!(status.attested, 4);
-        assert_eq!(status.unassigned, 1);
-        assert_eq!(status.total, 4);
         Ok(())
     }
 
