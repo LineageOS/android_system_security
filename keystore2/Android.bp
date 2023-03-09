@@ -47,7 +47,7 @@ rust_defaults {
         "libkeystore2_crypto_rust",
         "libkeystore2_km_compat",
         "libkeystore2_selinux",
-        "libkeystore2_vintf_rust",
+        "libkeystore2_hal_names_rust",
         "liblazy_static",
         "liblibc",
         "liblog_event_list",
