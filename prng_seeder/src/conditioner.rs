@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{fs::File, io::Read, os::unix::io::AsRawFd};
+use std::{fs::File, io::Read};
 
 use anyhow::{ensure, Context, Result};
 use log::debug;
-use nix::fcntl::{fcntl, FcntlArg::F_SETFL, OFlag};
 use tokio::io::AsyncReadExt;
 
 use crate::drbg;
@@ -34,8 +33,6 @@ impl ConditionerBuilder {
         let mut et: drbg::Entropy = [0; drbg::ENTROPY_LEN];
         hwrng.read_exact(&mut et).context("hwrng.read_exact in new")?;
         let rg = drbg::Drbg::new(&et)?;
-        fcntl(hwrng.as_raw_fd(), F_SETFL(OFlag::O_NONBLOCK))
-            .context("setting O_NONBLOCK on hwrng")?;
         Ok(ConditionerBuilder { hwrng, rg })
     }
 
