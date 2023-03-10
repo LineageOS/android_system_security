@@ -279,7 +279,40 @@ pub fn list_key_entries(
     );
     result.sort_unstable();
     result.dedup();
-    Ok(result)
+
+    let mut items_to_return = 0;
+    let mut returned_bytes: usize = 0;
+    const RESPONSE_SIZE_LIMIT: usize = 358400;
+    // Estimate the transaction size to avoid returning more items than what
+    // could fit in a binder transaction.
+    for kd in result.iter() {
+        // 4 bytes for the Domain enum
+        // 8 bytes for the Namespace long.
+        returned_bytes += 4 + 8;
+        // Size of the alias string. Includes 4 bytes for length encoding.
+        if let Some(alias) = &kd.alias {
+            returned_bytes += 4 + alias.len();
+        }
+        // Size of the blob. Includes 4 bytes for length encoding.
+        if let Some(blob) = &kd.blob {
+            returned_bytes += 4 + blob.len();
+        }
+        // The binder transaction size limit is 1M. Empirical measurements show
+        // that the binder overhead is 60% (to be confirmed). So break after
+        // 350KB and return a partial list.
+        if returned_bytes > RESPONSE_SIZE_LIMIT {
+            log::warn!(
+                "Key descriptors list ({} items) may exceed binder \
+                       size, returning {} items est {} bytes.",
+                result.len(),
+                items_to_return,
+                returned_bytes
+            );
+            break;
+        }
+        items_to_return += 1;
+    }
+    Ok(result[..items_to_return].to_vec())
 }
 
 /// This module provides helpers for simplified use of the watchdog module.
