@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "credstore"
+#define LOG_TAG "rkpd_client"
 
 #include <atomic>
 
@@ -25,13 +25,10 @@
 #include <android/security/rkp/IRemoteProvisioning.h>
 #include <binder/IServiceManager.h>
 #include <binder/Status.h>
+#include <rkp/support/rkpd_client.h>
 #include <vintf/VintfObject.h>
 
-#include "RemotelyProvisionedKey.h"
-
-namespace android {
-namespace security {
-namespace identity {
+namespace android::security::rkp::support {
 namespace {
 
 using ::android::binder::Status;
@@ -45,6 +42,23 @@ using ::android::security::rkp::IRemoteProvisioning;
 using ::android::security::rkp::RemotelyProvisionedKey;
 
 constexpr const char* kRemoteProvisioningServiceName = "remote_provisioning";
+
+std::optional<std::string> getRpcId(const sp<IRemotelyProvisionedComponent>& rpc) {
+    RpcHardwareInfo rpcHwInfo;
+    Status status = rpc->getHardwareInfo(&rpcHwInfo);
+    if (!status.isOk()) {
+        LOG(ERROR) << "Error getting remotely provisioned component hardware info: " << status;
+        return std::nullopt;
+    }
+
+    if (!rpcHwInfo.uniqueId) {
+        LOG(ERROR) << "Remotely provisioned component is missing a unique id. "
+                   << "This is a bug in the vendor implementation.";
+        return std::nullopt;
+    }
+
+    return *rpcHwInfo.uniqueId;
+}
 
 std::optional<String16> findRpcNameById(std::string_view targetRpcId) {
     auto deviceManifest = vintf::VintfObject::GetDeviceHalManifest();
@@ -157,24 +171,6 @@ class GetRegistrationCallback : public BnGetRegistrationCallback {
 
 }  // namespace
 
-std::optional<std::string> getRpcId(const sp<IRemotelyProvisionedComponent>& rpc) {
-    RpcHardwareInfo rpcHwInfo;
-    Status status = rpc->getHardwareInfo(&rpcHwInfo);
-    if (!status.isOk()) {
-        LOG(ERROR) << "Error getting remotely provisioned component hardware info: " << status;
-        return std::nullopt;
-    }
-
-    if (!rpcHwInfo.uniqueId) {
-        LOG(ERROR) << "Remotely provisioned component is missing a unique id, which is "
-                   << "required for credential key remotely provisioned attestation keys. "
-                   << "This is a bug in the vendor implementation.";
-        return std::nullopt;
-    }
-
-    return *rpcHwInfo.uniqueId;
-}
-
 std::optional<std::future<std::optional<RemotelyProvisionedKey>>>
 getRpcKeyFuture(const sp<IRemotelyProvisionedComponent>& rpc, int32_t keyId) {
     std::promise<std::optional<RemotelyProvisionedKey>> keyPromise;
@@ -203,6 +199,21 @@ getRpcKeyFuture(const sp<IRemotelyProvisionedComponent>& rpc, int32_t keyId) {
     return keyFuture;
 }
 
-}  // namespace identity
-}  // namespace security
-}  // namespace android
+std::optional<RemotelyProvisionedKey> getRpcKey(const sp<IRemotelyProvisionedComponent>& rpc,
+                                                int32_t keyId, int32_t timeout_sec) {
+    auto rpcKeyFuture = getRpcKeyFuture(rpc, keyId);
+    if (!rpcKeyFuture) {
+        LOG(ERROR) << "Failed getRpcKeyFuture()";
+        return std::nullopt;
+    }
+
+    auto timeout = std::chrono::seconds(timeout_sec);
+    if (rpcKeyFuture->wait_for(timeout) != std::future_status::ready) {
+        LOG(ERROR) << "Waiting for remotely provisioned attestation key timed out";
+        return std::nullopt;
+    }
+
+    return rpcKeyFuture->get();
+}
+
+}  // namespace android::security::rkp::support

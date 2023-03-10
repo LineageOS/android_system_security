@@ -20,19 +20,20 @@
 #include <optional>
 
 #include <android/hardware/security/keymint/IRemotelyProvisionedComponent.h>
+#include <android/security/rkp/RemotelyProvisionedKey.h>
 
-namespace android {
-namespace security {
-namespace identity {
+namespace android::security::rkp::support {
 
 using ::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using ::android::security::rkp::RemotelyProvisionedKey;
 
-std::optional<std::string> getRpcId(const sp<IRemotelyProvisionedComponent>& rpc);
-
+// Callers of getRpcKeyFuture() and getRpcKey() need at least two threads to
+// retrieve the key, one to asynchronously handle binder callbacks and one to
+// wait on the future.
 std::optional<std::future<std::optional<RemotelyProvisionedKey>>>
 getRpcKeyFuture(const sp<IRemotelyProvisionedComponent>& rpc, int32_t keyId);
 
-}  // namespace identity
-}  // namespace security
-}  // namespace android
+std::optional<RemotelyProvisionedKey> getRpcKey(const sp<IRemotelyProvisionedComponent>& rpc,
+                                                int32_t keyId, int32_t timeout_sec = 10);
+
+}  // namespace android::security::rkp::support
