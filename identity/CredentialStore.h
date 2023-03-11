@@ -22,7 +22,6 @@
 
 #include <android/hardware/identity/IIdentityCredentialStore.h>
 #include <android/security/identity/BnCredentialStore.h>
-#include <android/security/rkp/IRemoteProvisioning.h>
 
 namespace android {
 namespace security {
