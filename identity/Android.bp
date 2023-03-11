@@ -51,6 +51,7 @@ cc_defaults {
         "liblog",
         "libutils",
         "libutilscallstack",
+        "libkeystore-attestation-application-id",
     ],
     static_libs: [
         "android.hardware.keymaster-V3-cpp",
@@ -60,7 +61,6 @@ cc_defaults {
         "libcppbor_external",
         "libcredstore_aidl",
         "libkeymaster4support",
-        "libkeystore-attestation-application-id",
         "librkp_support",
     ],
 }
