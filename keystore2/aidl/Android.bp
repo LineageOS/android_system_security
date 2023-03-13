@@ -103,28 +103,6 @@ aidl_interface {
 }
 
 aidl_interface {
-    name: "android.security.remoteprovisioning",
-    srcs: [ "android/security/remoteprovisioning/*.aidl" ],
-    imports: [
-        "android.hardware.security.keymint-V3",
-        "android.hardware.security.rkp-V3",
-    ],
-    unstable: true,
-    backend: {
-        java: {
-            platform_apis: true,
-        },
-        ndk: {
-            enabled: true,
-            apps_enabled: false,
-        },
-        rust: {
-            enabled: true,
-        },
-    },
-}
-
-aidl_interface {
     name: "android.security.maintenance",
     srcs: [ "android/security/maintenance/*.aidl" ],
     imports: [
