@@ -2987,32 +2987,50 @@ impl KeystoreDB {
         })
     }
 
-    /// Returns a list of KeyDescriptors in the selected domain/namespace.
+    /// Returns a list of KeyDescriptors in the selected domain/namespace whose
+    /// aliases are greater than the specified 'start_past_alias'. If no value
+    /// is provided, returns all KeyDescriptors.
     /// The key descriptors will have the domain, nspace, and alias field set.
+    /// The returned list will be sorted by alias.
     /// Domain must be APP or SELINUX, the caller must make sure of that.
-    pub fn list(
+    pub fn list_past_alias(
         &mut self,
         domain: Domain,
         namespace: i64,
         key_type: KeyType,
+        start_past_alias: Option<&str>,
     ) -> Result<Vec<KeyDescriptor>> {
-        let _wp = wd::watch_millis("KeystoreDB::list", 500);
+        let _wp = wd::watch_millis("KeystoreDB::list_past_alias", 500);
 
-        self.with_transaction(TransactionBehavior::Deferred, |tx| {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT alias FROM persistent.keyentry
+        let query = format!(
+            "SELECT DISTINCT alias FROM persistent.keyentry
                      WHERE domain = ?
                      AND namespace = ?
                      AND alias IS NOT NULL
                      AND state = ?
-                     AND key_type = ?;",
-                )
-                .context(ks_err!("Failed to prepare."))?;
+                     AND key_type = ?
+                     {}
+                     ORDER BY alias ASC;",
+            if start_past_alias.is_some() { " AND alias > ?" } else { "" }
+        );
 
-            let mut rows = stmt
-                .query(params![domain.0 as u32, namespace, KeyLifeCycle::Live, key_type])
-                .context(ks_err!("Failed to query."))?;
+        self.with_transaction(TransactionBehavior::Deferred, |tx| {
+            let mut stmt = tx.prepare(&query).context(ks_err!("Failed to prepare."))?;
+
+            let mut rows = match start_past_alias {
+                Some(past_alias) => stmt
+                    .query(params![
+                        domain.0 as u32,
+                        namespace,
+                        KeyLifeCycle::Live,
+                        key_type,
+                        past_alias
+                    ])
+                    .context(ks_err!("Failed to query."))?,
+                None => stmt
+                    .query(params![domain.0 as u32, namespace, KeyLifeCycle::Live, key_type,])
+                    .context(ks_err!("Failed to query."))?,
+            };
 
             let mut descriptors: Vec<KeyDescriptor> = Vec::new();
             db_utils::with_rows_extract_all(&mut rows, |row| {
@@ -3027,6 +3045,33 @@ impl KeystoreDB {
             .context(ks_err!("Failed to extract rows."))?;
             Ok(descriptors).no_gc()
         })
+    }
+
+    /// Returns a number of KeyDescriptors in the selected domain/namespace.
+    /// Domain must be APP or SELINUX, the caller must make sure of that.
+    pub fn count_keys(
+        &mut self,
+        domain: Domain,
+        namespace: i64,
+        key_type: KeyType,
+    ) -> Result<usize> {
+        let _wp = wd::watch_millis("KeystoreDB::countKeys", 500);
+
+        let num_keys = self.with_transaction(TransactionBehavior::Deferred, |tx| {
+            tx.query_row(
+                "SELECT COUNT(alias) FROM persistent.keyentry
+                     WHERE domain = ?
+                     AND namespace = ?
+                     AND alias IS NOT NULL
+                     AND state = ?
+                     AND key_type = ?;",
+                params![domain.0 as u32, namespace, KeyLifeCycle::Live, key_type],
+                |row| row.get(0),
+            )
+            .context(ks_err!("Failed to count number of keys."))
+            .no_gc()
+        })?;
+        Ok(num_keys)
     }
 
     /// Adds a grant to the grant table.
@@ -4920,7 +4965,7 @@ pub mod tests {
                 })
                 .collect();
             list_o_descriptors.sort();
-            let mut list_result = db.list(*domain, *namespace, KeyType::Client)?;
+            let mut list_result = db.list_past_alias(*domain, *namespace, KeyType::Client, None)?;
             list_result.sort();
             assert_eq!(list_o_descriptors, list_result);
 
@@ -4950,7 +4995,10 @@ pub mod tests {
             loaded_entries.sort_unstable();
             assert_eq!(list_o_ids, loaded_entries);
         }
-        assert_eq!(Vec::<KeyDescriptor>::new(), db.list(Domain::SELINUX, 101, KeyType::Client)?);
+        assert_eq!(
+            Vec::<KeyDescriptor>::new(),
+            db.list_past_alias(Domain::SELINUX, 101, KeyType::Client, None)?
+        );
 
         Ok(())
     }
@@ -5474,11 +5522,11 @@ pub mod tests {
         make_test_key_entry(&mut db, Domain::APP, 110000, TEST_ALIAS, None)?;
         db.unbind_keys_for_user(2, false)?;
 
-        assert_eq!(1, db.list(Domain::APP, 110000, KeyType::Client)?.len());
-        assert_eq!(0, db.list(Domain::APP, 210000, KeyType::Client)?.len());
+        assert_eq!(1, db.list_past_alias(Domain::APP, 110000, KeyType::Client, None)?.len());
+        assert_eq!(0, db.list_past_alias(Domain::APP, 210000, KeyType::Client, None)?.len());
 
         db.unbind_keys_for_user(1, true)?;
-        assert_eq!(0, db.list(Domain::APP, 110000, KeyType::Client)?.len());
+        assert_eq!(0, db.list_past_alias(Domain::APP, 110000, KeyType::Client, None)?.len());
 
         Ok(())
     }
