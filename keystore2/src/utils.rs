@@ -258,32 +258,49 @@ pub fn uid_to_android_user(uid: u32) -> u32 {
     rustutils::users::multiuser_get_user_id(uid)
 }
 
-/// List all key aliases for a given domain + namespace.
-pub fn list_key_entries(
-    db: &mut KeystoreDB,
-    domain: Domain,
-    namespace: i64,
-) -> Result<Vec<KeyDescriptor>> {
-    let mut result = Vec::new();
-    result.append(
-        &mut LEGACY_IMPORTER
-            .list_uid(domain, namespace)
-            .context(ks_err!("Trying to list legacy keys."))?,
-    );
-    result.append(
-        &mut db
-            .list(domain, namespace, KeyType::Client)
-            .context(ks_err!("Trying to list keystore database."))?,
-    );
+/// Merges and filters two lists of key descriptors. The first input list, legacy_descriptors,
+/// is assumed to not be sorted or filtered. As such, all key descriptors in that list whose
+/// alias is less than, or equal to, start_past_alias (if provided) will be removed.
+/// This list will then be merged with the second list, db_descriptors. The db_descriptors list
+/// is assumed to be sorted and filtered so the output list will be sorted prior to returning.
+/// The returned value is a list of KeyDescriptor objects whose alias is greater than
+/// start_past_alias, sorted and de-duplicated.
+fn merge_and_filter_key_entry_lists(
+    legacy_descriptors: &[KeyDescriptor],
+    db_descriptors: &[KeyDescriptor],
+    start_past_alias: Option<&str>,
+) -> Vec<KeyDescriptor> {
+    let mut result: Vec<KeyDescriptor> =
+        match start_past_alias {
+            Some(past_alias) => legacy_descriptors
+                .iter()
+                .filter(|kd| {
+                    if let Some(alias) = &kd.alias {
+                        alias.as_str() > past_alias
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .collect(),
+            None => legacy_descriptors.to_vec(),
+        };
+
+    result.extend_from_slice(db_descriptors);
     result.sort_unstable();
     result.dedup();
+    result
+}
 
+fn estimate_safe_amount_to_return(
+    key_descriptors: &[KeyDescriptor],
+    response_size_limit: usize,
+) -> usize {
     let mut items_to_return = 0;
     let mut returned_bytes: usize = 0;
-    const RESPONSE_SIZE_LIMIT: usize = 358400;
     // Estimate the transaction size to avoid returning more items than what
     // could fit in a binder transaction.
-    for kd in result.iter() {
+    for kd in key_descriptors.iter() {
         // 4 bytes for the Domain enum
         // 8 bytes for the Namespace long.
         returned_bytes += 4 + 8;
@@ -298,11 +315,11 @@ pub fn list_key_entries(
         // The binder transaction size limit is 1M. Empirical measurements show
         // that the binder overhead is 60% (to be confirmed). So break after
         // 350KB and return a partial list.
-        if returned_bytes > RESPONSE_SIZE_LIMIT {
+        if returned_bytes > response_size_limit {
             log::warn!(
                 "Key descriptors list ({} items) may exceed binder \
                        size, returning {} items est {} bytes.",
-                result.len(),
+                key_descriptors.len(),
                 items_to_return,
                 returned_bytes
             );
@@ -310,7 +327,47 @@ pub fn list_key_entries(
         }
         items_to_return += 1;
     }
-    Ok(result[..items_to_return].to_vec())
+    items_to_return
+}
+
+/// List all key aliases for a given domain + namespace. whose alias is greater
+/// than start_past_alias (if provided).
+pub fn list_key_entries(
+    db: &mut KeystoreDB,
+    domain: Domain,
+    namespace: i64,
+    start_past_alias: Option<&str>,
+) -> Result<Vec<KeyDescriptor>> {
+    let legacy_key_descriptors: Vec<KeyDescriptor> = LEGACY_IMPORTER
+        .list_uid(domain, namespace)
+        .context(ks_err!("Trying to list legacy keys."))?;
+
+    // The results from the database will be sorted and unique
+    let db_key_descriptors: Vec<KeyDescriptor> = db
+        .list_past_alias(domain, namespace, KeyType::Client, start_past_alias)
+        .context(ks_err!("Trying to list keystore database past alias."))?;
+
+    let merged_key_entries = merge_and_filter_key_entry_lists(
+        &legacy_key_descriptors,
+        &db_key_descriptors,
+        start_past_alias,
+    );
+
+    const RESPONSE_SIZE_LIMIT: usize = 358400;
+    let safe_amount_to_return =
+        estimate_safe_amount_to_return(&merged_key_entries, RESPONSE_SIZE_LIMIT);
+    Ok(merged_key_entries[..safe_amount_to_return].to_vec())
+}
+
+/// Count all key aliases for a given domain + namespace.
+pub fn count_key_entries(db: &mut KeystoreDB, domain: Domain, namespace: i64) -> Result<i32> {
+    let legacy_keys = LEGACY_IMPORTER
+        .list_uid(domain, namespace)
+        .context(ks_err!("Trying to list legacy keys."))?;
+
+    let num_keys_in_db = db.count_keys(domain, namespace, KeyType::Client)?;
+
+    Ok((legacy_keys.len() + num_keys_in_db) as i32)
 }
 
 /// This module provides helpers for simplified use of the watchdog module.
@@ -406,5 +463,85 @@ mod tests {
                 _ => Err(error),
             }
         })
+    }
+
+    fn create_key_descriptors_from_aliases(key_aliases: &[&str]) -> Vec<KeyDescriptor> {
+        key_aliases
+            .iter()
+            .map(|key_alias| KeyDescriptor {
+                domain: Domain::APP,
+                nspace: 0,
+                alias: Some(key_alias.to_string()),
+                blob: None,
+            })
+            .collect::<Vec<KeyDescriptor>>()
+    }
+
+    fn aliases_from_key_descriptors(key_descriptors: &[KeyDescriptor]) -> Vec<String> {
+        key_descriptors
+            .iter()
+            .map(
+                |kd| {
+                    if let Some(alias) = &kd.alias {
+                        String::from(alias)
+                    } else {
+                        String::from("")
+                    }
+                },
+            )
+            .collect::<Vec<String>>()
+    }
+
+    #[test]
+    fn test_safe_amount_to_return() -> Result<()> {
+        let key_aliases = vec!["key1", "key2", "key3"];
+        let key_descriptors = create_key_descriptors_from_aliases(&key_aliases);
+
+        assert_eq!(estimate_safe_amount_to_return(&key_descriptors, 20), 1);
+        assert_eq!(estimate_safe_amount_to_return(&key_descriptors, 50), 2);
+        assert_eq!(estimate_safe_amount_to_return(&key_descriptors, 100), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_and_sort_lists_without_filtering() -> Result<()> {
+        let legacy_key_aliases = vec!["key_c", "key_a", "key_b"];
+        let legacy_key_descriptors = create_key_descriptors_from_aliases(&legacy_key_aliases);
+        let db_key_aliases = vec!["key_a", "key_d"];
+        let db_key_descriptors = create_key_descriptors_from_aliases(&db_key_aliases);
+        let result =
+            merge_and_filter_key_entry_lists(&legacy_key_descriptors, &db_key_descriptors, None);
+        assert_eq!(aliases_from_key_descriptors(&result), vec!["key_a", "key_b", "key_c", "key_d"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_and_sort_lists_with_filtering() -> Result<()> {
+        let legacy_key_aliases = vec!["key_f", "key_a", "key_e", "key_b"];
+        let legacy_key_descriptors = create_key_descriptors_from_aliases(&legacy_key_aliases);
+        let db_key_aliases = vec!["key_c", "key_g"];
+        let db_key_descriptors = create_key_descriptors_from_aliases(&db_key_aliases);
+        let result = merge_and_filter_key_entry_lists(
+            &legacy_key_descriptors,
+            &db_key_descriptors,
+            Some("key_b"),
+        );
+        assert_eq!(aliases_from_key_descriptors(&result), vec!["key_c", "key_e", "key_f", "key_g"]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_and_sort_lists_with_filtering_and_dups() -> Result<()> {
+        let legacy_key_aliases = vec!["key_f", "key_a", "key_e", "key_b"];
+        let legacy_key_descriptors = create_key_descriptors_from_aliases(&legacy_key_aliases);
+        let db_key_aliases = vec!["key_d", "key_e", "key_g"];
+        let db_key_descriptors = create_key_descriptors_from_aliases(&db_key_aliases);
+        let result = merge_and_filter_key_entry_lists(
+            &legacy_key_descriptors,
+            &db_key_descriptors,
+            Some("key_c"),
+        );
+        assert_eq!(aliases_from_key_descriptors(&result), vec!["key_d", "key_e", "key_f", "key_g"]);
+        Ok(())
     }
 }
