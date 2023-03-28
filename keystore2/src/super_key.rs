@@ -683,33 +683,6 @@ impl SuperKeyManager {
         Ok((encrypted_key, metadata))
     }
 
-    // Encrypt the given key blob with the user's super key, if the super key exists and the device
-    // is unlocked. If the super key exists and the device is locked, or LSKF is not setup,
-    // return error. Note that it is out of the scope of this function to check if super encryption
-    // is required. Such check should be performed before calling this function.
-    fn super_encrypt_on_key_init(
-        &self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        key_blob: &[u8],
-    ) -> Result<(Vec<u8>, BlobMetaData)> {
-        match self
-            .get_user_state(db, legacy_importer, user_id)
-            .context(ks_err!("Failed to get user state."))?
-        {
-            UserState::LskfUnlocked(super_key) => {
-                Self::encrypt_with_aes_super_key(key_blob, &super_key)
-                    .context(ks_err!("Failed to encrypt the key."))
-            }
-            UserState::LskfLocked => {
-                Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
-            }
-            UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
-                .context(ks_err!("LSKF is not setup for the user.")),
-        }
-    }
-
     // Helper function to encrypt a key with the given super key. Callers should select which super
     // key to be used. This is called when a key is super encrypted at its creation as well as at
     // its upgrade.
@@ -744,9 +717,25 @@ impl SuperKeyManager {
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         match Enforcements::super_encryption_required(domain, key_parameters, flags) {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
-            SuperEncryptionType::LskfBound => self
-                .super_encrypt_on_key_init(db, legacy_importer, user_id, key_blob)
-                .context(ks_err!("Failed to super encrypt with LskfBound key.")),
+            SuperEncryptionType::LskfBound => {
+                // Encrypt the given key blob with the user's per-boot super key, if the per-boot
+                // super key is available.  If the device is boot-locked or the LSKF is not setup,
+                // an error is returned.
+                match self
+                    .get_user_state(db, legacy_importer, user_id)
+                    .context(ks_err!("Failed to get user state."))?
+                {
+                    UserState::LskfUnlocked(super_key) => {
+                        Self::encrypt_with_aes_super_key(key_blob, &super_key)
+                            .context(ks_err!("Failed to encrypt with LskfBound key."))
+                    }
+                    UserState::LskfLocked => {
+                        Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
+                    }
+                    UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
+                        .context(ks_err!("LSKF is not setup for the user.")),
+                }
+            }
             SuperEncryptionType::ScreenLockBound => {
                 let entry =
                     self.data.user_keys.get(&user_id).and_then(|e| e.screen_lock_bound.as_ref());
