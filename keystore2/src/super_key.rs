@@ -552,57 +552,6 @@ impl SuperKeyManager {
         }
     }
 
-    /// Checks if user has already setup LSKF (i.e. a super key is persisted in the database or the
-    /// legacy database). If so, return LskfLocked state.
-    /// If the password is provided, generate a new super key, encrypt with the password,
-    /// store in the database and populate the super key cache for the new user
-    /// and return LskfUnlocked state.
-    /// If the password is not provided, return Uninitialized state.
-    pub fn check_and_initialize_super_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        pw: Option<&Password>,
-    ) -> Result<UserState> {
-        let super_key_exists_in_db = self
-            .super_key_exists_in_db_for_user(db, legacy_importer, user_id)
-            .context(ks_err!("Failed to check if super key exists."))?;
-        if super_key_exists_in_db {
-            Ok(UserState::LskfLocked)
-        } else if let Some(pw) = pw {
-            // Generate a new super key.
-            let super_key =
-                generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?;
-            // Derive an AES256 key from the password and re-encrypt the super key
-            // before we insert it in the database.
-            let (encrypted_super_key, blob_metadata) =
-                Self::encrypt_with_password(&super_key, pw).context(ks_err!())?;
-
-            let key_entry = db
-                .store_super_key(
-                    user_id,
-                    &USER_SUPER_KEY,
-                    &encrypted_super_key,
-                    &blob_metadata,
-                    &KeyMetaData::new(),
-                )
-                .context(ks_err!("Failed to store super key."))?;
-
-            let super_key = self
-                .populate_cache_from_super_key_blob(
-                    user_id,
-                    USER_SUPER_KEY.algorithm,
-                    key_entry,
-                    pw,
-                )
-                .context(ks_err!())?;
-            Ok(UserState::LskfUnlocked(super_key))
-        } else {
-            Ok(UserState::Uninitialized)
-        }
-    }
-
     // Helper function to populate super key cache from the super key blob loaded from the database.
     fn populate_cache_from_super_key_blob(
         &mut self,
@@ -1103,43 +1052,97 @@ impl SuperKeyManager {
         }
     }
 
-    /// If the given user is unlocked:
-    /// * and `password` is None, the user is reset, all authentication bound keys are deleted and
-    ///   `Ok(UserState::Uninitialized)` is returned.
-    /// * and `password` is Some, `Ok(UserState::LskfUnlocked)` is returned.
-    /// If the given user is locked:
-    /// * and the user was initialized before, `Ok(UserState::Locked)` is returned.
-    /// * and the user was not initialized before:
-    ///   * and `password` is None, `Ok(Uninitialized)` is returned.
-    ///   * and `password` is Some, super keys are generated and `Ok(UserState::LskfUnlocked)` is
-    ///     returned.
-    pub fn reset_or_init_user_and_get_user_state(
+    /// Deletes all keys and super keys for the given user.
+    /// This is called when a user is deleted.
+    pub fn remove_user(
         &mut self,
         db: &mut KeystoreDB,
         legacy_importer: &LegacyImporter,
         user_id: UserId,
-        password: Option<&Password>,
-    ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(_) if password.is_none() => {
-                // Transitioning to swiping, delete only the super key in database and cache,
-                // and super-encrypted keys in database (and in KM).
-                self.reset_user(db, legacy_importer, user_id, true)
-                    .context(ks_err!("Trying to delete keys from the db."))?;
-                // Lskf is now removed in Keystore.
-                Ok(UserState::Uninitialized)
+    ) -> Result<()> {
+        // Mark keys created on behalf of the user as unreferenced.
+        legacy_importer
+            .bulk_delete_user(user_id, false)
+            .context(ks_err!("Trying to delete legacy keys."))?;
+        db.unbind_keys_for_user(user_id, false).context(ks_err!("Error in unbinding keys."))?;
+
+        // Delete super key in cache, if exists.
+        self.forget_all_keys_for_user(user_id);
+        Ok(())
+    }
+
+    /// Deletes all authentication bound keys and super keys for the given user.  The user must be
+    /// unlocked before this function is called.  This function is used to transition a user to
+    /// swipe.
+    pub fn reset_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+    ) -> Result<()> {
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::Uninitialized => {
+                Err(Error::sys()).context(ks_err!("Tried to reset an uninitialized user!"))
             }
-            Some(super_key) => {
-                // Keystore won't be notified when changing to a new password when LSKF is
-                // already setup. Therefore, ideally this path wouldn't be reached.
-                Ok(UserState::LskfUnlocked(super_key))
+            UserState::LskfLocked => {
+                Err(Error::sys()).context(ks_err!("Tried to reset a locked user's password!"))
             }
-            None => {
-                // Check if a super key exists in the database or legacy database.
-                // If so, return LskfLocked state.
-                // Otherwise, i) if the password is provided, initialize the super key and return
-                // LskfUnlocked state ii) if password is not provided, return Uninitialized state.
-                self.check_and_initialize_super_key(db, legacy_importer, user_id, password)
+            UserState::LskfUnlocked(_) => {
+                // Mark keys created on behalf of the user as unreferenced.
+                legacy_importer
+                    .bulk_delete_user(user_id, true)
+                    .context(ks_err!("Trying to delete legacy keys."))?;
+                db.unbind_keys_for_user(user_id, true)
+                    .context(ks_err!("Error in unbinding keys."))?;
+
+                // Delete super key in cache, if exists.
+                self.forget_all_keys_for_user(user_id);
+                Ok(())
+            }
+        }
+    }
+
+    /// If the user hasn't been initialized yet, then this function generates the user's super keys
+    /// and sets the user's state to LskfUnlocked.  Otherwise this function returns an error.
+    pub fn init_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+        password: &Password,
+    ) -> Result<()> {
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::LskfUnlocked(_) | UserState::LskfLocked => {
+                Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"))
+            }
+            UserState::Uninitialized => {
+                // Generate a new super key.
+                let super_key =
+                    generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?;
+                // Derive an AES256 key from the password and re-encrypt the super key
+                // before we insert it in the database.
+                let (encrypted_super_key, blob_metadata) =
+                    Self::encrypt_with_password(&super_key, password)
+                        .context(ks_err!("Failed to encrypt super key with password!"))?;
+
+                let key_entry = db
+                    .store_super_key(
+                        user_id,
+                        &USER_SUPER_KEY,
+                        &encrypted_super_key,
+                        &blob_metadata,
+                        &KeyMetaData::new(),
+                    )
+                    .context(ks_err!("Failed to store super key."))?;
+
+                self.populate_cache_from_super_key_blob(
+                    user_id,
+                    USER_SUPER_KEY.algorithm,
+                    key_entry,
+                    password,
+                )
+                .context(ks_err!("Failed to initialize user!"))?;
+                Ok(())
             }
         }
     }
@@ -1168,28 +1171,6 @@ impl SuperKeyManager {
                     .context(ks_err!("Failed to unlock super key."))
             }
         }
-    }
-
-    /// Delete all the keys created on behalf of the user.
-    /// If 'keep_non_super_encrypted_keys' is set to true, delete only the super key and super
-    /// encrypted keys.
-    pub fn reset_user(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        keep_non_super_encrypted_keys: bool,
-    ) -> Result<()> {
-        // Mark keys created on behalf of the user as unreferenced.
-        legacy_importer
-            .bulk_delete_user(user_id, keep_non_super_encrypted_keys)
-            .context(ks_err!("Trying to delete legacy keys."))?;
-        db.unbind_keys_for_user(user_id, keep_non_super_encrypted_keys)
-            .context(ks_err!("Error in unbinding keys."))?;
-
-        // Delete super key in cache, if exists.
-        self.forget_all_keys_for_user(user_id);
-        Ok(())
     }
 }
 

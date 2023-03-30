@@ -83,26 +83,24 @@ impl Maintenance {
             .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
         }
 
-        match DB
-            .with(|db| {
-                skm.reset_or_init_user_and_get_user_state(
-                    &mut db.borrow_mut(),
-                    &LEGACY_IMPORTER,
-                    user_id as u32,
-                    password.as_ref(),
-                )
-            })
-            .context(ks_err!())?
+        if let UserState::LskfLocked = DB
+            .with(|db| skm.get_user_state(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32))
+            .context(ks_err!("Could not get user state while changing password!"))?
         {
-            UserState::LskfLocked => {
-                // Error - password can not be changed when the device is locked
-                Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
-            }
-            _ => {
-                // LskfLocked is the only error case for password change
-                Ok(())
-            }
+            // Error - password can not be changed when the device is locked
+            return Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."));
         }
+
+        DB.with(|db| match password {
+            Some(pass) => {
+                skm.init_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32, &pass)
+            }
+            None => {
+                // User transitioned to swipe.
+                skm.reset_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32)
+            }
+        })
+        .context(ks_err!("Failed to change user password!"))
     }
 
     fn add_or_remove_user(&self, user_id: i32) -> Result<()> {
@@ -111,11 +109,10 @@ impl Maintenance {
         check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
 
         DB.with(|db| {
-            SUPER_KEY.write().unwrap().reset_user(
+            SUPER_KEY.write().unwrap().remove_user(
                 &mut db.borrow_mut(),
                 &LEGACY_IMPORTER,
                 user_id as u32,
-                false,
             )
         })
         .context(ks_err!("Trying to delete keys from db."))?;
