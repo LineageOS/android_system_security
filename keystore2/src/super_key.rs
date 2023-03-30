@@ -702,6 +702,50 @@ impl SuperKeyManager {
         Ok((encrypted_key, metadata))
     }
 
+    // Encrypts a given key_blob using a hybrid approach, which can either use the symmetric super
+    // key or the public super key depending on which is available.
+    //
+    // If the symmetric_key is available, the key_blob is encrypted using symmetric encryption with
+    // the provided symmetric super key.  Otherwise, the function loads the public super key from
+    // the KeystoreDB and encrypts the key_blob using ECDH encryption and marks the keyblob to be
+    // re-encrypted with the symmetric super key on the first use.
+    //
+    // This hybrid scheme allows lock-screen-bound keys to be added when the screen is locked.
+    fn encrypt_with_hybrid_super_key(
+        key_blob: &[u8],
+        symmetric_key: Option<&SuperKey>,
+        public_key_type: &SuperKeyType,
+        db: &mut KeystoreDB,
+        user_id: UserId,
+    ) -> Result<(Vec<u8>, BlobMetaData)> {
+        if let Some(super_key) = symmetric_key {
+            Self::encrypt_with_aes_super_key(key_blob, super_key)
+                .context(ks_err!("Failed to encrypt with ScreenLockBound super key."))
+        } else {
+            // Symmetric key is not available, use public key encryption
+            let loaded = db
+                .load_super_key(public_key_type, user_id)
+                .context(ks_err!("load_super_key failed."))?;
+            let (key_id_guard, key_entry) =
+                loaded.ok_or_else(Error::sys).context(ks_err!("User ECDH super key missing."))?;
+            let public_key = key_entry
+                .metadata()
+                .sec1_public_key()
+                .ok_or_else(Error::sys)
+                .context(ks_err!("sec1_public_key missing."))?;
+            let mut metadata = BlobMetaData::new();
+            let (ephem_key, salt, iv, encrypted_key, aead_tag) =
+                ECDHPrivateKey::encrypt_message(public_key, key_blob)
+                    .context(ks_err!("ECDHPrivateKey::encrypt_message failed."))?;
+            metadata.add(BlobMetaEntry::PublicKey(ephem_key));
+            metadata.add(BlobMetaEntry::Salt(salt));
+            metadata.add(BlobMetaEntry::Iv(iv));
+            metadata.add(BlobMetaEntry::AeadTag(aead_tag));
+            SuperKeyIdentifier::DatabaseId(key_id_guard.id()).add_to_metadata(&mut metadata);
+            Ok((encrypted_key, metadata))
+        }
+    }
+
     /// Check if super encryption is required and if so, super-encrypt the key to be stored in
     /// the database.
     #[allow(clippy::too_many_arguments)]
@@ -737,35 +781,20 @@ impl SuperKeyManager {
                 }
             }
             SuperEncryptionType::ScreenLockBound => {
-                let entry =
-                    self.data.user_keys.get(&user_id).and_then(|e| e.screen_lock_bound.as_ref());
-                if let Some(super_key) = entry {
-                    Self::encrypt_with_aes_super_key(key_blob, super_key)
-                        .context(ks_err!("Failed to encrypt with ScreenLockBound key."))
-                } else {
-                    // Symmetric key is not available, use public key encryption
-                    let loaded = db
-                        .load_super_key(&USER_SCREEN_LOCK_BOUND_P521_KEY, user_id)
-                        .context(ks_err!("load_super_key failed."))?;
-                    let (key_id_guard, key_entry) =
-                        loaded.ok_or_else(Error::sys).context(ks_err!("User ECDH key missing."))?;
-                    let public_key = key_entry
-                        .metadata()
-                        .sec1_public_key()
-                        .ok_or_else(Error::sys)
-                        .context(ks_err!("sec1_public_key missing."))?;
-                    let mut metadata = BlobMetaData::new();
-                    let (ephem_key, salt, iv, encrypted_key, aead_tag) =
-                        ECDHPrivateKey::encrypt_message(public_key, key_blob)
-                            .context(ks_err!("ECDHPrivateKey::encrypt_message failed."))?;
-                    metadata.add(BlobMetaEntry::PublicKey(ephem_key));
-                    metadata.add(BlobMetaEntry::Salt(salt));
-                    metadata.add(BlobMetaEntry::Iv(iv));
-                    metadata.add(BlobMetaEntry::AeadTag(aead_tag));
-                    SuperKeyIdentifier::DatabaseId(key_id_guard.id())
-                        .add_to_metadata(&mut metadata);
-                    Ok((encrypted_key, metadata))
-                }
+                let screen_lock_bound_symmetric_key = self
+                    .data
+                    .user_keys
+                    .get(&user_id)
+                    .and_then(|e| e.screen_lock_bound.as_ref())
+                    .map(|arc| arc.as_ref());
+                Self::encrypt_with_hybrid_super_key(
+                    key_blob,
+                    screen_lock_bound_symmetric_key,
+                    &USER_SCREEN_LOCK_BOUND_P521_KEY,
+                    db,
+                    user_id,
+                )
+                .context(ks_err!("Failed to encrypt with ScreenLockBound hybrid scheme."))
             }
             SuperEncryptionType::BootLevel(level) => {
                 let key_id = SuperKeyIdentifier::BootLevel(level);
