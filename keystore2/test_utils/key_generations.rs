@@ -299,6 +299,9 @@ pub enum Error {
     /// Error code to indicate error in ASN.1 DER-encoded data creation.
     #[error("Failed to create and encode ASN.1 data.")]
     DerEncodeFailed,
+    /// Error code to indicate error while using keystore-engine API.
+    #[error("Failed to perform crypto op using keystore-engine APIs.")]
+    Keystore2EngineOpFailed,
 }
 
 /// Keystore2 error mapping.
