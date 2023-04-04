@@ -480,32 +480,6 @@ impl SuperKeyManager {
         }
     }
 
-    /// Checks if user has already setup LSKF (i.e. a super key is persisted in the database or the
-    /// legacy database). If not, return Uninitialized state.
-    /// Otherwise, decrypt the super key from the password and return LskfUnlocked state.
-    pub fn check_and_unlock_super_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        pw: &Password,
-    ) -> Result<UserState> {
-        let alias = &USER_SUPER_KEY;
-        let result = legacy_importer
-            .with_try_import_super_key(user_id, pw, || db.load_super_key(alias, user_id))
-            .context(ks_err!("Failed to load super key"))?;
-
-        match result {
-            Some((_, entry)) => {
-                let super_key = self
-                    .populate_cache_from_super_key_blob(user_id, alias.algorithm, entry, pw)
-                    .context(ks_err!())?;
-                Ok(UserState::LskfUnlocked(super_key))
-            }
-            None => Ok(UserState::Uninitialized),
-        }
-    }
-
     // Helper function to populate super key cache from the super key blob loaded from the database.
     fn populate_cache_from_super_key_blob(
         &mut self,
@@ -665,9 +639,8 @@ impl SuperKeyManager {
         match Enforcements::super_encryption_required(domain, key_parameters, flags) {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
             SuperEncryptionType::LskfBound => {
-                // Encrypt the given key blob with the user's per-boot super key, if the per-boot
-                // super key is available.  If the device is boot-locked or the LSKF is not setup,
-                // an error is returned.
+                // Encrypt the given key blob with the user's per-boot super key.  If the per-boot
+                // super key is not unlocked or the LSKF is not setup, an error is returned.
                 match self
                     .get_user_state(db, legacy_importer, user_id)
                     .context(ks_err!("Failed to get user state."))?
@@ -1101,28 +1074,50 @@ impl SuperKeyManager {
         }
     }
 
-    /// Unlocks the given user with the given password. If the key was already unlocked or unlocking
-    /// was successful, `Ok(UserState::LskfUnlocked)` is returned.
-    /// If the user was never initialized `Ok(UserState::Uninitialized)` is returned.
-    pub fn unlock_and_get_user_state(
+    /// Unlocks the given user with the given password.
+    ///
+    /// If the user is LskfLocked:
+    /// - Unlock the per_boot super key
+    /// - Unlock the screen_lock_bound super key
+    ///
+    /// If the user is LskfUnlocked:
+    /// - Unlock the screen_lock_bound super key only
+    ///
+    pub fn unlock_user(
         &mut self,
         db: &mut KeystoreDB,
         legacy_importer: &LegacyImporter,
         user_id: UserId,
         password: &Password,
-    ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(super_key) => {
-                log::info!("Trying to unlock when already unlocked.");
-                Ok(UserState::LskfUnlocked(super_key))
+    ) -> Result<()> {
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::LskfUnlocked(_) => self.unlock_screen_lock_bound_key(db, user_id, password),
+            UserState::Uninitialized => {
+                Err(Error::sys()).context(ks_err!("Tried to unlock an uninitialized user!"))
             }
-            None => {
-                // Check if a super key exists in the database or legacy database.
-                // If not, return Uninitialized state.
-                // Otherwise, try to unlock the super key and if successful,
-                // return LskfUnlocked.
-                self.check_and_unlock_super_key(db, legacy_importer, user_id, password)
-                    .context(ks_err!("Failed to unlock super key."))
+            UserState::LskfLocked => {
+                let alias = &USER_SUPER_KEY;
+                let result = legacy_importer
+                    .with_try_import_super_key(user_id, password, || {
+                        db.load_super_key(alias, user_id)
+                    })
+                    .context(ks_err!("Failed to load super key"))?;
+
+                match result {
+                    Some((_, entry)) => {
+                        self.populate_cache_from_super_key_blob(
+                            user_id,
+                            alias.algorithm,
+                            entry,
+                            password,
+                        )
+                        .context(ks_err!("Failed when unlocking user."))?;
+                        self.unlock_screen_lock_bound_key(db, user_id, password)
+                    }
+                    None => {
+                        Err(Error::sys()).context(ks_err!("Locked user does not have a super key!"))
+                    }
+                }
             }
         }
     }

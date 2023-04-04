@@ -19,7 +19,6 @@ use crate::error::Error as KeystoreError;
 use crate::error::anyhow_error_to_cstring;
 use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_IMPORTER};
 use crate::permission::KeystorePerm;
-use crate::super_key::UserState;
 use crate::utils::{check_keystore_permission, watchdog as wd};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken,
@@ -158,31 +157,14 @@ impl AuthorizationManager {
                 let mut skm = SUPER_KEY.write().unwrap();
 
                 DB.with(|db| {
-                    skm.unlock_screen_lock_bound_key(
+                    skm.unlock_user(
                         &mut db.borrow_mut(),
+                        &LEGACY_IMPORTER,
                         user_id as u32,
                         &password,
                     )
                 })
-                .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
-
-                // Unlock super key.
-                if let UserState::Uninitialized = DB
-                    .with(|db| {
-                        skm.unlock_and_get_user_state(
-                            &mut db.borrow_mut(),
-                            &LEGACY_IMPORTER,
-                            user_id as u32,
-                            &password,
-                        )
-                    })
-                    .context(ks_err!("Unlock with password."))?
-                {
-                    log::info!(
-                        "In on_lock_screen_event. Trying to unlock when LSKF is uninitialized."
-                    );
-                }
-
+                .context(ks_err!("Unlock with password."))?;
                 Ok(())
             }
             (LockScreenEvent::UNLOCK, None) => {
