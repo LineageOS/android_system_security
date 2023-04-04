@@ -26,7 +26,6 @@ use crate::{
     error::ResponseCode,
     key_parameter::{KeyParameter, KeyParameterValue},
     ks_err,
-    legacy_blob::LegacyBlobLoader,
     legacy_importer::LegacyImporter,
     raw_device::KeyMintDevice,
     utils::{watchdog as wd, AesGcm, AID_KEYSTORE},
@@ -398,51 +397,6 @@ impl SuperKeyManager {
 
     fn get_per_boot_key_by_user_id_internal(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
         self.data.user_keys.get(&user_id).and_then(|e| e.per_boot.as_ref().cloned())
-    }
-
-    /// This function unlocks the super keys for a given user.
-    /// This means the key is loaded from the database, decrypted and placed in the
-    /// super key cache. If there is no such key a new key is created, encrypted with
-    /// a key derived from the given password and stored in the database.
-    pub fn unlock_user_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        user: UserId,
-        pw: &Password,
-        legacy_blob_loader: &LegacyBlobLoader,
-    ) -> Result<()> {
-        let (_, entry) = db
-            .get_or_create_key_with(
-                Domain::APP,
-                user as u64 as i64,
-                USER_SUPER_KEY.alias,
-                crate::database::KEYSTORE_UUID,
-                || {
-                    // For backward compatibility we need to check if there is a super key present.
-                    let super_key = legacy_blob_loader
-                        .load_super_key(user, pw)
-                        .context(ks_err!("Failed to load legacy key blob."))?;
-                    let super_key = match super_key {
-                        None => {
-                            // No legacy file was found. So we generate a new key.
-                            generate_aes256_key()
-                                .context(ks_err!("Failed to generate AES 256 key."))?
-                        }
-                        Some(key) => key,
-                    };
-                    // Regardless of whether we loaded an old AES128 key or generated a new AES256
-                    // key as the super key, we derive a AES256 key from the password and re-encrypt
-                    // the super key before we insert it in the database. The length of the key is
-                    // preserved by the encryption so we don't need any extra flags to inform us
-                    // which algorithm to use it with.
-                    Self::encrypt_with_password(&super_key, pw).context("In create_new_key.")
-                },
-            )
-            .context(ks_err!("Failed to get key id."))?;
-
-        self.populate_cache_from_super_key_blob(user, USER_SUPER_KEY.algorithm, entry, pw)
-            .context(ks_err!())?;
-        Ok(())
     }
 
     /// Check if a given key is super-encrypted, from its metadata. If so, unwrap the key using
