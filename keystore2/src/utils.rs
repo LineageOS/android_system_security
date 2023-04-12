@@ -23,6 +23,8 @@ use crate::permission::{KeyPerm, KeyPermSet, KeystorePerm};
 use crate::{
     database::{KeyType, KeystoreDB},
     globals::LEGACY_IMPORTER,
+    km_compat,
+    raw_device::KeyMintDevice,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, KeyCharacteristics::KeyCharacteristics,
@@ -163,13 +165,9 @@ pub fn key_characteristics_to_internal(
         .collect()
 }
 
-/// This function can be used to upgrade key blobs on demand. The return value of
-/// `km_op` is inspected and if ErrorCode::KEY_REQUIRES_UPGRADE is encountered,
-/// an attempt is made to upgrade the key blob. On success `new_blob_handler` is called
-/// with the upgraded blob as argument. Then `km_op` is called a second time with the
-/// upgraded blob as argument. On success a tuple of the `km_op`s result and the
-/// optional upgraded blob is returned.
-pub fn upgrade_keyblob_if_required_with<T, KmOp, NewBlobHandler>(
+/// Upgrade a keyblob then invoke both the `new_blob_handler` and the `km_op` closures.  On success
+/// a tuple of the `km_op`s result and the optional upgraded blob is returned.
+fn upgrade_keyblob_and_perform_op<T, KmOp, NewBlobHandler>(
     km_dev: &dyn IKeyMintDevice,
     key_blob: &[u8],
     upgrade_params: &[KmKeyParameter],
@@ -180,22 +178,75 @@ where
     KmOp: Fn(&[u8]) -> Result<T, Error>,
     NewBlobHandler: FnOnce(&[u8]) -> Result<()>,
 {
+    let upgraded_blob = {
+        let _wp = watchdog::watch_millis(
+            "In utils::upgrade_keyblob_and_perform_op: calling upgradeKey.",
+            500,
+        );
+        map_km_error(km_dev.upgradeKey(key_blob, upgrade_params))
+    }
+    .context(ks_err!("Upgrade failed."))?;
+
+    new_blob_handler(&upgraded_blob).context(ks_err!("calling new_blob_handler."))?;
+
+    km_op(&upgraded_blob)
+        .map(|v| (v, Some(upgraded_blob)))
+        .context(ks_err!("Calling km_op after upgrade."))
+}
+
+/// This function can be used to upgrade key blobs on demand. The return value of
+/// `km_op` is inspected and if ErrorCode::KEY_REQUIRES_UPGRADE is encountered,
+/// an attempt is made to upgrade the key blob. On success `new_blob_handler` is called
+/// with the upgraded blob as argument. Then `km_op` is called a second time with the
+/// upgraded blob as argument. On success a tuple of the `km_op`s result and the
+/// optional upgraded blob is returned.
+pub fn upgrade_keyblob_if_required_with<T, KmOp, NewBlobHandler>(
+    km_dev: &dyn IKeyMintDevice,
+    km_dev_version: i32,
+    key_blob: &[u8],
+    upgrade_params: &[KmKeyParameter],
+    km_op: KmOp,
+    new_blob_handler: NewBlobHandler,
+) -> Result<(T, Option<Vec<u8>>)>
+where
+    KmOp: Fn(&[u8]) -> Result<T, Error>,
+    NewBlobHandler: FnOnce(&[u8]) -> Result<()>,
+{
     match km_op(key_blob) {
-        Err(Error::Km(ErrorCode::KEY_REQUIRES_UPGRADE)) => {
-            let upgraded_blob = {
-                let _wp = watchdog::watch_millis(
-                    "In utils::upgrade_keyblob_if_required_with: calling upgradeKey.",
-                    500,
-                );
-                map_km_error(km_dev.upgradeKey(key_blob, upgrade_params))
-            }
-            .context(ks_err!("Upgrade failed."))?;
-
-            new_blob_handler(&upgraded_blob).context(ks_err!("calling new_blob_handler."))?;
-
-            km_op(&upgraded_blob)
-                .map(|v| (v, Some(upgraded_blob)))
-                .context(ks_err!("Calling km_op after upgrade."))
+        Err(Error::Km(ErrorCode::KEY_REQUIRES_UPGRADE)) => upgrade_keyblob_and_perform_op(
+            km_dev,
+            key_blob,
+            upgrade_params,
+            km_op,
+            new_blob_handler,
+        ),
+        // Some devices have been known to upgrade their Keymaster device to be a KeyMint
+        // device with a new release of Android.  If this is the case, then any pre-upgrade
+        // keyblobs will have the km_compat prefix attached to them.
+        //
+        // This prefix gets stripped by the km_compat layer when used pre-upgrade, but after
+        // the upgrade the keyblob will be passed as-is to the KeyMint device, which probably
+        // won't expect to see the km_compat prefix.
+        //
+        // So if a keyblob:
+        //   a) gets rejected with INVALID_KEY_BLOB
+        //   b) when sent to a KeyMint (not km_compat) device
+        //   c) and has the km_compat magic prefix
+        //   d) and was not a software-emulated key pre-upgrade
+        // then strip the prefix and attempt a key upgrade.
+        Err(Error::Km(ErrorCode::INVALID_KEY_BLOB))
+            if km_dev_version >= KeyMintDevice::KEY_MINT_V1
+                && key_blob.starts_with(km_compat::KEYMASTER_BLOB_HW_PREFIX) =>
+        {
+            log::info!("found apparent km_compat(Keymaster) blob, attempt strip-and-upgrade");
+            let inner_keyblob = &key_blob[km_compat::KEYMASTER_BLOB_HW_PREFIX.len()..];
+            upgrade_keyblob_and_perform_op(
+                km_dev,
+                inner_keyblob,
+                upgrade_params,
+                km_op,
+                new_blob_handler,
+            )
         }
         r => r.map(|v| (v, None)).context(ks_err!("Calling km_op.")),
     }

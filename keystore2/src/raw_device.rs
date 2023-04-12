@@ -265,6 +265,7 @@ impl KeyMintDevice {
     {
         let (f_result, upgraded_blob) = crate::utils::upgrade_keyblob_if_required_with(
             &*self.km_dev,
+            self.version(),
             &key_blob,
             &[],
             f,

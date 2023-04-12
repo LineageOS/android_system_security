@@ -317,7 +317,6 @@ impl KeystoreSecurityLevel {
 
         let (begin_result, upgraded_blob) = self
             .upgrade_keyblob_if_required_with(
-                &*self.keymint,
                 key_id_guard,
                 &km_blob,
                 blob_metadata.km_uuid().copied(),
@@ -561,7 +560,6 @@ impl KeystoreSecurityLevel {
                 issuer_subject,
             }) => self
                 .upgrade_keyblob_if_required_with(
-                    &*self.keymint,
                     Some(key_id_guard),
                     &KeyBlob::Ref(&blob),
                     blob_metadata.km_uuid().copied(),
@@ -786,7 +784,6 @@ impl KeystoreSecurityLevel {
 
         let (creation_result, _) = self
             .upgrade_keyblob_if_required_with(
-                &*self.keymint,
                 Some(wrapping_key_id_guard),
                 &wrapping_key_blob,
                 wrapping_blob_metadata.km_uuid().copied(),
@@ -842,7 +839,6 @@ impl KeystoreSecurityLevel {
 
     fn upgrade_keyblob_if_required_with<T, F>(
         &self,
-        km_dev: &dyn IKeyMintDevice,
         mut key_id_guard: Option<KeyIdGuard>,
         key_blob: &KeyBlob,
         km_uuid: Option<Uuid>,
@@ -853,7 +849,8 @@ impl KeystoreSecurityLevel {
         F: Fn(&[u8]) -> Result<T, Error>,
     {
         let (v, upgraded_blob) = crate::utils::upgrade_keyblob_if_required_with(
-            km_dev,
+            &*self.keymint,
+            self.hw_info.versionNumber,
             key_blob,
             params,
             f,
@@ -893,6 +890,7 @@ impl KeystoreSecurityLevel {
     {
         crate::utils::upgrade_keyblob_if_required_with(
             &*self.keymint,
+            self.hw_info.versionNumber,
             key_blob,
             params,
             f,
