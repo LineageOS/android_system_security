@@ -31,8 +31,8 @@ use crate::{
 use crate::km_compat::{KeyMintV1, BacklevelKeyMintWrapper};
 use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    IKeyMintDevice::IKeyMintDevice, KeyMintHardwareInfo::KeyMintHardwareInfo,
-    SecurityLevel::SecurityLevel,
+    IKeyMintDevice::BpKeyMintDevice, IKeyMintDevice::IKeyMintDevice,
+    KeyMintHardwareInfo::KeyMintHardwareInfo, SecurityLevel::SecurityLevel,
 };
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
     ISecureClock::ISecureClock,
@@ -173,43 +173,37 @@ lazy_static! {
     }));
 }
 
-static KEYMINT_SERVICE_NAME: &str = "android.hardware.security.keymint.IKeyMintDevice";
-
 /// Determine the service name for a KeyMint device of the given security level
 /// which implements at least the specified version of the `IKeyMintDevice`
 /// interface.
-fn keymint_service_name_by_version(
-    security_level: &SecurityLevel,
-    version: i32,
-) -> Result<Option<(i32, String)>> {
-    let keymint_instances =
-        get_declared_instances("android.hardware.security.keymint.IKeyMintDevice").unwrap();
+fn keymint_service_name(security_level: &SecurityLevel) -> Result<Option<String>> {
+    let keymint_descriptor: &str = <BpKeyMintDevice as IKeyMintDevice>::get_descriptor();
+    let keymint_instances = get_declared_instances(keymint_descriptor).unwrap();
 
     let service_name = match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
             if keymint_instances.iter().any(|instance| *instance == "default") {
-                Some(format!("{}/default", KEYMINT_SERVICE_NAME))
+                Some(format!("{}/default", keymint_descriptor))
             } else {
                 None
             }
         }
         SecurityLevel::STRONGBOX => {
             if keymint_instances.iter().any(|instance| *instance == "strongbox") {
-                Some(format!("{}/strongbox", KEYMINT_SERVICE_NAME))
+                Some(format!("{}/strongbox", keymint_descriptor))
             } else {
                 None
             }
         }
         _ => {
             return Err(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE)).context(ks_err!(
-                "Trying to find keymint V{} for security level: {:?}",
-                version,
+                "Trying to find keymint for security level: {:?}",
                 security_level
             ));
         }
     };
 
-    Ok(service_name.map(|service_name| (version, service_name)))
+    Ok(service_name)
 }
 
 /// Make a new connection to a KeyMint device of the given security level.
@@ -218,28 +212,22 @@ fn keymint_service_name_by_version(
 fn connect_keymint(
     security_level: &SecurityLevel,
 ) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
-    // Count down from the current interface version back to one in order to
-    // also find out the interface version -- an implementation of V2 will show
-    // up in the list of V1-capable devices, but not vice-versa.
-    let service_name = keymint_service_name_by_version(security_level, 2)
-        .and_then(|sl| {
-            if sl.is_none() {
-                keymint_service_name_by_version(security_level, 1)
-            } else {
-                Ok(sl)
-            }
-        })
-        .context(ks_err!("Get service name by version"))?;
+    // Connects to binder to get the current keymint interface and
+    // based on the security level returns a service name to connect
+    // to.
+    let service_name = keymint_service_name(security_level).context(ks_err!("Get service name"))?;
 
-    let (keymint, hal_version) = if let Some((version, service_name)) = service_name {
+    let (keymint, hal_version) = if let Some(service_name) = service_name {
         let km: Strong<dyn IKeyMintDevice> =
             map_binder_status_code(binder::get_interface(&service_name))
                 .context(ks_err!("Trying to connect to genuine KeyMint service."))?;
         // Map the HAL version code for KeyMint to be <AIDL version> * 100, so
         // - V1 is 100
         // - V2 is 200
+        // - V3 is 300
         // etc.
-        (km, Some(version * 100))
+        let km_version = km.getInterfaceVersion()?;
+        (km, Some(km_version * 100))
     } else {
         // This is a no-op if it was called before.
         keystore2_km_compat::add_keymint_device_service();
@@ -263,8 +251,17 @@ fn connect_keymint(
     // If the KeyMint device is back-level, use a wrapper that intercepts and
     // emulates things that are not supported by the hardware.
     let keymint = match hal_version {
+        Some(300) => {
+            // Current KeyMint version: use as-is as v3 Keymint is current version
+            log::info!(
+                "KeyMint device is current version ({:?}) for security level: {:?}",
+                hal_version,
+                security_level
+            );
+            keymint
+        }
         Some(200) => {
-            // Current KeyMint version: use as-is.
+            // Previous KeyMint version: use as-is as we don't have any software emulation of v3-specific KeyMint features.
             log::info!(
                 "KeyMint device is current version ({:?}) for security level: {:?}",
                 hal_version,
