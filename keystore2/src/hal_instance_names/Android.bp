@@ -22,41 +22,41 @@ package {
 }
 
 rust_library {
-    name: "libkeystore2_vintf_rust",
-    crate_name: "keystore2_vintf",
+    name: "libkeystore2_hal_names_rust",
+    crate_name: "keystore2_hal_names",
     srcs: ["lib.rs"],
     rustlibs: [
         "libcxx",
     ],
     shared_libs: [
-        "libvintf",
+        "libhidlbase",
     ],
     static_libs: [
-        "libkeystore2_vintf_cpp",
+        "libkeystore2_hal_names_cpp",
     ],
 }
 
 cc_library_static {
-    name: "libkeystore2_vintf_cpp",
-    srcs: ["vintf.cpp"],
+    name: "libkeystore2_hal_names_cpp",
+    srcs: ["hal_names.cpp"],
     generated_headers: ["cxx-bridge-header"],
-    generated_sources: ["vintf_bridge_code"],
+    generated_sources: ["hal_names_bridge_code"],
     shared_libs: [
-        "libvintf",
+        "libhidlbase",
     ],
 }
 
 genrule {
-    name: "vintf_bridge_code",
+    name: "hal_names_bridge_code",
     tools: ["cxxbridge"],
     cmd: "$(location cxxbridge) $(in) >> $(out)",
     srcs: ["lib.rs"],
-    out: ["vintf_cxx_generated.cc"],
+    out: ["hal_names_cxx_generated.cc"],
 }
 
 rust_test {
-    name: "keystore2_vintf_test",
-    crate_name: "keystore2_vintf_test",
+    name: "keystore2_hal_names_test",
+    crate_name: "keystore2_hal_names_test",
     srcs: ["lib.rs"],
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -64,10 +64,10 @@ rust_test {
         "libcxx",
     ],
     static_libs: [
-        "libkeystore2_vintf_cpp",
+        "libkeystore2_hal_names_cpp",
     ],
     shared_libs: [
         "libc++",
-        "libvintf",
+        "libhidlbase",
     ],
 }
