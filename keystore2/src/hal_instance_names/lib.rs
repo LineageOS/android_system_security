@@ -17,7 +17,7 @@
 #[cxx::bridge]
 mod ffi {
     unsafe extern "C++" {
-        include!("vintf.hpp");
+        include!("hal_names.hpp");
 
         /// Gets the instances of the given package, version, and interface tuple.
         /// Note that this is not a zero-cost shim: it will make copies of the strings.
