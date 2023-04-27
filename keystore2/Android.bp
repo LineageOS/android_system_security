@@ -31,6 +31,7 @@ rust_defaults {
     ],
 
     rustlibs: [
+        "android.hardware.security.rkp-V3-rust",
         "android.hardware.security.secureclock-V1-rust",
         "android.hardware.security.sharedsecret-V1-rust",
         "android.os.permissions_aidl-rust",
