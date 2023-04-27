@@ -24,15 +24,15 @@ use android_hardware_security_sharedsecret::aidl::android::hardware::security::s
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::Result;
 use binder::get_declared_instances;
-use keystore2_vintf::get_hidl_instances;
+use keystore2_hal_names::get_hidl_instances;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 /// This function initiates the shared secret negotiation. It starts a thread and then returns
-/// immediately. The thread consults the vintf manifest to enumerate expected negotiation
-/// participants. It then attempts to connect to all of these participants. If any connection
-/// fails the thread will retry once per second to connect to the failed instance(s) until all of
-/// the instances are connected. It then performs the negotiation.
+/// immediately. The thread gets hal names from the android ServiceManager. It then attempts
+/// to connect to all of these participants. If any connection fails the thread will retry once
+/// per second to connect to the failed instance(s) until all of the instances are connected.
+/// It then performs the negotiation.
 ///
 /// During the first phase of the negotiation it will again try every second until
 /// all instances have responded successfully to account for instances that register early but
