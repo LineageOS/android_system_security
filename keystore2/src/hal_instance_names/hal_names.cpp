@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
-#include <algorithm>
-#include <vintf/HalManifest.h>
-#include <vintf/VintfObject.h>
+#include <hidl/ServiceManagement.h>
 
 #include "rust/cxx.h"
 
-rust::Vec<rust::String> convert(const std::set<std::string>& names) {
+rust::Vec<rust::String> convert(const std::vector<std::string>& names) {
     rust::Vec<rust::String> result;
     std::copy(names.begin(), names.end(), std::back_inserter(result));
     return result;
@@ -28,9 +26,10 @@ rust::Vec<rust::String> convert(const std::set<std::string>& names) {
 
 rust::Vec<rust::String> get_hidl_instances(rust::Str package, size_t major_version,
                                            size_t minor_version, rust::Str interfaceName) {
-    android::vintf::Version version(major_version, minor_version);
-    const auto manifest = android::vintf::VintfObject::GetDeviceHalManifest();
-    const auto names = manifest->getHidlInstances(static_cast<std::string>(package), version,
-                                                  static_cast<std::string>(interfaceName));
-    return convert(names);
+    std::string version = std::to_string(major_version) + "." + std::to_string(minor_version);
+    std::string factoryName = static_cast<std::string>(package) + "@" + version +
+                              "::" + static_cast<std::string>(interfaceName);
+
+    const auto halNames = android::hardware::getAllHalInstanceNames(factoryName);
+    return convert(halNames);
 }

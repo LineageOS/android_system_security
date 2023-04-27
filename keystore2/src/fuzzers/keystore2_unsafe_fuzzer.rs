@@ -26,8 +26,8 @@ use keystore2_crypto::{
     ec_point_point_to_oct, ecdh_compute_key, generate_random_data, hkdf_expand, hkdf_extract,
     hmac_sha256, parse_subject_from_certificate, Password, ZVec,
 };
+use keystore2_hal_names::get_hidl_instances;
 use keystore2_selinux::{check_access, getpidcon, setcon, Backend, Context, KeystoreKeyBackend};
-use keystore2_vintf::get_hidl_instances;
 use libfuzzer_sys::{arbitrary::Arbitrary, fuzz_target};
 use std::{ffi::CString, sync::Arc};
 
