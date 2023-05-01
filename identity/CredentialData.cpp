@@ -520,8 +520,12 @@ AuthKeyData* CredentialData::findAuthKey_(bool allowUsingExhaustedKeys,
                                           bool allowUsingExpiredKeys) {
     AuthKeyData* candidate = nullptr;
 
-    int64_t nowMilliSeconds =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) * 1000;
+    time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    int64_t nowMilliSeconds;
+    if (__builtin_mul_overflow(int64_t(now), int64_t(1000), &nowMilliSeconds)) {
+        LOG(ERROR) << "Overflow converting " << now << " to milliseconds";
+        return nullptr;
+    }
 
     int n = 0;
     for (AuthKeyData& data : authKeyDatas_) {
