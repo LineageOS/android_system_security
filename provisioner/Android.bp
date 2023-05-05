@@ -23,26 +23,6 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
-aidl_interface {
-    name: "android.security.provisioner",
-    unstable: true,
-    local_include_dir: "binder",
-    srcs: [
-        "binder/android/security/provisioner/*.aidl",
-    ],
-    backend: {
-        java: {
-            platform_apis: true,
-        },
-        cpp: {
-            enabled: false,
-        },
-        ndk: {
-            enabled: false,
-        },
-    },
-}
-
 cc_defaults {
     name: "rkp_factory_extraction_defaults",
     defaults: [
