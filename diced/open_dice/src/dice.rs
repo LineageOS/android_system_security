@@ -23,7 +23,7 @@ use open_dice_cbor_bindgen::{
     DICE_INLINE_CONFIG_SIZE, DICE_PRIVATE_KEY_SEED_SIZE, DICE_PRIVATE_KEY_SIZE,
     DICE_PUBLIC_KEY_SIZE, DICE_SIGNATURE_SIZE,
 };
-use std::ptr;
+use std::{marker::PhantomData, ptr};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// The size of a DICE hash.
@@ -173,36 +173,44 @@ impl Config<'_> {
 
 /// Wrap of `DiceInputValues`.
 #[derive(Clone, Debug)]
-pub struct InputValues(DiceInputValues);
+pub struct InputValues<'a> {
+    dice_inputs: DiceInputValues,
+    // DiceInputValues contains a pointer to the separate config descriptor, which must therefore
+    // outlive it. Make sure the borrow checker can enforce that.
+    config_descriptor: PhantomData<&'a [u8]>,
+}
 
-impl InputValues {
+impl<'a> InputValues<'a> {
     /// Creates a new `InputValues`.
     pub fn new(
         code_hash: Hash,
-        config: Config,
+        config: Config<'a>,
         authority_hash: Hash,
         mode: DiceMode,
         hidden: Hidden,
     ) -> Self {
-        Self(DiceInputValues {
-            code_hash,
-            code_descriptor: ptr::null(),
-            code_descriptor_size: 0,
-            config_type: config.dice_config_type(),
-            config_value: config.inline_config(),
-            config_descriptor: config.descriptor_ptr(),
-            config_descriptor_size: config.descriptor_size(),
-            authority_hash,
-            authority_descriptor: ptr::null(),
-            authority_descriptor_size: 0,
-            mode,
-            hidden,
-        })
+        Self {
+            dice_inputs: DiceInputValues {
+                code_hash,
+                code_descriptor: ptr::null(),
+                code_descriptor_size: 0,
+                config_type: config.dice_config_type(),
+                config_value: config.inline_config(),
+                config_descriptor: config.descriptor_ptr(),
+                config_descriptor_size: config.descriptor_size(),
+                authority_hash,
+                authority_descriptor: ptr::null(),
+                authority_descriptor_size: 0,
+                mode,
+                hidden,
+            },
+            config_descriptor: PhantomData,
+        }
     }
 
     /// Returns a raw pointer to the wrapped `DiceInputValues`.
     pub fn as_ptr(&self) -> *const DiceInputValues {
-        &self.0 as *const DiceInputValues
+        &self.dice_inputs as *const DiceInputValues
     }
 }
 
