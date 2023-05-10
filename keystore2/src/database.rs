@@ -4660,7 +4660,7 @@ pub mod tests {
         params
     }
 
-    fn make_test_key_entry(
+    pub fn make_test_key_entry(
         db: &mut KeystoreDB,
         domain: Domain,
         namespace: i64,
@@ -4719,7 +4719,7 @@ pub mod tests {
         }
     }
 
-    fn make_bootlevel_key_entry(
+    pub fn make_bootlevel_key_entry(
         db: &mut KeystoreDB,
         domain: Domain,
         namespace: i64,
