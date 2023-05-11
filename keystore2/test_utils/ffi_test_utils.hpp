@@ -11,3 +11,6 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
 CxxResult buildAsn1DerEncodedWrappedKeyDescription();
 bool performCryptoOpUsingKeystoreEngine(int64_t grant_id);
 CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag);
+uint32_t getOsVersion();
+uint32_t getOsPatchlevel();
+uint32_t getVendorPatchlevel();
