@@ -336,7 +336,7 @@ impl SuperKeyManager {
                     break;
                 }
             }
-            w.wait().context(ks_err!("property wait failed"))?;
+            w.wait(None).context(ks_err!("property wait failed"))?;
         }
         Ok(())
     }
