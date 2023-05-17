@@ -16,11 +16,10 @@
 
 #![allow(missing_docs)]
 #![no_main]
-#[macro_use]
-extern crate libfuzzer_sys;
 
 use binder_random_parcel_rs::fuzz_service;
 use keystore2::authorization::AuthorizationManager;
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let authorization_service = AuthorizationManager::new_native_binder().unwrap_or_else(|e| {
