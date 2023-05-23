@@ -31,14 +31,17 @@ pub fn hash(input: &[u8]) -> Result<Hash> {
     let mut output: Hash = [0; HASH_SIZE];
     // SAFETY: DiceHash takes a sized input buffer and writes to a constant-sized output buffer.
     // The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceHash(
-            ptr::null_mut(), // context
-            input.as_ptr(),
-            input.len(),
-            output.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceHash(
+                ptr::null_mut(), // context
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr(),
+            )
+        },
+        output.len(),
+    )?;
     Ok(output)
 }
 
@@ -47,19 +50,22 @@ pub fn hash(input: &[u8]) -> Result<Hash> {
 pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Result<()> {
     // SAFETY: The function writes to the `derived_key`, within the given bounds, and only reads the
     // input values. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceKdf(
-            ptr::null_mut(), // context
-            derived_key.len(),
-            ikm.as_ptr(),
-            ikm.len(),
-            salt.as_ptr(),
-            salt.len(),
-            info.as_ptr(),
-            info.len(),
-            derived_key.as_mut_ptr(),
-        )
-    })
+    check_result(
+        unsafe {
+            DiceKdf(
+                ptr::null_mut(), // context
+                derived_key.len(),
+                ikm.as_ptr(),
+                ikm.len(),
+                salt.as_ptr(),
+                salt.len(),
+                info.as_ptr(),
+                info.len(),
+                derived_key.as_mut_ptr(),
+            )
+        },
+        derived_key.len(),
+    )
 }
 
 /// Deterministically generates a public and private key pair from `seed`.
@@ -70,14 +76,17 @@ pub fn keypair_from_seed(seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(PublicKe
     let mut private_key = PrivateKey::default();
     // SAFETY: The function writes to the `public_key` and `private_key` within the given bounds,
     // and only reads the `seed`. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceKeypairFromSeed(
-            ptr::null_mut(), // context
-            seed.as_ptr(),
-            public_key.as_mut_ptr(),
-            private_key.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceKeypairFromSeed(
+                ptr::null_mut(), // context
+                seed.as_ptr(),
+                public_key.as_mut_ptr(),
+                private_key.as_mut_ptr(),
+            )
+        },
+        public_key.len(),
+    )?;
     Ok((public_key, private_key))
 }
 
@@ -86,15 +95,18 @@ pub fn sign(message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Sign
     let mut signature = [0u8; SIGNATURE_SIZE];
     // SAFETY: The function writes to the `signature` within the given bounds, and only reads the
     // message and the private key. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceSign(
-            ptr::null_mut(), // context
-            message.as_ptr(),
-            message.len(),
-            private_key.as_ptr(),
-            signature.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceSign(
+                ptr::null_mut(), // context
+                message.as_ptr(),
+                message.len(),
+                private_key.as_ptr(),
+                signature.as_mut_ptr(),
+            )
+        },
+        signature.len(),
+    )?;
     Ok(signature)
 }
 
@@ -102,15 +114,18 @@ pub fn sign(message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Sign
 pub fn verify(message: &[u8], signature: &Signature, public_key: &PublicKey) -> Result<()> {
     // SAFETY: only reads the messages, signature and public key as constant values.
     // The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceVerify(
-            ptr::null_mut(), // context
-            message.as_ptr(),
-            message.len(),
-            signature.as_ptr(),
-            public_key.as_ptr(),
-        )
-    })
+    check_result(
+        unsafe {
+            DiceVerify(
+                ptr::null_mut(), // context
+                message.as_ptr(),
+                message.len(),
+                signature.as_ptr(),
+                public_key.as_ptr(),
+            )
+        },
+        0,
+    )
 }
 
 /// Generates an X.509 certificate from the given `subject_private_key_seed` and
@@ -127,16 +142,19 @@ pub fn generate_certificate(
     let mut certificate_actual_size = 0;
     // SAFETY: The function writes to the `certificate` within the given bounds, and only reads the
     // input values and the key seeds. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceGenerateCertificate(
-            ptr::null_mut(), // context
-            subject_private_key_seed.as_ptr(),
-            authority_private_key_seed.as_ptr(),
-            input_values.as_ptr(),
-            certificate.len(),
-            certificate.as_mut_ptr(),
-            &mut certificate_actual_size,
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceGenerateCertificate(
+                ptr::null_mut(), // context
+                subject_private_key_seed.as_ptr(),
+                authority_private_key_seed.as_ptr(),
+                input_values.as_ptr(),
+                certificate.len(),
+                certificate.as_mut_ptr(),
+                &mut certificate_actual_size,
+            )
+        },
+        certificate_actual_size,
+    )?;
     Ok(certificate_actual_size)
 }
