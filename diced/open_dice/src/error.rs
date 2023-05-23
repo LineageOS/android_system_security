@@ -26,7 +26,7 @@ pub enum DiceError {
     /// Provided input was invalid.
     InvalidInput,
     /// Provided buffer was too small.
-    BufferTooSmall,
+    BufferTooSmall(usize),
     /// Platform error.
     PlatformError,
 }
@@ -39,7 +39,9 @@ impl fmt::Display for DiceError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::InvalidInput => write!(f, "invalid input"),
-            Self::BufferTooSmall => write!(f, "buffer too small"),
+            Self::BufferTooSmall(buffer_required_size) => {
+                write!(f, "buffer too small. Required {buffer_required_size} bytes.")
+            }
             Self::PlatformError => write!(f, "platform error"),
         }
     }
@@ -49,11 +51,13 @@ impl fmt::Display for DiceError {
 pub type Result<T> = result::Result<T, DiceError>;
 
 /// Checks the given `DiceResult`. Returns an error if it's not OK.
-pub fn check_result(result: DiceResult) -> Result<()> {
+pub(crate) fn check_result(result: DiceResult, buffer_required_size: usize) -> Result<()> {
     match result {
         DiceResult::kDiceResultOk => Ok(()),
         DiceResult::kDiceResultInvalidInput => Err(DiceError::InvalidInput),
-        DiceResult::kDiceResultBufferTooSmall => Err(DiceError::BufferTooSmall),
+        DiceResult::kDiceResultBufferTooSmall => {
+            Err(DiceError::BufferTooSmall(buffer_required_size))
+        }
         DiceResult::kDiceResultPlatformError => Err(DiceError::PlatformError),
     }
 }
