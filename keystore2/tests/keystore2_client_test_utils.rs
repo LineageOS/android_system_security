@@ -376,6 +376,17 @@ pub fn delete_app_key(
     })
 }
 
+/// Deletes all entries from keystore.
+pub fn delete_all_entries(keystore2: &binder::Strong<dyn IKeystoreService>) {
+    while keystore2.getNumberOfEntries(Domain::APP, -1).unwrap() != 0 {
+        let key_descriptors = keystore2.listEntries(Domain::APP, -1).unwrap();
+        key_descriptors.into_iter().map(|key| key.alias.unwrap()).for_each(|alias| {
+            delete_app_key(keystore2, &alias).unwrap();
+        });
+    }
+    assert!(keystore2.getNumberOfEntries(Domain::APP, -1).unwrap() == 0);
+}
+
 /// Encrypt the secure key with given transport key.
 pub fn encrypt_secure_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
@@ -416,4 +427,20 @@ pub fn encrypt_transport_key(
     let encoded = &encoded[..encoded_len];
 
     Ok(encoded.to_vec())
+}
+
+/// List aliases using given `startingPastAlias` and verify that the fetched list is matching with
+/// the expected list of aliases.
+pub fn verify_aliases(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+    starting_past_alias: Option<&str>,
+    expected_aliases: Vec<String>,
+) {
+    let key_descriptors =
+        keystore2.listEntriesBatched(Domain::APP, -1, starting_past_alias).unwrap();
+
+    assert_eq!(key_descriptors.len(), expected_aliases.len());
+    assert!(key_descriptors
+        .iter()
+        .all(|key| expected_aliases.contains(key.alias.as_ref().unwrap())));
 }
