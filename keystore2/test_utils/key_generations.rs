@@ -16,6 +16,10 @@
 
 use anyhow::Result;
 
+use core::ops::Range;
+use std::collections::HashSet;
+use std::fmt::Write;
+
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, HardwareAuthenticatorType::HardwareAuthenticatorType,
@@ -1081,4 +1085,24 @@ pub fn generate_ec_agree_key(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Helper method to import AES keys `total_count` of times.
+pub fn import_aes_keys(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias_prefix: String,
+    total_count: Range<i32>,
+) -> binder::Result<HashSet<String>> {
+    let mut imported_key_aliases = HashSet::new();
+
+    // Import Total number of keys with given alias prefix.
+    for count in total_count {
+        let mut alias = String::new();
+        write!(alias, "{}_{}", alias_prefix, count).unwrap();
+        imported_key_aliases.insert(alias.clone());
+
+        import_aes_key(sec_level, Domain::APP, -1, Some(alias))?;
+    }
+
+    Ok(imported_key_aliases)
 }
