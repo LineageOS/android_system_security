@@ -219,13 +219,16 @@ pub fn derive_cdi_private_key_seed(cdi_attest: &Cdi) -> Result<PrivateKeySeed> {
     let mut seed = PrivateKeySeed::default();
     // SAFETY: The function writes to the buffer within the given bounds, and only reads the
     // input values. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceDeriveCdiPrivateKeySeed(
-            ptr::null_mut(), // context
-            cdi_attest.as_ptr(),
-            seed.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceDeriveCdiPrivateKeySeed(
+                ptr::null_mut(), // context
+                cdi_attest.as_ptr(),
+                seed.as_mut_ptr(),
+            )
+        },
+        seed.0.len(),
+    )?;
     Ok(seed)
 }
 
@@ -234,14 +237,17 @@ pub fn derive_cdi_certificate_id(cdi_public_key: &[u8]) -> Result<DiceId> {
     let mut id = [0u8; ID_SIZE];
     // SAFETY: The function writes to the buffer within the given bounds, and only reads the
     // input values. The first argument context is not used in this function.
-    check_result(unsafe {
-        DiceDeriveCdiCertificateId(
-            ptr::null_mut(), // context
-            cdi_public_key.as_ptr(),
-            cdi_public_key.len(),
-            id.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceDeriveCdiCertificateId(
+                ptr::null_mut(), // context
+                cdi_public_key.as_ptr(),
+                cdi_public_key.len(),
+                id.as_mut_ptr(),
+            )
+        },
+        id.len(),
+    )?;
     Ok(id)
 }
 
@@ -261,18 +267,21 @@ pub fn dice_main_flow(
     // SAFETY: The function only reads the current CDI values and inputs and writes
     // to `next_cdi_certificate` and next CDI values within its bounds.
     // The first argument can be null and is not used in the current implementation.
-    check_result(unsafe {
-        DiceMainFlow(
-            ptr::null_mut(), // context
-            current_cdi_attest.as_ptr(),
-            current_cdi_seal.as_ptr(),
-            input_values.as_ptr(),
-            next_cdi_certificate.len(),
-            next_cdi_certificate.as_mut_ptr(),
-            &mut next_cdi_certificate_actual_size,
-            next_cdi_values.cdi_attest.as_mut_ptr(),
-            next_cdi_values.cdi_seal.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            DiceMainFlow(
+                ptr::null_mut(), // context
+                current_cdi_attest.as_ptr(),
+                current_cdi_seal.as_ptr(),
+                input_values.as_ptr(),
+                next_cdi_certificate.len(),
+                next_cdi_certificate.as_mut_ptr(),
+                &mut next_cdi_certificate_actual_size,
+                next_cdi_values.cdi_attest.as_mut_ptr(),
+                next_cdi_values.cdi_seal.as_mut_ptr(),
+            )
+        },
+        next_cdi_certificate_actual_size,
+    )?;
     Ok(next_cdi_certificate_actual_size)
 }
