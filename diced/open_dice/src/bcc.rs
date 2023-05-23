@@ -50,9 +50,12 @@ pub fn bcc_format_config_descriptor(
     let mut buffer_size = 0;
     // SAFETY: The function writes to the buffer, within the given bounds, and only reads the
     // input values. It writes its result to buffer_size.
-    check_result(unsafe {
-        BccFormatConfigDescriptor(&values, buffer.len(), buffer.as_mut_ptr(), &mut buffer_size)
-    })?;
+    check_result(
+        unsafe {
+            BccFormatConfigDescriptor(&values, buffer.len(), buffer.as_mut_ptr(), &mut buffer_size)
+        },
+        buffer_size,
+    )?;
     Ok(buffer_size)
 }
 
@@ -73,21 +76,24 @@ pub fn bcc_main_flow(
     // to `next_bcc` and next CDI values within its bounds. It also reads
     // `input_values` as a constant input and doesn't store any pointer.
     // The first argument can be null and is not used in the current implementation.
-    check_result(unsafe {
-        BccMainFlow(
-            ptr::null_mut(), // context
-            current_cdi_attest.as_ptr(),
-            current_cdi_seal.as_ptr(),
-            current_bcc.as_ptr(),
-            current_bcc.len(),
-            input_values.as_ptr(),
-            next_bcc.len(),
-            next_bcc.as_mut_ptr(),
-            &mut next_bcc_size,
-            next_cdi_values.cdi_attest.as_mut_ptr(),
-            next_cdi_values.cdi_seal.as_mut_ptr(),
-        )
-    })?;
+    check_result(
+        unsafe {
+            BccMainFlow(
+                ptr::null_mut(), // context
+                current_cdi_attest.as_ptr(),
+                current_cdi_seal.as_ptr(),
+                current_bcc.as_ptr(),
+                current_bcc.len(),
+                input_values.as_ptr(),
+                next_bcc.len(),
+                next_bcc.as_mut_ptr(),
+                &mut next_bcc_size,
+                next_cdi_values.cdi_attest.as_mut_ptr(),
+                next_cdi_values.cdi_seal.as_mut_ptr(),
+            )
+        },
+        next_bcc_size,
+    )?;
     Ok(next_bcc_size)
 }
 
@@ -106,17 +112,20 @@ pub fn bcc_handover_main_flow(
     // within its bounds,
     // It also reads `input_values` as a constant input and doesn't store any pointer.
     // The first argument can be null and is not used in the current implementation.
-    check_result(unsafe {
-        BccHandoverMainFlow(
-            ptr::null_mut(), // context
-            current_bcc_handover.as_ptr(),
-            current_bcc_handover.len(),
-            input_values.as_ptr(),
-            next_bcc_handover.len(),
-            next_bcc_handover.as_mut_ptr(),
-            &mut next_bcc_handover_size,
-        )
-    })?;
+    check_result(
+        unsafe {
+            BccHandoverMainFlow(
+                ptr::null_mut(), // context
+                current_bcc_handover.as_ptr(),
+                current_bcc_handover.len(),
+                input_values.as_ptr(),
+                next_bcc_handover.len(),
+                next_bcc_handover.as_mut_ptr(),
+                &mut next_bcc_handover_size,
+            )
+        },
+        next_bcc_handover_size,
+    )?;
 
     Ok(next_bcc_handover_size)
 }
@@ -158,16 +167,19 @@ pub fn bcc_handover_parse(bcc_handover: &[u8]) -> Result<BccHandover> {
     let mut bcc_size = 0;
     // SAFETY: The `bcc_handover` is only read and never stored and the returned pointers should all
     // point within the address range of the `bcc_handover` or be NULL.
-    check_result(unsafe {
-        BccHandoverParse(
-            bcc_handover.as_ptr(),
-            bcc_handover.len(),
-            &mut cdi_attest,
-            &mut cdi_seal,
-            &mut bcc,
-            &mut bcc_size,
-        )
-    })?;
+    check_result(
+        unsafe {
+            BccHandoverParse(
+                bcc_handover.as_ptr(),
+                bcc_handover.len(),
+                &mut cdi_attest,
+                &mut cdi_seal,
+                &mut bcc,
+                &mut bcc_size,
+            )
+        },
+        bcc_size,
+    )?;
     let cdi_attest = sub_slice(bcc_handover, cdi_attest, CDI_SIZE)?;
     let cdi_seal = sub_slice(bcc_handover, cdi_seal, CDI_SIZE)?;
     let bcc = sub_slice(bcc_handover, bcc, bcc_size).ok();

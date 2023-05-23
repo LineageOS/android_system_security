@@ -51,35 +51,21 @@ impl DiceArtifacts for OwnedDiceArtifacts {
     }
 }
 
-/// Retries the given function with bigger output buffer size.
-fn retry_with_bigger_buffer<F>(mut f: F) -> Result<Vec<u8>>
+/// Retries the given function with bigger measured buffer size.
+fn retry_with_measured_buffer<F>(mut f: F) -> Result<Vec<u8>>
 where
     F: FnMut(&mut Vec<u8>) -> Result<usize>,
 {
-    const INITIAL_BUFFER_SIZE: usize = 256;
-    const MAX_BUFFER_SIZE: usize = 64 * 1024 * 1024;
-
-    let mut buffer = vec![0u8; INITIAL_BUFFER_SIZE];
-    while buffer.len() <= MAX_BUFFER_SIZE {
-        match f(&mut buffer) {
-            Err(DiceError::BufferTooSmall) => {
-                let new_size = buffer.len() * 2;
-                buffer.resize(new_size, 0);
-            }
-            Err(e) => return Err(e),
-            Ok(actual_size) => {
-                if actual_size > buffer.len() {
-                    panic!(
-                        "actual_size larger than buffer size: open-dice function
-                         may have written past the end of the buffer."
-                    );
-                }
-                buffer.truncate(actual_size);
-                return Ok(buffer);
-            }
+    let mut buffer = Vec::new();
+    match f(&mut buffer) {
+        Err(DiceError::BufferTooSmall(actual_size)) => {
+            buffer.resize(actual_size, 0);
+            f(&mut buffer)?;
         }
-    }
-    Err(DiceError::PlatformError)
+        Err(e) => return Err(e),
+        Ok(_) => {}
+    };
+    Ok(buffer)
 }
 
 /// Formats a configuration descriptor following the BCC's specification.
@@ -88,7 +74,7 @@ pub fn retry_bcc_format_config_descriptor(
     version: Option<u64>,
     resettable: bool,
 ) -> Result<Vec<u8>> {
-    retry_with_bigger_buffer(|buffer| {
+    retry_with_measured_buffer(|buffer| {
         bcc_format_config_descriptor(name, version, resettable, buffer)
     })
 }
@@ -104,7 +90,7 @@ pub fn retry_bcc_main_flow(
     input_values: &InputValues,
 ) -> Result<OwnedDiceArtifacts> {
     let mut next_cdi_values = CdiValues::default();
-    let next_bcc = retry_with_bigger_buffer(|next_bcc| {
+    let next_bcc = retry_with_measured_buffer(|next_bcc| {
         bcc_main_flow(
             current_cdi_attest,
             current_cdi_seal,
@@ -127,7 +113,7 @@ pub fn retry_dice_main_flow(
     input_values: &InputValues,
 ) -> Result<(CdiValues, Vec<u8>)> {
     let mut next_cdi_values = CdiValues::default();
-    let next_cdi_certificate = retry_with_bigger_buffer(|next_cdi_certificate| {
+    let next_cdi_certificate = retry_with_measured_buffer(|next_cdi_certificate| {
         dice_main_flow(
             current_cdi_attest,
             current_cdi_seal,
@@ -149,7 +135,7 @@ pub fn retry_generate_certificate(
     authority_private_key_seed: &[u8; PRIVATE_KEY_SEED_SIZE],
     input_values: &InputValues,
 ) -> Result<Vec<u8>> {
-    retry_with_bigger_buffer(|certificate| {
+    retry_with_measured_buffer(|certificate| {
         generate_certificate(
             subject_private_key_seed,
             authority_private_key_seed,
