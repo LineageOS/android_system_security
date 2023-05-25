@@ -54,7 +54,6 @@ cc_binary {
         "liblog",
         "libutils",
         "libutilscallstack",
-        "libvintf",
     ],
     static_libs: [
         "android.hardware.keymaster-V3-cpp",
