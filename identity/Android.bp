@@ -29,6 +29,7 @@ cc_binary {
         "identity_use_latest_hal_aidl_cpp_static",
         "keymint_use_latest_hal_aidl_ndk_shared",
         "keymint_use_latest_hal_aidl_cpp_static",
+        "android.hardware.identity-support-lib-deps",
     ],
 
     srcs: [
@@ -43,27 +44,28 @@ cc_binary {
     ],
     init_rc: ["credstore.rc"],
     shared_libs: [
-        "android.hardware.identity-support-lib",
         "android.hardware.keymaster@4.0",
         "android.security.authorization-ndk",
         "libbase",
         "libbinder",
         "libbinder_ndk",
-        "libcredstore_aidl",
         "libcrypto",
         "libhidlbase",
-        "libkeymaster4support",
-        "libkeystore-attestation-application-id",
-        "librkp_support",
+        "liblog",
         "libutils",
         "libutilscallstack",
         "libvintf",
     ],
     static_libs: [
-        "android.hardware.security.rkp-V3-cpp",
         "android.hardware.keymaster-V3-cpp",
+        "android.hardware.identity-support-lib",
+        "android.hardware.security.rkp-V3-cpp",
         "android.security.rkp_aidl-cpp",
         "libcppbor_external",
+        "libcredstore_aidl",
+        "libkeymaster4support",
+        "libkeystore-attestation-application-id",
+        "librkp_support",
     ],
 }
 
@@ -89,7 +91,7 @@ filegroup {
     path: "binder",
 }
 
-cc_library_shared {
+cc_library_static {
     name: "libcredstore_aidl",
     srcs: [
         ":credstore_aidl",
@@ -103,6 +105,8 @@ cc_library_shared {
     shared_libs: [
         "libbinder",
         "libutils",
+    ],
+    static_libs: [
         "libkeymaster4support",
     ],
     export_shared_lib_headers: [
