@@ -29,9 +29,7 @@ use keystore2::{
     legacy_blob::LegacyBlobLoader, maintenance::DeleteListener, maintenance::Domain,
     utils::uid_to_android_user, utils::watchdog as wd,
 };
-use rusqlite::{
-    params, Connection, OptionalExtension, Transaction, TransactionBehavior, NO_PARAMS,
-};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::sync::Arc;
 use std::{
     collections::HashSet,
@@ -95,7 +93,7 @@ impl DB {
                      alias BLOB,
                      profile BLOB,
                      UNIQUE(owner, alias));",
-                NO_PARAMS,
+                [],
             )
             .context("Failed to initialize \"profiles\" table.")?;
             Ok(())
