@@ -82,7 +82,7 @@ use rusqlite::{
     types::FromSqlResult,
     types::ToSqlOutput,
     types::{FromSqlError, Value, ValueRef},
-    Connection, OptionalExtension, ToSql, Transaction, TransactionBehavior, NO_PARAMS,
+    Connection, OptionalExtension, ToSql, Transaction, TransactionBehavior,
 };
 
 use std::{
@@ -905,21 +905,21 @@ impl KeystoreDB {
                      alias BLOB,
                      state INTEGER,
                      km_uuid BLOB);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"keyentry\" table.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.keyentry_id_index
             ON keyentry(id);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index keyentry_id_index.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.keyentry_domain_namespace_index
             ON keyentry(domain, namespace, alias);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index keyentry_domain_namespace_index.")?;
 
@@ -929,14 +929,14 @@ impl KeystoreDB {
                     subcomponent_type INTEGER,
                     keyentryid INTEGER,
                     blob BLOB);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"blobentry\" table.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.blobentry_keyentryid_index
             ON blobentry(keyentryid);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index blobentry_keyentryid_index.")?;
 
@@ -947,14 +947,14 @@ impl KeystoreDB {
                      tag INTEGER,
                      data ANY,
                      UNIQUE (blobentryid, tag));",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"blobmetadata\" table.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.blobmetadata_blobentryid_index
             ON blobmetadata(blobentryid);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index blobmetadata_blobentryid_index.")?;
 
@@ -964,14 +964,14 @@ impl KeystoreDB {
                      tag INTEGER,
                      data ANY,
                      security_level INTEGER);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"keyparameter\" table.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.keyparameter_keyentryid_index
             ON keyparameter(keyentryid);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index keyparameter_keyentryid_index.")?;
 
@@ -981,14 +981,14 @@ impl KeystoreDB {
                      tag INTEGER,
                      data ANY,
                      UNIQUE (keyentryid, tag));",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"keymetadata\" table.")?;
 
         tx.execute(
             "CREATE INDEX IF NOT EXISTS persistent.keymetadata_keyentryid_index
             ON keymetadata(keyentryid);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to create index keymetadata_keyentryid_index.")?;
 
@@ -998,7 +998,7 @@ impl KeystoreDB {
                     grantee INTEGER,
                     keyentryid INTEGER,
                     access_vector INTEGER);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"grant\" table.")?;
 
@@ -1611,7 +1611,7 @@ impl KeystoreDB {
                 .context(ks_err!("Failed to insert blob."))?;
                 if let Some(blob_metadata) = blob_metadata {
                     let blob_id = tx
-                        .query_row("SELECT MAX(id) FROM persistent.blobentry;", NO_PARAMS, |row| {
+                        .query_row("SELECT MAX(id) FROM persistent.blobentry;", [], |row| {
                             row.get(0)
                         })
                         .context(ks_err!("Failed to get new blob id."))?;
@@ -2859,7 +2859,6 @@ pub mod tests {
     use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
         Timestamp::Timestamp,
     };
-    use rusqlite::NO_PARAMS;
     use rusqlite::TransactionBehavior;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
@@ -2898,7 +2897,7 @@ pub mod tests {
     #[test]
     fn datetime() -> Result<()> {
         let conn = Connection::open_in_memory()?;
-        conn.execute("CREATE TABLE test (ts DATETIME);", NO_PARAMS)?;
+        conn.execute("CREATE TABLE test (ts DATETIME);", [])?;
         let now = SystemTime::now();
         let duration = Duration::from_secs(1000);
         let then = now.checked_sub(duration).unwrap();
@@ -2908,7 +2907,7 @@ pub mod tests {
             params![DateTime::try_from(now)?, DateTime::try_from(then)?, DateTime::try_from(soon)?],
         )?;
         let mut stmt = conn.prepare("SELECT ts FROM test ORDER BY ts ASC;")?;
-        let mut rows = stmt.query(NO_PARAMS)?;
+        let mut rows = stmt.query([])?;
         assert_eq!(DateTime::try_from(then)?, rows.next()?.unwrap().get(0)?);
         assert_eq!(DateTime::try_from(now)?, rows.next()?.unwrap().get(0)?);
         assert_eq!(DateTime::try_from(soon)?, rows.next()?.unwrap().get(0)?);
@@ -3259,15 +3258,9 @@ pub mod tests {
             let mut stmt = db
                 .conn
                 .prepare("SELECT id, grantee, keyentryid, access_vector FROM persistent.grant;")?;
-            let mut rows =
-                stmt.query_map::<(i64, u32, i64, KeyPermSet), _, _>(NO_PARAMS, |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        KeyPermSet::from(row.get::<_, i32>(3)?),
-                    ))
-                })?;
+            let mut rows = stmt.query_map::<(i64, u32, i64, KeyPermSet), _, _>([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, KeyPermSet::from(row.get::<_, i32>(3)?)))
+            })?;
 
             let r = rows.next().unwrap().unwrap();
             assert_eq!(r, (next_random, GRANTEE_UID, 1, PVEC1));
@@ -3311,7 +3304,7 @@ pub mod tests {
                 ORDER BY subcomponent_type ASC;",
         )?;
         let mut rows = stmt
-            .query_map::<((SubComponentType, i64, Vec<u8>), i64), _, _>(NO_PARAMS, |row| {
+            .query_map::<((SubComponentType, i64, Vec<u8>), i64), _, _>([], |row| {
                 Ok(((row.get(0)?, row.get(1)?, row.get(2)?), row.get(3)?))
             })?;
         let (r, id) = rows.next().unwrap().unwrap();
@@ -4412,7 +4405,7 @@ pub mod tests {
     fn get_keyentry(db: &KeystoreDB) -> Result<Vec<KeyEntryRow>> {
         db.conn
             .prepare("SELECT * FROM persistent.keyentry;")?
-            .query_map(NO_PARAMS, |row| {
+            .query_map([], |row| {
                 Ok(KeyEntryRow {
                     id: row.get(0)?,
                     key_type: row.get(1)?,
@@ -4784,7 +4777,7 @@ pub mod tests {
             "SELECT id, key_type, domain, namespace, alias, state, km_uuid FROM persistent.keyentry;",
         )?;
         let rows = stmt.query_map::<(i64, KeyType, i32, i64, String, KeyLifeCycle, Uuid), _, _>(
-            NO_PARAMS,
+            [],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -4813,7 +4806,7 @@ pub mod tests {
         let mut stmt = db
             .conn
             .prepare("SELECT id, grantee, keyentryid, access_vector FROM persistent.grant;")?;
-        let rows = stmt.query_map::<(i64, i64, i64, i64), _, _>(NO_PARAMS, |row| {
+        let rows = stmt.query_map::<(i64, i64, i64, i64), _, _>([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
 
