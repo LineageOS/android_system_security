@@ -195,7 +195,11 @@ void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedCompon
                                              protectedData, *eekChain, eekId,
                                              hwInfo.supportedEekCurve, irpc, challenge);
 
-    std::cout << "Self test successful." << std::endl;
+    if (!result) {
+        std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
+                  << "'. Error message: '" << result.message() << "'." << std::endl;
+        exit(-1);
+    }
 }
 
 CborResult<Array> composeCertificateRequestV3(const std::vector<uint8_t>& csr) {
@@ -220,7 +224,7 @@ CborResult<Array> composeCertificateRequestV3(const std::vector<uint8_t>& csr) {
 }
 
 CborResult<cppbor::Array> getCsrV3(std::string_view componentName,
-                                   IRemotelyProvisionedComponent* irpc) {
+                                   IRemotelyProvisionedComponent* irpc, bool selfTest) {
     std::vector<uint8_t> csr;
     std::vector<MacedPublicKey> emptyKeys;
     const std::vector<uint8_t> challenge = generateChallenge();
@@ -230,34 +234,22 @@ CborResult<cppbor::Array> getCsrV3(std::string_view componentName,
         std::cerr << "Bundle extraction failed for '" << componentName
                   << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
         exit(-1);
+    }
+
+    if (selfTest) {
+        auto result = verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc, challenge);
+        if (!result) {
+            std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
+                      << "'. Error message: '" << result.message() << "'." << std::endl;
+            exit(-1);
+        }
     }
 
     return composeCertificateRequestV3(csr);
 }
 
-void selfTestGetCsrV3(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
-    std::vector<uint8_t> csr;
-    std::vector<MacedPublicKey> emptyKeys;
-    const std::vector<uint8_t> challenge = generateChallenge();
-
-    auto status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
-    if (!status.isOk()) {
-        std::cerr << "Bundle extraction failed for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
-        exit(-1);
-    }
-
-    auto result = verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc, challenge);
-    if (!result) {
-        std::cerr << "Self test failed for '" << componentName
-                  << "'. Error message: " << result.message() << "." << std::endl;
-        exit(-1);
-    }
-
-    std::cout << "Self test successful." << std::endl;
-}
-
-CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
+CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc,
+                         bool selfTest) {
     RpcHardwareInfo hwInfo;
     auto status = irpc->getHardwareInfo(&hwInfo);
     if (!status.isOk()) {
@@ -267,24 +259,11 @@ CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedCom
     }
 
     if (hwInfo.versionNumber < kVersionWithoutSuperencryption) {
+        if (selfTest) {
+            selfTestGetCsrV1(componentName, irpc);
+        }
         return getCsrV1(componentName, irpc);
     } else {
-        return getCsrV3(componentName, irpc);
-    }
-}
-
-void selfTestGetCsr(std::string_view componentName, IRemotelyProvisionedComponent* irpc) {
-    RpcHardwareInfo hwInfo;
-    auto status = irpc->getHardwareInfo(&hwInfo);
-    if (!status.isOk()) {
-        std::cerr << "Failed to get hardware info for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
-        exit(-1);
-    }
-
-    if (hwInfo.versionNumber < kVersionWithoutSuperencryption) {
-        selfTestGetCsrV1(componentName, irpc);
-    } else {
-        selfTestGetCsrV3(componentName, irpc);
+        return getCsrV3(componentName, irpc, selfTest);
     }
 }
