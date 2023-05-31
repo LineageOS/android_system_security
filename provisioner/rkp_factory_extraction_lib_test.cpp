@@ -180,7 +180,8 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
                         SetArgPointee<6>(kFakeMac),             //
                         Return(ByMove(ScopedAStatus::ok()))));  //
 
-    auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get());
+    auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get(),
+                                   /*selfTest=*/false);
     ASSERT_THAT(csr, NotNull()) << csrErrMsg;
     ASSERT_THAT(csr->asArray(), Pointee(Property(&Array::size, Eq(4))));
 
@@ -249,7 +250,8 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV3Hal) {
         .WillOnce(DoAll(SaveArg<1>(&challenge), SetArgPointee<2>(kCsr),
                         Return(ByMove(ScopedAStatus::ok()))));
 
-    auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get());
+    auto [csr, csrErrMsg] = getCsr("mock component name", mockRpc.get(),
+                                   /*selfTest=*/false);
     ASSERT_THAT(csr, NotNull()) << csrErrMsg;
     ASSERT_THAT(csr, Pointee(Property(&Array::size, Eq(5))));
 
