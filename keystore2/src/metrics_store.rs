@@ -43,9 +43,8 @@ use android_security_metrics::aidl::android::security::metrics::{
     RkpError::RkpError as MetricsRkpError, RkpErrorStats::RkpErrorStats,
     SecurityLevel::SecurityLevel as MetricsSecurityLevel, Storage::Storage as MetricsStorage,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
-use rustutils::system_properties::PropertyWatcherError;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -93,12 +92,15 @@ impl MetricsStore {
 
         // Process keystore crash stats.
         if AtomID::CRASH_STATS == atom_id {
-            return Ok(vec![KeystoreAtom {
-                payload: KeystoreAtomPayload::CrashStats(CrashStats {
-                    count_of_crash_events: read_keystore_crash_count()?,
-                }),
-                ..Default::default()
-            }]);
+            return match read_keystore_crash_count()? {
+                Some(count) => Ok(vec![KeystoreAtom {
+                    payload: KeystoreAtomPayload::CrashStats(CrashStats {
+                        count_of_crash_events: count,
+                    }),
+                    ..Default::default()
+                }]),
+                None => Err(anyhow!("Crash count property is not set")),
+            };
         }
 
         // It is safe to call unwrap here since the lock can not be poisoned based on its usage
@@ -564,27 +566,21 @@ pub fn log_rkp_error_stats(rkp_error: MetricsRkpError, sec_level: &SecurityLevel
 /// If the property is absent, it sets the property with value 0. If the property is present, it
 /// increments the value. This helps tracking keystore crashes internally.
 pub fn update_keystore_crash_sysprop() {
-    let crash_count = read_keystore_crash_count();
-    let new_count = match crash_count {
-        Ok(count) => count + 1,
+    let new_count = match read_keystore_crash_count() {
+        Ok(Some(count)) => count + 1,
+        // If the property is absent, then this is the first start up during the boot.
+        // Proceed to write the system property with value 0.
+        Ok(None) => 0,
         Err(error) => {
-            // If the property is absent, this is the first start up during the boot.
-            // Proceed to write the system property with value 0. Otherwise, log and return.
-            if !matches!(
-                error.root_cause().downcast_ref::<PropertyWatcherError>(),
-                Some(PropertyWatcherError::SystemPropertyAbsent)
-            ) {
-                log::warn!(
-                    concat!(
-                        "In update_keystore_crash_sysprop: ",
-                        "Failed to read the existing system property due to: {:?}.",
-                        "Therefore, keystore crashes will not be logged."
-                    ),
-                    error
-                );
-                return;
-            }
-            0
+            log::warn!(
+                concat!(
+                    "In update_keystore_crash_sysprop: ",
+                    "Failed to read the existing system property due to: {:?}.",
+                    "Therefore, keystore crashes will not be logged."
+                ),
+                error
+            );
+            return;
         }
     };
 
@@ -602,12 +598,12 @@ pub fn update_keystore_crash_sysprop() {
 }
 
 /// Read the system property: keystore.crash_count.
-pub fn read_keystore_crash_count() -> Result<i32> {
-    rustutils::system_properties::read("keystore.crash_count")
-        .context(ks_err!("Failed read property."))?
-        .context(ks_err!("Property not set."))?
-        .parse::<i32>()
-        .map_err(std::convert::Into::into)
+pub fn read_keystore_crash_count() -> Result<Option<i32>> {
+    match rustutils::system_properties::read("keystore.crash_count") {
+        Ok(Some(count)) => count.parse::<i32>().map(Some).map_err(std::convert::Into::into),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e).context(ks_err!("Failed to read crash count property.")),
+    }
 }
 
 /// Enum defining the bit position for each padding mode. Since padding mode can be repeatable, it
