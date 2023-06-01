@@ -21,8 +21,8 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 };
 
 use android_system_keystore2::aidl::android::system::keystore2::{
-    IKeystoreSecurityLevel::IKeystoreSecurityLevel, KeyMetadata::KeyMetadata,
-    ResponseCode::ResponseCode,
+    Domain::Domain, IKeystoreSecurityLevel::IKeystoreSecurityLevel, KeyDescriptor::KeyDescriptor,
+    KeyMetadata::KeyMetadata, ResponseCode::ResponseCode,
 };
 
 use keystore2_test_utils::{
@@ -589,4 +589,42 @@ fn keystore2_gen_non_attested_key_auth_usage_count_limit() {
         MAX_USES_COUNT,
         false,
     );
+}
+
+/// Try to generate a key with `Tag::CREATION_DATETIME` set to valid value. Test should fail
+/// to generate a key with `INVALID_ARGUMENT` error as Keystore2 backend doesn't allow user to
+/// specify `CREATION_DATETIME`.
+#[test]
+fn keystore2_gen_key_auth_creation_date_time_test_fail_with_invalid_arg_error() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let duration_since_epoch = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+    let creation_datetime = duration_since_epoch.as_millis();
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .creation_date_time(creation_datetime.try_into().unwrap());
+
+    let alias = "ks_test_auth_tags_test";
+    let result = key_generations::map_ks_error(sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        &gen_params,
+        0,
+        b"entropy",
+    ));
+
+    assert!(result.is_err());
+    assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
 }

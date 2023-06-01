@@ -305,6 +305,15 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Set creation date-time.
+    pub fn creation_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CREATION_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
