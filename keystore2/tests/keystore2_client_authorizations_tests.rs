@@ -36,6 +36,32 @@ use crate::keystore2_client_test_utils::{
 
 use keystore2_test_utils::ffi_test_utils::get_value_from_attest_record;
 
+fn gen_key_including_unique_id(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias: &str,
+) -> Vec<u8> {
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .include_unique_id();
+
+    let key_metadata = key_generations::generate_key(sec_level, &gen_params, alias).unwrap();
+
+    let unique_id = get_value_from_attest_record(
+        key_metadata.certificate.as_ref().unwrap(),
+        Tag::UNIQUE_ID,
+        key_metadata.keySecurityLevel,
+    )
+    .expect("Unique id not found.");
+    assert!(!unique_id.is_empty());
+    unique_id
+}
+
 fn generate_key_and_perform_sign_verify_op_max_times(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
     gen_params: &authorizations::AuthSetBuilder,
@@ -627,4 +653,23 @@ fn keystore2_gen_key_auth_creation_date_time_test_fail_with_invalid_arg_error() 
 
     assert!(result.is_err());
     assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
+}
+
+/// Generate a key with `Tag::INCLUDE_UNIQUE_ID` set. Test should verify that `Tag::UNIQUE_ID` is
+/// included in attest record and it remains the same for new keys generated.
+#[test]
+fn keystore2_gen_key_auth_include_unique_id_success() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let alias_first = "ks_test_auth_tags_test_1";
+    let unique_id_first = gen_key_including_unique_id(&sec_level, alias_first);
+
+    let alias_second = "ks_test_auth_tags_test_2";
+    let unique_id_second = gen_key_including_unique_id(&sec_level, alias_second);
+
+    assert_eq!(unique_id_first, unique_id_second);
+
+    delete_app_key(&keystore2, alias_first).unwrap();
+    delete_app_key(&keystore2, alias_second).unwrap();
 }

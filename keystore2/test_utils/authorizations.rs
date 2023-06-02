@@ -314,6 +314,15 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Set include unique id.
+    pub fn include_unique_id(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::INCLUDE_UNIQUE_ID,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
