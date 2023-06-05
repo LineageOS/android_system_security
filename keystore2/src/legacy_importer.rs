@@ -102,6 +102,11 @@ impl LegacyImporter {
         }
     }
 
+    #[cfg(test)]
+    pub fn set_empty(&mut self) {
+        self.state = AtomicU8::new(Self::STATE_EMPTY);
+    }
+
     /// The legacy importer must be initialized deferred, because keystore starts very early.
     /// At this time the data partition may not be mounted. So we cannot open database connections
     /// until we get actual key load requests. This sets the function that the legacy loader
