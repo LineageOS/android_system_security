@@ -517,30 +517,20 @@ pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
     match attest_id {
         Tag::ATTESTATION_ID_IMEI => get_imei(0),
         Tag::ATTESTATION_ID_SECOND_IMEI => get_imei(1),
-        Tag::ATTESTATION_ID_BRAND => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.brand"))
-            } else {
+        Tag::ATTESTATION_ID_SERIAL => Some(get_system_prop(format!("ro.{}", prop_name).as_str())),
+        _ => {
+            let prop_val =
+                get_system_prop(format!("ro.product.{}_for_attestation", prop_name).as_str());
+            if !prop_val.is_empty() {
                 Some(prop_val)
+            } else {
+                let prop_val = get_system_prop(format!("ro.product.vendor.{}", prop_name).as_str());
+                if !prop_val.is_empty() {
+                    Some(prop_val)
+                } else {
+                    Some(get_system_prop(format!("ro.product.{}", prop_name).as_str()))
+                }
             }
         }
-        Tag::ATTESTATION_ID_PRODUCT => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.name"))
-            } else {
-                Some(prop_val)
-            }
-        }
-        Tag::ATTESTATION_ID_MODEL => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.model"))
-            } else {
-                Some(prop_val)
-            }
-        }
-        _ => Some(get_system_prop(prop_name)),
     }
 }
