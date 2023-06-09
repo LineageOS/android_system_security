@@ -57,6 +57,7 @@ rust_test {
         "libkeymaster_portable",
         "libkeymaster_messages",
         "libcppbor_external",
+        "libkeystore-engine",
     ],
     require_root: true,
 }
@@ -80,6 +81,7 @@ cc_library_static {
         "libkeymaster_portable",
         "libkeymaster_messages",
         "libcppbor_external",
+        "libkeystore-engine",
     ],
 }
 
