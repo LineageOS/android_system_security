@@ -9,3 +9,4 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
                               rust::Vec<rust::u8> iv,
                               rust::Vec<rust::u8> tag);
 CxxResult buildAsn1DerEncodedWrappedKeyDescription();
+bool performCryptoOpUsingKeystoreEngine(int64_t grant_id);
