@@ -23,6 +23,7 @@ pub mod keystore2_client_hmac_key_tests;
 pub mod keystore2_client_import_keys_tests;
 pub mod keystore2_client_key_agreement_tests;
 pub mod keystore2_client_key_id_domain_tests;
+pub mod keystore2_client_keystore_engine_tests;
 pub mod keystore2_client_list_entries_tests;
 pub mod keystore2_client_operation_tests;
 pub mod keystore2_client_rsa_key_tests;
