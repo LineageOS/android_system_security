@@ -20,7 +20,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
 use libc::uid_t;
-use log_event_list::{LogContext, LogIdSecurity};
+use log_event_list::{LogContext, LogContextError, LogIdSecurity};
 
 const TAG_KEY_GENERATED: u32 = 210024;
 const TAG_KEY_IMPORTED: u32 = 210025;
@@ -60,27 +60,28 @@ pub fn log_key_deleted(key: &KeyDescriptor, calling_app: uid_t, success: bool) {
 pub fn log_key_integrity_violation(key: &KeyDescriptor) {
     with_log_context(TAG_KEY_INTEGRITY_VIOLATION, |ctx| {
         let owner = key_owner(key.domain, key.nspace, key.nspace as i32);
-        ctx.append_str(key.alias.as_ref().map_or("none", String::as_str)).append_i32(owner)
+        ctx.append_str(key.alias.as_ref().map_or("none", String::as_str))?.append_i32(owner)
     })
 }
 
 fn log_key_event(tag: u32, key: &KeyDescriptor, calling_app: uid_t, success: bool) {
     with_log_context(tag, |ctx| {
         let owner = key_owner(key.domain, key.nspace, calling_app as i32);
-        ctx.append_i32(i32::from(success))
-            .append_str(key.alias.as_ref().map_or("none", String::as_str))
+        ctx.append_i32(i32::from(success))?
+            .append_str(key.alias.as_ref().map_or("none", String::as_str))?
             .append_i32(owner)
     })
 }
 
 fn with_log_context<F>(tag: u32, f: F)
 where
-    F: Fn(LogContext) -> LogContext,
+    F: Fn(LogContext) -> Result<LogContext, LogContextError>,
 {
     if let Some(ctx) = LogContext::new(LogIdSecurity, tag) {
-        let event = f(ctx);
-        LOGS_HANDLER.queue_lo(move |_| {
-            event.write();
-        });
+        if let Ok(event) = f(ctx) {
+            LOGS_HANDLER.queue_lo(move |_| {
+                let _result = event.write();
+            });
+        }
     }
 }
