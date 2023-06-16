@@ -128,6 +128,15 @@ impl AuthorizationManager {
         // Check keystore permission.
         check_keystore_permission(KeystorePerm::AddAuth).context(ks_err!())?;
 
+        log::info!(
+            "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
+            auth_token.challenge,
+            auth_token.userId,
+            auth_token.authenticatorId,
+            auth_token.authenticatorType.0,
+            auth_token.timestamp.milliSeconds,
+        );
+
         ENFORCEMENTS.add_auth_token(auth_token.clone());
         Ok(())
     }
