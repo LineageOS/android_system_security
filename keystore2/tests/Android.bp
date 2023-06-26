@@ -58,6 +58,7 @@ rust_test {
         "libkeymaster_messages",
         "libcppbor_external",
         "libkeystore-engine",
+        "libkeymint_support",
     ],
     require_root: true,
 }

@@ -306,6 +306,12 @@ pub enum Error {
     /// Error code to indicate error while using keystore-engine API.
     #[error("Failed to perform crypto op using keystore-engine APIs.")]
     Keystore2EngineOpFailed,
+    /// Error code to indicate error in attestation-id validation.
+    #[error("Failed to validate attestation-id.")]
+    ValidateAttestIdFailed,
+    /// Error code to indicate error in getting value from attest record.
+    #[error("Failed to get value from attest record.")]
+    AttestRecordGetValueFailed,
 }
 
 /// Keystore2 error mapping.
@@ -1108,4 +1114,78 @@ pub fn import_aes_keys(
     }
 
     Ok(imported_key_aliases)
+}
+
+/// Generate attested EC-P_256 key with device id attestation.
+pub fn generate_key_with_attest_id(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    algorithm: Algorithm,
+    alias: Option<String>,
+    att_challenge: &[u8],
+    attest_key: &KeyDescriptor,
+    attest_id: Tag,
+    value: Vec<u8>,
+) -> binder::Result<KeyMetadata> {
+    assert!(algorithm == Algorithm::RSA || algorithm == Algorithm::EC);
+
+    let mut ec_gen_params;
+    if algorithm == Algorithm::EC {
+        ec_gen_params = AuthSetBuilder::new()
+            .no_auth_required()
+            .algorithm(Algorithm::EC)
+            .purpose(KeyPurpose::SIGN)
+            .purpose(KeyPurpose::VERIFY)
+            .digest(Digest::SHA_2_256)
+            .ec_curve(EcCurve::P_256)
+            .attestation_challenge(att_challenge.to_vec());
+    } else {
+        ec_gen_params = AuthSetBuilder::new()
+            .no_auth_required()
+            .algorithm(Algorithm::RSA)
+            .rsa_public_exponent(65537)
+            .key_size(2048)
+            .purpose(KeyPurpose::SIGN)
+            .purpose(KeyPurpose::VERIFY)
+            .digest(Digest::SHA_2_256)
+            .padding_mode(PaddingMode::RSA_PKCS1_1_5_SIGN)
+            .attestation_challenge(att_challenge.to_vec());
+    }
+
+    match attest_id {
+        Tag::ATTESTATION_ID_BRAND => {
+            ec_gen_params = ec_gen_params.attestation_device_brand(value);
+        }
+        Tag::ATTESTATION_ID_DEVICE => {
+            ec_gen_params = ec_gen_params.attestation_device_name(value);
+        }
+        Tag::ATTESTATION_ID_PRODUCT => {
+            ec_gen_params = ec_gen_params.attestation_device_product_name(value);
+        }
+        Tag::ATTESTATION_ID_SERIAL => {
+            ec_gen_params = ec_gen_params.attestation_device_serial(value);
+        }
+        Tag::ATTESTATION_ID_MANUFACTURER => {
+            ec_gen_params = ec_gen_params.attestation_device_manufacturer(value);
+        }
+        Tag::ATTESTATION_ID_MODEL => {
+            ec_gen_params = ec_gen_params.attestation_device_model(value);
+        }
+        Tag::ATTESTATION_ID_IMEI => {
+            ec_gen_params = ec_gen_params.attestation_device_imei(value);
+        }
+        Tag::ATTESTATION_ID_SECOND_IMEI => {
+            ec_gen_params = ec_gen_params.attestation_device_second_imei(value);
+        }
+        _ => {
+            panic!("Unknown attestation id");
+        }
+    }
+
+    sec_level.generateKey(
+        &KeyDescriptor { domain: Domain::APP, nspace: -1, alias, blob: None },
+        Some(attest_key),
+        &ec_gen_params,
+        0,
+        b"entropy",
+    )
 }
