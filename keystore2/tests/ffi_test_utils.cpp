@@ -18,6 +18,8 @@
 #include <keymaster/km_openssl/openssl_err.h>
 #include <keymaster/km_openssl/openssl_utils.h>
 
+#include <android-base/logging.h>
+
 using aidl::android::hardware::security::keymint::ErrorCode;
 
 #define TAG_SEQUENCE 0x30
@@ -502,4 +504,95 @@ bool performCryptoOpUsingKeystoreEngine(int64_t grant_id) {
     EVP_PKEY_free(evp);
 #endif
     return result;
+}
+
+CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
+    CxxResult cxx_result{};
+    cxx_result.error = KM_ERROR_OK;
+
+    uint8_t* cert_data = cert_buf.data();
+    int cert_data_size = cert_buf.size();
+
+    std::vector<uint8_t> cert_bytes;
+    cert_bytes.insert(cert_bytes.end(), cert_data, (cert_data + cert_data_size));
+
+    aidl::android::hardware::security::keymint::X509_Ptr cert(
+        aidl::android::hardware::security::keymint::test::parse_cert_blob(cert_bytes));
+    if (!cert.get()) {
+        cxx_result.error = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+        return cxx_result;
+    }
+
+    ASN1_OCTET_STRING* attest_rec =
+        aidl::android::hardware::security::keymint::test::get_attestation_record(cert.get());
+    if (!attest_rec) {
+        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        return cxx_result;
+    }
+
+    aidl::android::hardware::security::keymint::AuthorizationSet att_sw_enforced;
+    aidl::android::hardware::security::keymint::AuthorizationSet att_hw_enforced;
+    uint32_t att_attestation_version;
+    uint32_t att_keymint_version;
+    aidl::android::hardware::security::keymint::SecurityLevel att_attestation_security_level;
+    aidl::android::hardware::security::keymint::SecurityLevel att_keymint_security_level;
+    std::vector<uint8_t> att_challenge;
+    std::vector<uint8_t> att_unique_id;
+    std::vector<uint8_t> att_app_id;
+
+    auto error = aidl::android::hardware::security::keymint::parse_attestation_record(
+        attest_rec->data, attest_rec->length, &att_attestation_version,
+        &att_attestation_security_level, &att_keymint_version, &att_keymint_security_level,
+        &att_challenge, &att_sw_enforced, &att_hw_enforced, &att_unique_id);
+    EXPECT_EQ(ErrorCode::OK, error);
+    if (error != ErrorCode::OK) {
+        cxx_result.error = static_cast<int32_t>(error);
+        return cxx_result;
+    }
+
+    aidl::android::hardware::security::keymint::Tag auth_tag =
+        static_cast<aidl::android::hardware::security::keymint::Tag>(tag);
+
+    if (auth_tag == aidl::android::hardware::security::keymint::Tag::ATTESTATION_APPLICATION_ID) {
+        int pos = att_sw_enforced.find(
+            aidl::android::hardware::security::keymint::Tag::ATTESTATION_APPLICATION_ID);
+        if (pos == -1) {
+            cxx_result.error = KM_ERROR_ATTESTATION_APPLICATION_ID_MISSING;
+            return cxx_result;
+        }
+        aidl::android::hardware::security::keymint::KeyParameter param = att_sw_enforced[pos];
+        std::vector<uint8_t> val =
+            param.value.get<aidl::android::hardware::security::keymint::KeyParameterValue::blob>();
+        std::move(val.begin(), val.end(), std::back_inserter(cxx_result.data));
+        return cxx_result;
+    }
+
+    if (auth_tag == aidl::android::hardware::security::keymint::Tag::ATTESTATION_CHALLENGE) {
+        if (att_challenge.size() == 0) {
+            cxx_result.error = KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
+            return cxx_result;
+        }
+        std::move(att_challenge.begin(), att_challenge.end(), std::back_inserter(cxx_result.data));
+        return cxx_result;
+    }
+
+    if (auth_tag == aidl::android::hardware::security::keymint::Tag::UNIQUE_ID) {
+        if (att_unique_id.size() == 0) {
+            cxx_result.error = KM_ERROR_UNSUPPORTED_TAG;
+            return cxx_result;
+        }
+        std::move(att_unique_id.begin(), att_unique_id.end(), std::back_inserter(cxx_result.data));
+        return cxx_result;
+    }
+
+    int pos = att_hw_enforced.find(auth_tag);
+    if (pos == -1) {
+        cxx_result.error = KM_ERROR_UNSUPPORTED_TAG;
+        return cxx_result;
+    }
+    aidl::android::hardware::security::keymint::KeyParameter param = att_hw_enforced[pos];
+    std::vector<uint8_t> val =
+        param.value.get<aidl::android::hardware::security::keymint::KeyParameterValue::blob>();
+    std::move(val.begin(), val.end(), std::back_inserter(cxx_result.data));
+    return cxx_result;
 }
