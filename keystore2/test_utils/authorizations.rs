@@ -161,6 +161,87 @@ impl AuthSetBuilder {
             .push(KeyParameter { tag: Tag::MIN_MAC_LENGTH, value: KeyParameterValue::Integer(l) });
         self
     }
+
+    /// Add Attestation-Device-Brand.
+    pub fn attestation_device_brand(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_BRAND,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-name.
+    pub fn attestation_device_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_DEVICE,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Product-Name.
+    pub fn attestation_device_product_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_PRODUCT,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Serial.
+    pub fn attestation_device_serial(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_SERIAL,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-IMEI.
+    pub fn attestation_device_imei(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_IMEI,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-IMEI.
+    pub fn attestation_device_second_imei(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_SECOND_IMEI,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-MEID.
+    pub fn attestation_device_meid(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MEID,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Manufacturer.
+    pub fn attestation_device_manufacturer(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MANUFACTURER,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Model.
+    pub fn attestation_device_model(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MODEL,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {

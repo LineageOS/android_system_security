@@ -15,6 +15,8 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use std::process::{Command, Output};
+
 use openssl::encrypt::Encrypter;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
@@ -66,6 +68,7 @@ pub const SAMPLE_PLAIN_TEXT: &[u8] = b"my message 11111";
 
 pub const PACKAGE_MANAGER_NATIVE_SERVICE: &str = "package_native";
 pub const APP_ATTEST_KEY_FEATURE: &str = "android.hardware.keystore.app_attest_key";
+pub const DEVICE_ID_ATTESTATION_FEATURE: &str = "android.software.device_id_attestation";
 
 /// Determines whether app_attest_key_feature is supported or not.
 pub fn app_attest_key_feature_exists() -> bool {
@@ -75,10 +78,27 @@ pub fn app_attest_key_feature_exists() -> bool {
     pm.hasSystemFeature(APP_ATTEST_KEY_FEATURE, 0).expect("hasSystemFeature failed.")
 }
 
+/// Determines whether device_id_attestation is supported or not.
+pub fn device_id_attestation_feature_exists() -> bool {
+    let pm = wait_for_interface::<dyn IPackageManagerNative>(PACKAGE_MANAGER_NATIVE_SERVICE)
+        .expect("Failed to get package manager native service.");
+
+    pm.hasSystemFeature(DEVICE_ID_ATTESTATION_FEATURE, 0).expect("hasSystemFeature failed.")
+}
+
 #[macro_export]
 macro_rules! skip_test_if_no_app_attest_key_feature {
     () => {
         if !app_attest_key_feature_exists() {
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! skip_test_if_no_device_id_attestation_feature {
+    () => {
+        if !device_id_attestation_feature_exists() {
             return;
         }
     };
@@ -443,4 +463,85 @@ pub fn verify_aliases(
     assert!(key_descriptors
         .iter()
         .all(|key| expected_aliases.contains(key.alias.as_ref().unwrap())));
+}
+
+// Get the value of the given system property, if the given system property doesn't exist
+// then returns an empty byte vector.
+pub fn get_system_prop(name: &str) -> Vec<u8> {
+    match rustutils::system_properties::read(name) {
+        Ok(Some(value)) => {
+            return value.as_bytes().to_vec();
+        }
+        _ => {
+            vec![]
+        }
+    }
+}
+
+/// Determines whether the SECOND-IMEI can be used as device attest-id.
+pub fn is_second_imei_id_attestation_required(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+) -> bool {
+    let api_level = std::str::from_utf8(&get_system_prop("ro.vendor.api_level"))
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    keystore2.getInterfaceVersion().unwrap() >= 3 && api_level > 33
+}
+
+/// Run a service command and collect the output.
+pub fn run_service_command(command: &[&str]) -> std::io::Result<Output> {
+    Command::new("cmd").args(command).output()
+}
+
+/// Get IMEI from telephony service.
+pub fn get_imei(slot: i32) -> Option<Vec<u8>> {
+    let mut cmd = vec!["phone", "get-imei"];
+    let slot_str = slot.to_string();
+    cmd.push(slot_str.as_str());
+    let output = run_service_command(&cmd).unwrap();
+    if output.status.success() {
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut split_out = stdout.split_whitespace();
+        let imei = split_out.next_back().unwrap();
+        if imei == "null" {
+            return None;
+        }
+        return Some(imei.as_bytes().to_vec());
+    }
+
+    None
+}
+
+/// Get value of the given attestation id.
+pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
+    match attest_id {
+        Tag::ATTESTATION_ID_IMEI => get_imei(0),
+        Tag::ATTESTATION_ID_SECOND_IMEI => get_imei(1),
+        Tag::ATTESTATION_ID_BRAND => {
+            let prop_val = get_system_prop(prop_name);
+            if prop_val.is_empty() {
+                Some(get_system_prop("ro.product.brand"))
+            } else {
+                Some(prop_val)
+            }
+        }
+        Tag::ATTESTATION_ID_PRODUCT => {
+            let prop_val = get_system_prop(prop_name);
+            if prop_val.is_empty() {
+                Some(get_system_prop("ro.product.name"))
+            } else {
+                Some(prop_val)
+            }
+        }
+        Tag::ATTESTATION_ID_MODEL => {
+            let prop_val = get_system_prop(prop_name);
+            if prop_val.is_empty() {
+                Some(get_system_prop("ro.product.model"))
+            } else {
+                Some(prop_val)
+            }
+        }
+        _ => Some(get_system_prop(prop_name)),
+    }
 }
