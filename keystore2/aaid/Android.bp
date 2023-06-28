@@ -38,7 +38,6 @@ rust_bindgen {
     source_stem: "bindings",
 
     bindgen_flags: [
-        "--size_t-is-usize",
         "--allowlist-function=aaid_keystore_attestation_id",
         "--allowlist-var=KEY_ATTESTATION_APPLICATION_ID_MAX_SIZE",
     ],
