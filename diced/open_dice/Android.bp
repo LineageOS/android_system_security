@@ -125,7 +125,6 @@ rust_defaults {
     crate_name: "open_dice_cbor_bindgen",
     source_stem: "bindings",
     bindgen_flags: [
-        "--size_t-is-usize",
         "--rustified-enum DiceConfigType",
         "--rustified-enum DiceMode",
         "--rustified-enum DiceResult",
@@ -177,8 +176,6 @@ rust_defaults {
     crate_name: "open_dice_bcc_bindgen",
     source_stem: "bindings",
     bindgen_flags: [
-        "--size_t-is-usize",
-
         // By generating only essential functions, we can make bindings concise and
         // optimize compilation time.
         "--allowlist-function=BccFormatConfigDescriptor",
