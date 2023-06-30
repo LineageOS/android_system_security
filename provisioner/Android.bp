@@ -77,4 +77,40 @@ cc_binary {
         "libgflags",
         "librkp_factory_extraction",
     ],
+    dist: {
+        targets: [
+            "dist_files",
+            "rkp_factory_extraction_tool",
+        ],
+        dest: "rkp_factory_extraction_tool"
+    },
+    compile_multilib: "both",
+    multilib: {
+        lib64: {
+            suffix: "64",
+        },
+    },
+    stl: "libc++_static",
+    target: {
+        android_arm: {
+            dist: {
+                dir: "rkp_factory_extraction_tool/arm",
+            },
+        },
+        android_arm64: {
+            dist: {
+                dir: "rkp_factory_extraction_tool/arm64",
+            },
+        },
+        android_x86: {
+            dist: {
+                dir: "rkp_factory_extraction_tool/x86",
+            },
+        },
+        android_x86_64: {
+            dist: {
+                dir: "rkp_factory_extraction_tool/x86_64",
+            },
+        },
+    },
 }
