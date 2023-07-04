@@ -44,6 +44,7 @@ rust_protobuf {
     name: "libfsverity_digests_proto_rust",
     crate_name: "fsverity_digests_proto",
     source_stem: "fsverity_digests_proto",
+    use_protobuf3: true,
     protos: [
         "fsverity_digests.proto",
     ],
