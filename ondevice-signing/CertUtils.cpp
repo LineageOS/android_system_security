@@ -25,7 +25,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-#include <optional>
 #include <vector>
 
 #include "KeyConstants.h"
@@ -53,12 +52,6 @@ static Result<bssl::UniquePtr<X509>> loadX509(const std::string& path) {
 
     fclose(f);
     return cert;
-}
-
-static X509V3_CTX makeContext(X509* issuer, X509* subject) {
-    X509V3_CTX context = {};
-    X509V3_set_ctx(&context, issuer, subject, nullptr, nullptr, 0);
-    return context;
 }
 
 static bool add_ext(X509V3_CTX* context, X509* cert, int nid, const char* value) {
@@ -126,15 +119,14 @@ Result<void> verifySignature(const std::string& message, const std::string& sign
     return {};
 }
 
-static Result<void> createCertificate(
-    const CertSubject& subject, EVP_PKEY* publicKey,
-    const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
-    const std::optional<std::string>& issuerCertPath, const std::string& path) {
-
-    // If an issuer cert is specified, we are signing someone else's key.
-    // Otherwise we are signing our key - a self-signed certificate.
-    bool selfSigned = !issuerCertPath;
-
+Result<void> createSelfSignedCertificate(
+    const std::vector<uint8_t>& publicKey,
+    const std::function<Result<std::string>(const std::string&)>& signFunction,
+    const std::string& path) {
+    auto rsa_pkey = modulusToRsaPkey(publicKey);
+    if (!rsa_pkey.ok()) {
+        return rsa_pkey.error();
+    }
     bssl::UniquePtr<X509> x509(X509_new());
     if (!x509) {
         return Error() << "Unable to allocate x509 container";
@@ -142,7 +134,7 @@ static Result<void> createCertificate(
     X509_set_version(x509.get(), 2);
     X509_gmtime_adj(X509_get_notBefore(x509.get()), 0);
     X509_gmtime_adj(X509_get_notAfter(x509.get()), kCertLifetimeSeconds);
-    ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), subject.serialNumber);
+    ASN1_INTEGER_set(X509_get_serialNumber(x509.get()), kRootSubject.serialNumber);
 
     bssl::UniquePtr<X509_ALGOR> algor(X509_ALGOR_new());
     if (!algor ||
@@ -152,7 +144,7 @@ static Result<void> createCertificate(
         return Error() << "Unable to set x509 signature algorithm";
     }
 
-    if (!X509_set_pubkey(x509.get(), publicKey)) {
+    if (!X509_set_pubkey(x509.get(), rsa_pkey.value().get())) {
         return Error() << "Unable to set x509 public key";
     }
 
@@ -162,44 +154,15 @@ static Result<void> createCertificate(
     }
     addNameEntry(subjectName, "C", kIssuerCountry);
     addNameEntry(subjectName, "O", kIssuerOrg);
-    addNameEntry(subjectName, "CN", subject.commonName);
-
-    if (selfSigned) {
-        if (!X509_set_issuer_name(x509.get(), subjectName)) {
-            return Error() << "Unable to set x509 issuer name";
-        }
-    } else {
-        X509_NAME* issuerName = X509_get_issuer_name(x509.get());
-        if (!issuerName) {
-            return Error() << "Unable to get x509 issuer name";
-        }
-        addNameEntry(issuerName, "C", kIssuerCountry);
-        addNameEntry(issuerName, "O", kIssuerOrg);
-        addNameEntry(issuerName, "CN", kRootSubject.commonName);
+    addNameEntry(subjectName, "CN", kRootSubject.commonName);
+    if (!X509_set_issuer_name(x509.get(), subjectName)) {
+        return Error() << "Unable to set x509 issuer name";
     }
 
-    // Beware: context contains a pointer to issuerCert, so we need to keep it alive.
-    bssl::UniquePtr<X509> issuerCert;
-    X509V3_CTX context;
-
-    if (selfSigned) {
-        context = makeContext(x509.get(), x509.get());
-    } else {
-        auto certStatus = loadX509(*issuerCertPath);
-        if (!certStatus.ok()) {
-            return Error() << "Unable to load issuer cert: " << certStatus.error();
-        }
-        issuerCert = std::move(certStatus.value());
-        context = makeContext(issuerCert.get(), x509.get());
-    }
-
-    // If it's a self-signed cert we use it for signing certs, otherwise only for signing data.
-    const char* basicConstraints = selfSigned ? "CA:TRUE" : "CA:FALSE";
-    const char* keyUsage =
-        selfSigned ? "critical,keyCertSign,cRLSign,digitalSignature" : "critical,digitalSignature";
-
-    add_ext(&context, x509.get(), NID_basic_constraints, basicConstraints);
-    add_ext(&context, x509.get(), NID_key_usage, keyUsage);
+    X509V3_CTX context = {};
+    X509V3_set_ctx(&context, x509.get(), x509.get(), nullptr, nullptr, 0);
+    add_ext(&context, x509.get(), NID_basic_constraints, "CA:TRUE");
+    add_ext(&context, x509.get(), NID_key_usage, "critical,keyCertSign,cRLSign,digitalSignature");
     add_ext(&context, x509.get(), NID_subject_key_identifier, "hash");
     add_ext(&context, x509.get(), NID_authority_key_identifier, "keyid:always");
 
@@ -229,18 +192,6 @@ static Result<void> createCertificate(
     }
 
     return {};
-}
-
-Result<void> createSelfSignedCertificate(
-    const std::vector<uint8_t>& publicKey,
-    const std::function<Result<std::string>(const std::string&)>& signFunction,
-    const std::string& path) {
-    auto rsa_pkey = modulusToRsaPkey(publicKey);
-    if (!rsa_pkey.ok()) {
-        return rsa_pkey.error();
-    }
-
-    return createCertificate(kRootSubject, rsa_pkey.value().get(), signFunction, {}, path);
 }
 
 static Result<std::vector<uint8_t>> extractPublicKey(EVP_PKEY* pkey) {
