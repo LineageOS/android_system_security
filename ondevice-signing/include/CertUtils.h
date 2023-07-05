@@ -34,39 +34,18 @@ struct CertSubject {
     unsigned serialNumber;
 };
 
-// These are all the certificates we ever sign (the first one being our
-// self-signed cert).  We shouldn't really re-use serial numbers for different
-// certificates for the same subject but we do; only one should be in use at a
-// time though.
+// This is our self-signed cert.
 inline const CertSubject kRootSubject{"ODS", 1};
-inline const CertSubject kCompOsSubject{"CompOs", 2};
 
 android::base::Result<void> createSelfSignedCertificate(
     const std::vector<uint8_t>& publicKey,
     const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
     const std::string& path);
 
-android::base::Result<void> createLeafCertificate(
-    const CertSubject& subject, const std::vector<uint8_t>& publicKey,
-    const std::function<android::base::Result<std::string>(const std::string&)>& signFunction,
-    const std::string& issuerCertPath, const std::string& outPath);
-
-android::base::Result<std::vector<uint8_t>> createPkcs7(const std::vector<uint8_t>& signedData,
-                                                        const CertSubject& signer);
-
 android::base::Result<std::vector<uint8_t>>
 extractPublicKeyFromX509(const std::vector<uint8_t>& x509);
-android::base::Result<std::vector<uint8_t>>
-extractPublicKeyFromSubjectPublicKeyInfo(const std::vector<uint8_t>& subjectKeyInfo);
 android::base::Result<std::vector<uint8_t>> extractPublicKeyFromX509(const std::string& path);
-
-android::base::Result<CertInfo>
-verifyAndExtractCertInfoFromX509(const std::string& path, const std::vector<uint8_t>& publicKey);
 
 android::base::Result<void> verifySignature(const std::string& message,
                                             const std::string& signature,
                                             const std::vector<uint8_t>& publicKey);
-
-android::base::Result<void> verifyRsaPublicKeySignature(const std::string& message,
-                                                        const std::string& signature,
-                                                        const std::vector<uint8_t>& rsaPublicKey);
