@@ -14,6 +14,25 @@
  * limitations under the License.
  */
 
+//
+// fsverity_init is a tool for loading X.509 certificates into the kernel keyring used by the
+// fsverity builtin signature verification kernel feature
+// (https://www.kernel.org/doc/html/latest/filesystems/fsverity.html#built-in-signature-verification).
+// Starting in Android 14, Android has actually stopped using this feature, as it was too inflexible
+// and caused problems.  It has been replaced by userspace signature verification.  Also, some uses
+// of fsverity in Android are now for integrity-only use cases.
+//
+// Regardless, there may exist fsverity files on-disk that were created by Android 13 or earlier.
+// These files still have builtin signatures.  If the kernel is an older kernel that still has
+// CONFIG_FS_VERITY_BUILTIN_SIGNATURES enabled, these files cannot be opened unless the
+// corresponding key is in the ".fs-verity" keyring.  Therefore, this tool still has to exist and be
+// used to load keys into the kernel, even though this has no security purpose anymore.
+//
+// This tool can be removed as soon as all supported kernels are guaranteed to have
+// CONFIG_FS_VERITY_BUILTIN_SIGNATURES disabled, or alternatively as soon as support for upgrades
+// from Android 13 or earlier is no longer required.
+//
+
 #define LOG_TAG "fsverity_init"
 
 #include <sys/types.h>
@@ -90,8 +109,9 @@ int main(int argc, const char** argv) {
 
     key_serial_t keyring_id = android::GetKeyringId(".fs-verity");
     if (keyring_id < 0) {
-        LOG(ERROR) << "Failed to find .fs-verity keyring id";
-        return -1;
+        // This is expected on newer kernels.  See comment at the beginning of this file.
+        LOG(DEBUG) << "no initialization required";
+        return 0;
     }
 
     const std::string_view command = argv[1];
