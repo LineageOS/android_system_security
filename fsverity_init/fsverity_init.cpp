@@ -42,32 +42,9 @@
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
-#include <android-base/properties.h>
 #include <android-base/strings.h>
 #include <log/log.h>
 #include <mini_keyctl_utils.h>
-
-bool LoadKeyToKeyring(key_serial_t keyring_id, const char* desc, const char* data, size_t size) {
-    key_serial_t key = add_key("asymmetric", desc, data, size, keyring_id);
-    if (key < 0) {
-        PLOG(ERROR) << "Failed to add key";
-        return false;
-    }
-    return true;
-}
-
-bool LoadKeyFromStdin(key_serial_t keyring_id, const char* keyname) {
-    std::string content;
-    if (!android::base::ReadFdToString(STDIN_FILENO, &content)) {
-        LOG(ERROR) << "Failed to read key from stdin";
-        return false;
-    }
-    if (!LoadKeyToKeyring(keyring_id, keyname, content.c_str(), content.size())) {
-        LOG(ERROR) << "Failed to load key from stdin";
-        return false;
-    }
-    return true;
-}
 
 void LoadKeyFromFile(key_serial_t keyring_id, const char* keyname, const std::string& path) {
     LOG(INFO) << "LoadKeyFromFile path=" << path << " keyname=" << keyname;
@@ -76,8 +53,8 @@ void LoadKeyFromFile(key_serial_t keyring_id, const char* keyname, const std::st
         LOG(ERROR) << "Failed to read key from " << path;
         return;
     }
-    if (!LoadKeyToKeyring(keyring_id, keyname, content.c_str(), content.size())) {
-        LOG(ERROR) << "Failed to load key from " << path;
+    if (add_key("asymmetric", keyname, content.c_str(), content.size(), keyring_id) < 0) {
+        PLOG(ERROR) << "Failed to add key from " << path;
     }
 }
 
@@ -118,20 +95,6 @@ int main(int argc, const char** argv) {
 
     if (command == "--load-verified-keys") {
         LoadKeyFromVerifiedPartitions(keyring_id);
-    } else if (command == "--load-extra-key") {
-        if (argc != 3) {
-            LOG(ERROR) << "--load-extra-key requires <key_name> argument.";
-            return -1;
-        }
-        if (!LoadKeyFromStdin(keyring_id, argv[2])) {
-            return -1;
-        }
-    } else if (command == "--lock") {
-        if (!android::base::GetBoolProperty("ro.debuggable", false)) {
-            if (keyctl_restrict_keyring(keyring_id, nullptr, nullptr) < 0) {
-                PLOG(ERROR) << "Cannot restrict .fs-verity keyring";
-            }
-        }
     } else {
         LOG(ERROR) << "Unknown argument(s).";
         return -1;
