@@ -29,9 +29,9 @@ use std::ptr;
 /// Hashes the provided input using DICE's hash function `DiceHash`.
 pub fn hash(input: &[u8]) -> Result<Hash> {
     let mut output: Hash = [0; HASH_SIZE];
-    // SAFETY: DiceHash takes a sized input buffer and writes to a constant-sized output buffer.
-    // The first argument context is not used in this function.
     check_result(
+        // SAFETY: DiceHash takes a sized input buffer and writes to a constant-sized output buffer.
+        // The first argument context is not used in this function.
         unsafe {
             DiceHash(
                 ptr::null_mut(), // context
@@ -48,9 +48,9 @@ pub fn hash(input: &[u8]) -> Result<Hash> {
 /// An implementation of HKDF-SHA512. Derives a key of `derived_key.len()` bytes from `ikm`, `salt`,
 /// and `info`. The derived key is written to the `derived_key`.
 pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Result<()> {
-    // SAFETY: The function writes to the `derived_key`, within the given bounds, and only reads the
-    // input values. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the `derived_key`, within the given bounds, and only reads
+        // the input values. The first argument context is not used in this function.
         unsafe {
             DiceKdf(
                 ptr::null_mut(), // context
@@ -74,9 +74,10 @@ pub fn kdf(ikm: &[u8], salt: &[u8], info: &[u8], derived_key: &mut [u8]) -> Resu
 pub fn keypair_from_seed(seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(PublicKey, PrivateKey)> {
     let mut public_key = [0u8; PUBLIC_KEY_SIZE];
     let mut private_key = PrivateKey::default();
-    // SAFETY: The function writes to the `public_key` and `private_key` within the given bounds,
-    // and only reads the `seed`. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the `public_key` and `private_key` within the given
+        // bounds, and only reads the `seed`. The first argument context is not used in this
+        // function.
         unsafe {
             DiceKeypairFromSeed(
                 ptr::null_mut(), // context
@@ -93,9 +94,9 @@ pub fn keypair_from_seed(seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(PublicKe
 /// Signs the `message` with the give `private_key` using `DiceSign`.
 pub fn sign(message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Signature> {
     let mut signature = [0u8; SIGNATURE_SIZE];
-    // SAFETY: The function writes to the `signature` within the given bounds, and only reads the
-    // message and the private key. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the `signature` within the given bounds, and only reads
+        // the message and the private key. The first argument context is not used in this function.
         unsafe {
             DiceSign(
                 ptr::null_mut(), // context
@@ -112,9 +113,9 @@ pub fn sign(message: &[u8], private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Sign
 
 /// Verifies the `signature` of the `message` with the given `public_key` using `DiceVerify`.
 pub fn verify(message: &[u8], signature: &Signature, public_key: &PublicKey) -> Result<()> {
-    // SAFETY: only reads the messages, signature and public key as constant values.
-    // The first argument context is not used in this function.
     check_result(
+        // SAFETY: only reads the messages, signature and public key as constant values.
+        // The first argument context is not used in this function.
         unsafe {
             DiceVerify(
                 ptr::null_mut(), // context
@@ -140,9 +141,10 @@ pub fn generate_certificate(
     certificate: &mut [u8],
 ) -> Result<usize> {
     let mut certificate_actual_size = 0;
-    // SAFETY: The function writes to the `certificate` within the given bounds, and only reads the
-    // input values and the key seeds. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the `certificate` within the given bounds, and only reads
+        // the input values and the key seeds. The first argument context is not used in this
+        // function.
         unsafe {
             DiceGenerateCertificate(
                 ptr::null_mut(), // context

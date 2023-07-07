@@ -217,9 +217,9 @@ impl<'a> InputValues<'a> {
 /// Derives a CDI private key seed from a `cdi_attest` value.
 pub fn derive_cdi_private_key_seed(cdi_attest: &Cdi) -> Result<PrivateKeySeed> {
     let mut seed = PrivateKeySeed::default();
-    // SAFETY: The function writes to the buffer within the given bounds, and only reads the
-    // input values. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the buffer within the given bounds, and only reads the
+        // input values. The first argument context is not used in this function.
         unsafe {
             DiceDeriveCdiPrivateKeySeed(
                 ptr::null_mut(), // context
@@ -235,9 +235,9 @@ pub fn derive_cdi_private_key_seed(cdi_attest: &Cdi) -> Result<PrivateKeySeed> {
 /// Derives an ID from the given `cdi_public_key` value.
 pub fn derive_cdi_certificate_id(cdi_public_key: &[u8]) -> Result<DiceId> {
     let mut id = [0u8; ID_SIZE];
-    // SAFETY: The function writes to the buffer within the given bounds, and only reads the
-    // input values. The first argument context is not used in this function.
     check_result(
+        // SAFETY: The function writes to the buffer within the given bounds, and only reads the
+        // input values. The first argument context is not used in this function.
         unsafe {
             DiceDeriveCdiCertificateId(
                 ptr::null_mut(), // context
@@ -264,10 +264,10 @@ pub fn dice_main_flow(
     next_cdi_values: &mut CdiValues,
 ) -> Result<usize> {
     let mut next_cdi_certificate_actual_size = 0;
-    // SAFETY: The function only reads the current CDI values and inputs and writes
-    // to `next_cdi_certificate` and next CDI values within its bounds.
-    // The first argument can be null and is not used in the current implementation.
     check_result(
+        // SAFETY: The function only reads the current CDI values and inputs and writes
+        // to `next_cdi_certificate` and next CDI values within its bounds.
+        // The first argument can be null and is not used in the current implementation.
         unsafe {
             DiceMainFlow(
                 ptr::null_mut(), // context
