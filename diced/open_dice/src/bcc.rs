@@ -48,9 +48,9 @@ pub fn bcc_format_config_descriptor(
     };
 
     let mut buffer_size = 0;
-    // SAFETY: The function writes to the buffer, within the given bounds, and only reads the
-    // input values. It writes its result to buffer_size.
     check_result(
+        // SAFETY: The function writes to the buffer, within the given bounds, and only reads the
+        // input values. It writes its result to buffer_size.
         unsafe {
             BccFormatConfigDescriptor(&values, buffer.len(), buffer.as_mut_ptr(), &mut buffer_size)
         },
@@ -72,11 +72,11 @@ pub fn bcc_main_flow(
     next_bcc: &mut [u8],
 ) -> Result<usize> {
     let mut next_bcc_size = 0;
-    // SAFETY: `BccMainFlow` only reads the current `bcc` and CDI values and writes
-    // to `next_bcc` and next CDI values within its bounds. It also reads
-    // `input_values` as a constant input and doesn't store any pointer.
-    // The first argument can be null and is not used in the current implementation.
     check_result(
+        // SAFETY: `BccMainFlow` only reads the current `bcc` and CDI values and writes
+        // to `next_bcc` and next CDI values within its bounds. It also reads
+        // `input_values` as a constant input and doesn't store any pointer.
+        // The first argument can be null and is not used in the current implementation.
         unsafe {
             BccMainFlow(
                 ptr::null_mut(), // context
@@ -108,11 +108,11 @@ pub fn bcc_handover_main_flow(
     next_bcc_handover: &mut [u8],
 ) -> Result<usize> {
     let mut next_bcc_handover_size = 0;
-    // SAFETY - The function only reads `current_bcc_handover` and writes to `next_bcc_handover`
-    // within its bounds,
-    // It also reads `input_values` as a constant input and doesn't store any pointer.
-    // The first argument can be null and is not used in the current implementation.
     check_result(
+        // SAFETY: The function only reads `current_bcc_handover` and writes to `next_bcc_handover`
+        // within its bounds,
+        // It also reads `input_values` as a constant input and doesn't store any pointer.
+        // The first argument can be null and is not used in the current implementation.
         unsafe {
             BccHandoverMainFlow(
                 ptr::null_mut(), // context
@@ -165,9 +165,9 @@ pub fn bcc_handover_parse(bcc_handover: &[u8]) -> Result<BccHandover> {
     let mut cdi_seal: *const u8 = ptr::null();
     let mut bcc: *const u8 = ptr::null();
     let mut bcc_size = 0;
-    // SAFETY: The `bcc_handover` is only read and never stored and the returned pointers should all
-    // point within the address range of the `bcc_handover` or be NULL.
     check_result(
+        // SAFETY: The `bcc_handover` is only read and never stored and the returned pointers should
+        // all point within the address range of the `bcc_handover` or be NULL.
         unsafe {
             BccHandoverParse(
                 bcc_handover.as_ptr(),
