@@ -527,7 +527,6 @@ AuthKeyData* CredentialData::findAuthKey_(bool allowUsingExhaustedKeys,
         return nullptr;
     }
 
-    int n = 0;
     for (AuthKeyData& data : authKeyDatas_) {
         if (nowMilliSeconds > data.expirationDateMillisSinceEpoch) {
             if (!allowUsingExpiredKeys) {
@@ -540,7 +539,6 @@ AuthKeyData* CredentialData::findAuthKey_(bool allowUsingExhaustedKeys,
                 candidate = &data;
             }
         }
-        n++;
     }
 
     if (candidate == nullptr) {
