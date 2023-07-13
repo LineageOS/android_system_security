@@ -244,7 +244,7 @@ impl ApcManager {
             // If cancelled by the user or if aborted by the client.
             (ResponseCode::CANCELLED, _, _) | (ResponseCode::ABORTED, true, _) => {
                 // Penalize.
-                let mut rate_info = state.rate_limiting.entry(uid).or_default();
+                let rate_info = state.rate_limiting.entry(uid).or_default();
                 rate_info.counter += 1;
                 rate_info.timestamp = start;
             }
