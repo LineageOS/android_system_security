@@ -823,7 +823,7 @@ impl SuperKeyManager {
         unlocking_sids: &[i64],
     ) {
         log::info!("Locking screen bound for user {} sids {:?}", user_id, unlocking_sids);
-        let mut entry = self.data.user_keys.entry(user_id).or_default();
+        let entry = self.data.user_keys.entry(user_id).or_default();
         if !unlocking_sids.is_empty() {
             if let (Some(aes), Some(ecdh)) = (
                 entry.screen_lock_bound.as_ref().cloned(),
@@ -899,7 +899,7 @@ impl SuperKeyManager {
         db: &mut KeystoreDB,
         user_id: UserId,
     ) -> Result<()> {
-        let mut entry = self.data.user_keys.entry(user_id).or_default();
+        let entry = self.data.user_keys.entry(user_id).or_default();
         if let Some(biometric) = entry.biometric_unlock.as_ref() {
             let (key_id_guard, key_entry) = db
                 .load_key_entry(
