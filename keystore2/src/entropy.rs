@@ -29,7 +29,7 @@ struct FeederInfo {
 /// Register the entropy feeder as an idle callback.
 pub fn register_feeder() {
     crate::globals::ASYNC_TASK.add_idle(|shelf| {
-        let mut info = shelf.get_mut::<FeederInfo>();
+        let info = shelf.get_mut::<FeederInfo>();
         let now = Instant::now();
         let feed_needed = match info.last_feed {
             None => true,
