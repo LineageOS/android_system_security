@@ -74,8 +74,8 @@ KeyAttestationApplicationIdProvider& KeyAttestationApplicationIdProvider::get() 
 }
 
 KeyAttestationApplicationIdProvider::KeyAttestationApplicationIdProvider()
-    : BpKeyAttestationApplicationIdProvider(
-          android::defaultServiceManager()->getService(String16("sec_key_att_app_id_provider"))) {}
+    : BpKeyAttestationApplicationIdProvider(android::defaultServiceManager()->waitForService(
+          String16("sec_key_att_app_id_provider"))) {}
 
 DECLARE_STACK_OF(ASN1_OCTET_STRING);
 
