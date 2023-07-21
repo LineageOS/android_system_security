@@ -23,6 +23,9 @@ pub struct Drbg(*mut bssl_sys::CTR_DRBG_STATE);
 
 impl Drbg {
     pub fn new(entropy: &Entropy) -> Result<Drbg> {
+        // SAFETY: entropy must be a valid pointer because it comes from a reference, and a null
+        // pointer is allowed for personalization. CTR_DRBG_new doesn't retain the entropy pointer
+        // for use after it returns.
         let p = unsafe { bssl_sys::CTR_DRBG_new(entropy.as_ptr(), std::ptr::null(), 0) };
         ensure!(!p.is_null(), "CTR_DRBG_new failed");
         Ok(Drbg(p))
@@ -30,6 +33,9 @@ impl Drbg {
 
     pub fn reseed(&mut self, entropy: &Entropy) -> Result<()> {
         ensure!(
+            // SAFETY: We know that self.0 is valid because it was initialised from CTR_DRBG_new in
+            // Drbg::new above. The entropy pointer must be valid because it comes from a reference,
+            // and CTR_DRBG_reseed doesn't retain it after it returns.
             unsafe { bssl_sys::CTR_DRBG_reseed(self.0, entropy.as_ptr(), std::ptr::null(), 0) }
                 == 1,
             "CTR_DRBG_reseed failed"
@@ -39,6 +45,10 @@ impl Drbg {
 
     pub fn generate(&mut self, buf: &mut [u8]) -> Result<()> {
         ensure!(
+            // SAFETY: We know that self.0 is valid because it was initialised from CTR_DRBG_new in
+            // Drbg::new above. The out pointer and length must be valid and unaliased because they
+            // come from a mutable slice reference, and CTR_DRBG_generate doesn't retain them after
+            // it returns.
             unsafe {
                 bssl_sys::CTR_DRBG_generate(
                     self.0,
@@ -56,10 +66,13 @@ impl Drbg {
 
 impl Drop for Drbg {
     fn drop(&mut self) {
+        // SAFETY: We know that self.0 is valid because it was initialised from CTR_DRBG_new in
+        // Drbg::new above, and this is the only place that frees it.
         unsafe {
             bssl_sys::CTR_DRBG_free(self.0);
         }
     }
 }
 
+// SAFETY: CTR_DRBG functions can be called from any thread.
 unsafe impl Send for Drbg {}
