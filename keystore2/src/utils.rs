@@ -215,8 +215,8 @@ pub fn key_parameters_to_authorizations(
 /// as an integer.
 pub fn get_current_time_in_milliseconds() -> i64 {
     let mut current_time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // Following unsafe block includes one system call to get monotonic time.
-    // Therefore, it is not considered harmful.
+    // SAFETY: The pointer is valid because it comes from a reference, and clock_gettime doesn't
+    // retain it beyond the call.
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut current_time) };
     current_time.tv_sec as i64 * 1000 + (current_time.tv_nsec as i64 / 1_000_000)
 }
