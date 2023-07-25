@@ -51,9 +51,9 @@ enum AuthRequestState {
     /// An outstanding per operation authorization request.
     OpAuth,
     /// An outstanding request for per operation authorization and secure timestamp.
-    TimeStampedOpAuth(Receiver<Result<TimeStampToken, Error>>),
+    TimeStampedOpAuth(Mutex<Receiver<Result<TimeStampToken, Error>>>),
     /// An outstanding request for a timestamp token.
-    TimeStamp(Receiver<Result<TimeStampToken, Error>>),
+    TimeStamp(Mutex<Receiver<Result<TimeStampToken, Error>>>),
 }
 
 #[derive(Debug)]
@@ -64,8 +64,6 @@ struct AuthRequest {
     hat: Mutex<Option<HardwareAuthToken>>,
 }
 
-unsafe impl Sync for AuthRequest {}
-
 impl AuthRequest {
     fn op_auth() -> Arc<Self> {
         Arc::new(Self { state: AuthRequestState::OpAuth, hat: Mutex::new(None) })
@@ -73,7 +71,7 @@ impl AuthRequest {
 
     fn timestamped_op_auth(receiver: Receiver<Result<TimeStampToken, Error>>) -> Arc<Self> {
         Arc::new(Self {
-            state: AuthRequestState::TimeStampedOpAuth(receiver),
+            state: AuthRequestState::TimeStampedOpAuth(Mutex::new(receiver)),
             hat: Mutex::new(None),
         })
     }
@@ -82,7 +80,10 @@ impl AuthRequest {
         hat: HardwareAuthToken,
         receiver: Receiver<Result<TimeStampToken, Error>>,
     ) -> Arc<Self> {
-        Arc::new(Self { state: AuthRequestState::TimeStamp(receiver), hat: Mutex::new(Some(hat)) })
+        Arc::new(Self {
+            state: AuthRequestState::TimeStamp(Mutex::new(receiver)),
+            hat: Mutex::new(Some(hat)),
+        })
     }
 
     fn add_auth_token(&self, hat: HardwareAuthToken) {
@@ -100,7 +101,11 @@ impl AuthRequest {
 
         let tst = match &self.state {
             AuthRequestState::TimeStampedOpAuth(recv) | AuthRequestState::TimeStamp(recv) => {
-                let result = recv.recv().context("In get_auth_tokens: Sender disconnected.")?;
+                let result = recv
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .context("In get_auth_tokens: Sender disconnected.")?;
                 Some(result.context(ks_err!(
                     "Worker responded with error \
                     from generating timestamp token.",
