@@ -405,8 +405,7 @@ impl KeystoreSecurityLevel {
     ) -> Result<Vec<KeyParameter>> {
         let mut result = params.to_vec();
 
-        // Unconditionally add the CREATION_DATETIME tag and prevent callers from
-        // specifying it.
+        // Prevent callers from specifying the CREATION_DATETIME tag.
         if params.iter().any(|kp| kp.tag == Tag::CREATION_DATETIME) {
             return Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!(
                 "KeystoreSecurityLevel::add_required_parameters: \
@@ -414,12 +413,16 @@ impl KeystoreSecurityLevel {
             ));
         }
 
+        // Use this variable to refer to notion of "now". This eliminates discrepancies from
+        // quering the clock multiple times.
+        let creation_datetime = SystemTime::now();
+
         // Add CREATION_DATETIME only if the backend version Keymint V1 (100) or newer.
         if self.hw_info.versionNumber >= 100 {
             result.push(KeyParameter {
                 tag: Tag::CREATION_DATETIME,
                 value: KeyParameterValue::DateTime(
-                    SystemTime::now()
+                    creation_datetime
                         .duration_since(SystemTime::UNIX_EPOCH)
                         .context(ks_err!(
                             "KeystoreSecurityLevel::add_required_parameters: \
@@ -462,7 +465,7 @@ impl KeystoreSecurityLevel {
             }
             if self
                 .id_rotation_state
-                .had_factory_reset_since_id_rotation()
+                .had_factory_reset_since_id_rotation(&creation_datetime)
                 .context(ks_err!("Call to had_factory_reset_since_id_rotation failed."))?
             {
                 result.push(KeyParameter {

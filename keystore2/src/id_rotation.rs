@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const ID_ROTATION_PERIOD: Duration = Duration::from_secs(30 * 24 * 60 * 60); // Thirty days.
 static TIMESTAMP_FILE_NAME: &str = "timestamp";
@@ -36,6 +36,8 @@ static TIMESTAMP_FILE_NAME: &str = "timestamp";
 /// and passed down to the users of the feature which can then query the timestamp on demand.
 #[derive(Debug, Clone)]
 pub struct IdRotationState {
+    /// We consider the time of last factory reset to be the point in time when this timestamp file
+    /// is created.
     timestamp_path: PathBuf,
 }
 
@@ -47,25 +49,41 @@ impl IdRotationState {
         Self { timestamp_path }
     }
 
-    /// Reads the metadata of or creates the timestamp file. It returns true if the timestamp
-    /// file is younger than `ID_ROTATION_PERIOD`, i.e., 30 days.
-    pub fn had_factory_reset_since_id_rotation(&self) -> Result<bool> {
+    /// Returns true iff a factory reset has occurred since the last ID rotation.
+    pub fn had_factory_reset_since_id_rotation(
+        &self,
+        creation_datetime: &SystemTime,
+    ) -> Result<bool> {
         match fs::metadata(&self.timestamp_path) {
             Ok(metadata) => {
-                let duration_since_factory_reset = metadata
-                    .modified()
-                    .context("File creation time not supported.")?
-                    .elapsed()
-                    .context("Failed to compute time elapsed since factory reset.")?;
-                Ok(duration_since_factory_reset < ID_ROTATION_PERIOD)
+                // For Tag::UNIQUE_ID, temporal counter value is defined as Tag::CREATION_DATETIME
+                // divided by 2592000000, dropping any remainder. Temporal counter value is
+                // effectively the index of the ID rotation period that we are currently in, with
+                // each ID rotation period being 30 days.
+                let temporal_counter_value = creation_datetime
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .context(ks_err!("Failed to get epoch time"))?
+                    .as_millis()
+                    / ID_ROTATION_PERIOD.as_millis();
+
+                // Calculate the beginning of the current ID rotation period, which is also the
+                // last time ID was rotated.
+                let id_rotation_time: SystemTime = SystemTime::UNIX_EPOCH
+                    .checked_add(ID_ROTATION_PERIOD * temporal_counter_value.try_into()?)
+                    .context(ks_err!("Failed to get ID rotation time."))?;
+
+                let factory_reset_time =
+                    metadata.modified().context(ks_err!("File creation time not supported."))?;
+
+                Ok(id_rotation_time <= factory_reset_time)
             }
             Err(e) => match e.kind() {
                 ErrorKind::NotFound => {
                     fs::File::create(&self.timestamp_path)
-                        .context("Failed to create timestamp file.")?;
+                        .context(ks_err!("Failed to create timestamp file."))?;
                     Ok(true)
                 }
-                _ => Err(e).context("Failed to open timestamp file."),
+                _ => Err(e).context(ks_err!("Failed to open timestamp file.")),
             },
         }
         .context(ks_err!())
@@ -78,47 +96,75 @@ mod test {
     use keystore2_test_utils::TempDir;
     use nix::sys::stat::utimes;
     use nix::sys::time::{TimeVal, TimeValLike};
-    use std::convert::TryInto;
-    use std::time::UNIX_EPOCH;
+    use std::thread::sleep;
 
-    #[test]
-    fn test_had_factory_reset_since_id_rotation() -> Result<()> {
-        let temp_dir = TempDir::new("test_had_factory_reset_since_id_rotation_")
-            .expect("Failed to create temp dir.");
+    static TEMP_DIR_NAME: &str = "test_had_factory_reset_since_id_rotation_";
+
+    fn set_up() -> (TempDir, PathBuf, IdRotationState) {
+        let temp_dir = TempDir::new(TEMP_DIR_NAME).expect("Failed to create temp dir.");
+        let mut timestamp_file_path = temp_dir.path().to_owned();
+        timestamp_file_path.push(TIMESTAMP_FILE_NAME);
         let id_rotation_state = IdRotationState::new(temp_dir.path());
 
-        let mut temp_file_path = temp_dir.path().to_owned();
-        temp_file_path.push(TIMESTAMP_FILE_NAME);
+        (temp_dir, timestamp_file_path, id_rotation_state)
+    }
+
+    #[test]
+    fn test_timestamp_creation() {
+        let (_temp_dir, timestamp_file_path, id_rotation_state) = set_up();
+        let creation_datetime = SystemTime::now();
 
         // The timestamp file should not exist.
-        assert!(!temp_file_path.exists());
+        assert!(!timestamp_file_path.exists());
 
-        // This should return true.
-        assert!(id_rotation_state.had_factory_reset_since_id_rotation()?);
+        // Trigger timestamp file creation one second later.
+        sleep(Duration::new(1, 0));
+        assert!(id_rotation_state.had_factory_reset_since_id_rotation(&creation_datetime).unwrap());
 
         // Now the timestamp file should exist.
-        assert!(temp_file_path.exists());
+        assert!(timestamp_file_path.exists());
 
-        // We should still return true because the timestamp file is young.
-        assert!(id_rotation_state.had_factory_reset_since_id_rotation()?);
+        let metadata = fs::metadata(&timestamp_file_path).unwrap();
+        assert!(metadata.modified().unwrap() > creation_datetime);
+    }
 
-        // Now let's age the timestamp file by backdating the modification time.
-        let metadata = fs::metadata(&temp_file_path)?;
-        let mtime = metadata.modified()?;
-        let mtime = mtime.duration_since(UNIX_EPOCH)?;
-        let mtime =
-            mtime.checked_sub(ID_ROTATION_PERIOD).expect("Failed to subtract id rotation period");
-        let mtime = TimeVal::seconds(mtime.as_secs().try_into().unwrap());
+    #[test]
+    fn test_existing_timestamp() {
+        let (_temp_dir, timestamp_file_path, id_rotation_state) = set_up();
 
-        let atime = metadata.accessed()?;
-        let atime = atime.duration_since(UNIX_EPOCH)?;
-        let atime = TimeVal::seconds(atime.as_secs().try_into().unwrap());
+        // Let's start with at a known point in time, so that it's easier to control which ID
+        // rotation period we're in.
+        let mut creation_datetime = SystemTime::UNIX_EPOCH;
 
-        utimes(&temp_file_path, &atime, &mtime)?;
+        // Create timestamp file and backdate it back to Unix epoch.
+        fs::File::create(&timestamp_file_path).unwrap();
+        let mtime = TimeVal::seconds(0);
+        let atime = TimeVal::seconds(0);
+        utimes(&timestamp_file_path, &atime, &mtime).unwrap();
 
-        // Now that the file has aged we should see false.
-        assert!(!id_rotation_state.had_factory_reset_since_id_rotation()?);
+        // Timestamp file was backdated to the very beginning of the current ID rotation period.
+        // So, this should return true.
+        assert!(id_rotation_state.had_factory_reset_since_id_rotation(&creation_datetime).unwrap());
 
-        Ok(())
+        // Move time forward, but stay in the same ID rotation period.
+        creation_datetime += Duration::from_millis(1);
+
+        // We should still return true because we're in the same ID rotation period.
+        assert!(id_rotation_state.had_factory_reset_since_id_rotation(&creation_datetime).unwrap());
+
+        // Move time to the next ID rotation period.
+        creation_datetime += ID_ROTATION_PERIOD;
+
+        // Now we should see false.
+        assert!(!id_rotation_state
+            .had_factory_reset_since_id_rotation(&creation_datetime)
+            .unwrap());
+
+        // Move timestamp to the future. This shouldn't ever happen, but even in this edge case ID
+        // must be rotated.
+        let mtime = TimeVal::seconds((ID_ROTATION_PERIOD.as_secs() * 10).try_into().unwrap());
+        let atime = TimeVal::seconds((ID_ROTATION_PERIOD.as_secs() * 10).try_into().unwrap());
+        utimes(&timestamp_file_path, &atime, &mtime).unwrap();
+        assert!(id_rotation_state.had_factory_reset_since_id_rotation(&creation_datetime).unwrap());
     }
 }
