@@ -167,6 +167,7 @@ fn keystore2_update_subcomponent_fails_permission_denied() {
     static GRANTEE_2_GID: u32 = GRANTEE_2_UID;
 
     // Generate a key and grant it to multiple users with different access permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let mut granted_keys = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -205,6 +206,7 @@ fn keystore2_update_subcomponent_fails_permission_denied() {
 
     // Grantee context, try to update the key public certs, permission denied error is expected.
     let granted_key1_nspace = granted_keys.remove(0);
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -234,6 +236,7 @@ fn keystore2_update_subcomponent_fails_permission_denied() {
 
     // Grantee context, update granted key public certs. Update should happen successfully.
     let granted_key2_nspace = granted_keys.remove(0);
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
