@@ -7,14 +7,6 @@ rust_defaults {
     name: "libdiced_open_dice_defaults",
     crate_name: "diced_open_dice",
     srcs: ["src/lib.rs"],
-    static_libs: [
-        "libopen_dice_cbor",
-    ],
-    vendor_available: true,
-    apex_available: [
-        "//apex_available:platform",
-        "com.android.virt",
-    ],
 }
 
 rust_library_rlib {
@@ -37,6 +29,7 @@ rust_library_rlib {
 rust_library {
     name: "libdiced_open_dice",
     defaults: ["libdiced_open_dice_defaults"],
+    vendor_available: true,
     rustlibs: [
         "libopen_dice_bcc_bindgen",
         "libopen_dice_cbor_bindgen",
@@ -48,6 +41,9 @@ rust_library {
     shared_libs: [
         "libcrypto",
     ],
+    static_libs: [
+        "libopen_dice_cbor",
+    ],
     whole_static_libs: [
         "libopen_dice_bcc",
     ],
@@ -55,6 +51,10 @@ rust_library {
         "//system/security/diced:__subpackages__",
         "//packages/modules/Virtualization:__subpackages__",
         "//hardware/interfaces/security/dice/aidl:__subpackages__",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
     ],
 }
 
@@ -120,7 +120,6 @@ rust_defaults {
 
 rust_defaults {
     name: "libopen_dice_cbor_bindgen.rust_defaults",
-    defaults: ["libopen_dice.rust_defaults"],
     wrapper_src: "bindgen/dice.h",
     crate_name: "open_dice_cbor_bindgen",
     source_stem: "bindings",
@@ -156,7 +155,10 @@ rust_defaults {
 
 rust_bindgen {
     name: "libopen_dice_cbor_bindgen",
-    defaults: ["libopen_dice_cbor_bindgen.rust_defaults"],
+    defaults: [
+        "libopen_dice.rust_defaults",
+        "libopen_dice_cbor_bindgen.rust_defaults",
+    ],
     whole_static_libs: ["libopen_dice_cbor"],
 }
 
@@ -171,7 +173,6 @@ rust_bindgen {
 
 rust_defaults {
     name: "libopen_dice_bcc_bindgen.rust_defaults",
-    defaults: ["libopen_dice.rust_defaults"],
     wrapper_src: "bindgen/android/bcc.h",
     crate_name: "open_dice_bcc_bindgen",
     source_stem: "bindings",
@@ -206,7 +207,10 @@ rust_defaults {
 
 rust_bindgen {
     name: "libopen_dice_bcc_bindgen",
-    defaults: ["libopen_dice_bcc_bindgen.rust_defaults"],
+    defaults: [
+        "libopen_dice.rust_defaults",
+        "libopen_dice_bcc_bindgen.rust_defaults",
+    ],
     rustlibs: [
         "libopen_dice_cbor_bindgen",
     ],
