@@ -266,7 +266,11 @@ pub fn perform_sample_asym_sign_verify_op(
 }
 
 /// Create new operation on child proc and perform simple operation after parent notification.
-pub fn execute_op_run_as_child(
+///
+/// # Safety
+///
+/// Must only be called from a single-threaded process.
+pub unsafe fn execute_op_run_as_child(
     target_ctx: &'static str,
     domain: Domain,
     nspace: i64,
@@ -275,6 +279,7 @@ pub fn execute_op_run_as_child(
     agid: Gid,
     forced_op: ForcedOp,
 ) -> run_as::ChildHandle<TestOutcome, BarrierReached> {
+    // SAFETY: The caller guarantees that there are no other threads.
     unsafe {
         run_as::run_as_child(target_ctx, auid, agid, move |reader, writer| {
             let result = key_generations::map_ks_error(create_signing_operation(

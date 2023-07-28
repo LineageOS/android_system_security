@@ -20,6 +20,9 @@
 //!  * selabel_lookup for the keystore2_key backend.
 //! And it provides an owning wrapper around context strings `Context`.
 
+// TODO(b/290018030): Remove this and add proper safety comments.
+#![allow(clippy::undocumented_unsafe_blocks)]
+
 use anyhow::Context as AnyhowContext;
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
@@ -160,8 +163,9 @@ pub struct KeystoreKeyBackend {
     handle: *mut selinux::selabel_handle,
 }
 
-// KeystoreKeyBackend is Sync because selabel_lookup is thread safe.
+// SAFETY: KeystoreKeyBackend is Sync because selabel_lookup is thread safe.
 unsafe impl Sync for KeystoreKeyBackend {}
+// SAFETY: KeystoreKeyBackend is Send because selabel_lookup is thread safe.
 unsafe impl Send for KeystoreKeyBackend {}
 
 impl KeystoreKeyBackend {
