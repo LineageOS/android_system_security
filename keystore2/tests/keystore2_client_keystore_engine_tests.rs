@@ -167,6 +167,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_rsa_key_success() {
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO|USE|DELETE key permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -184,6 +185,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_rsa_key_success() {
     };
 
     // In grantee context load the key and try to perform crypto operation.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -208,6 +210,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_ec_key_success() {
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO|USE|DELETE key permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -225,6 +228,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_ec_key_success() {
     };
 
     // In grantee context load the key and try to perform crypto operation.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -250,6 +254,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_pem_pub_key_success() {
 
     // Generate a key and re-encode it's certificate as PEM and update it and
     // grant it to a user with GET_INFO|USE|DELETE key permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -285,6 +290,7 @@ fn keystore2_perofrm_crypto_op_using_keystore2_engine_pem_pub_key_success() {
     };
 
     // In grantee context load the key and try to perform crypto operation.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,

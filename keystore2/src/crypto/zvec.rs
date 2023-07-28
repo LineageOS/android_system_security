@@ -45,6 +45,7 @@ impl ZVec {
         let v: Vec<u8> = vec![0; size];
         let b = v.into_boxed_slice();
         if size > 0 {
+            // SAFETY: The address range is part of our address space.
             unsafe { mlock(b.as_ptr() as *const std::ffi::c_void, b.len()) }?;
         }
         Ok(Self { elems: b, len: size })
@@ -71,11 +72,16 @@ impl ZVec {
 impl Drop for ZVec {
     fn drop(&mut self) {
         for i in 0..self.elems.len() {
-            unsafe { write_volatile(self.elems.as_mut_ptr().add(i), 0) };
+            // SAFETY: The pointer is valid and properly aligned because it came from a reference.
+            unsafe { write_volatile(&mut self.elems[i], 0) };
         }
         if !self.elems.is_empty() {
             if let Err(e) =
-                unsafe { munlock(self.elems.as_ptr() as *const std::ffi::c_void, self.elems.len()) }
+                // SAFETY: The address range is part of our address space, and was previously locked
+                // by `mlock` in `ZVec::new` or the `TryFrom<Vec<u8>>` implementation.
+                unsafe {
+                    munlock(self.elems.as_ptr() as *const std::ffi::c_void, self.elems.len())
+                }
             {
                 log::error!("In ZVec::drop: `munlock` failed: {:?}.", e);
             }
@@ -130,6 +136,7 @@ impl TryFrom<Vec<u8>> for ZVec {
         v.resize(v.capacity(), 0);
         let b = v.into_boxed_slice();
         if !b.is_empty() {
+            // SAFETY: The address range is part of our address space.
             unsafe { mlock(b.as_ptr() as *const std::ffi::c_void, b.len()) }?;
         }
         Ok(Self { elems: b, len })

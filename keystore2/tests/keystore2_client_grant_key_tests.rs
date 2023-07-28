@@ -114,6 +114,7 @@ fn keystore2_grant_key_with_perm_none() {
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let empty_access_vector = KeyPermission::NONE.0;
@@ -132,6 +133,7 @@ fn keystore2_grant_key_with_perm_none() {
 
     // In grantee context try to load the key, it should fail to load the granted key as it is
     // granted with empty access vector.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -169,6 +171,7 @@ fn keystore2_grant_get_info_use_key_perm() {
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO|USE key permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let access_vector = KeyPermission::GET_INFO.0 | KeyPermission::USE.0;
@@ -185,6 +188,7 @@ fn keystore2_grant_get_info_use_key_perm() {
     };
 
     // In grantee context load the key and try to perform crypto operation.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -251,6 +255,7 @@ fn keystore2_grant_delete_key_success() {
     static ALIAS: &str = "ks_grant_key_delete_success";
 
     // Generate a key and grant it to a user with DELETE permission.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -270,6 +275,7 @@ fn keystore2_grant_delete_key_success() {
     };
 
     // Grantee context, delete the key.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -290,6 +296,7 @@ fn keystore2_grant_delete_key_success() {
     };
 
     // Verify whether key got deleted in grantor's context.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), move || {
             let keystore2_inst = get_keystore_service();
@@ -325,6 +332,7 @@ fn keystore2_grant_key_fails_with_permission_denied() {
     static SEC_GRANTEE_GID: u32 = SEC_GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO permission.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -345,6 +353,7 @@ fn keystore2_grant_key_fails_with_permission_denied() {
     };
 
     // Grantee context, load the granted key and try to grant it to `SEC_GRANTEE_UID` grantee.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -375,6 +384,7 @@ fn keystore2_grant_key_fails_with_permission_denied() {
     };
 
     // Make sure second grantee shouldn't have access to the above granted key.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -457,6 +467,7 @@ fn keystore2_ungrant_key_success() {
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO permission.
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -492,6 +503,7 @@ fn keystore2_ungrant_key_success() {
     };
 
     // Grantee context, try to load the ungranted key.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -527,6 +539,7 @@ fn keystore2_ungrant_fails_with_non_existing_key_expect_key_not_found_error() {
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     let grant_key_nspace = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -576,6 +589,7 @@ fn keystore2_ungrant_fails_with_non_existing_key_expect_key_not_found_error() {
     // Make sure grant did not persist, try to access the earlier granted key in grantee context.
     // Grantee context should fail to load the granted key as its associated key is deleted in
     // grantor context.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -614,6 +628,7 @@ fn keystore2_grant_key_to_multi_users_success() {
     static GRANTEE_2_GID: u32 = GRANTEE_2_UID;
 
     // Generate a key and grant it to multiple users with GET_INFO|USE permissions.
+    // SAFETY: The test is run in a separate process with no other threads.
     let mut grant_keys = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -636,6 +651,7 @@ fn keystore2_grant_key_to_multi_users_success() {
         &[(GRANTEE_1_UID, GRANTEE_1_GID), (GRANTEE_2_UID, GRANTEE_2_GID)]
     {
         let grant_key_nspace = grant_keys.remove(0);
+        // SAFETY: The test is run in a separate process with no other threads.
         unsafe {
             run_as::run_as(
                 GRANTEE_CTX,
@@ -678,6 +694,7 @@ fn keystore2_grant_key_to_multi_users_delete_fails_with_key_not_found_error() {
     static GRANTEE_2_GID: u32 = GRANTEE_2_UID;
 
     // Generate a key and grant it to multiple users with GET_INFO permission.
+    // SAFETY: The test is run in a separate process with no other threads.
     let mut grant_keys = unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -699,6 +716,7 @@ fn keystore2_grant_key_to_multi_users_delete_fails_with_key_not_found_error() {
 
     // Grantee #1 context
     let grant_key1_nspace = grant_keys.remove(0);
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -733,6 +751,7 @@ fn keystore2_grant_key_to_multi_users_delete_fails_with_key_not_found_error() {
 
     // Grantee #2 context
     let grant_key2_nspace = grant_keys.remove(0);
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
