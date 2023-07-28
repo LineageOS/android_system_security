@@ -60,6 +60,7 @@ fn keystore2_list_entries_success() {
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
             let keystore2 = get_keystore_service();
@@ -113,6 +114,7 @@ fn keystore2_list_entries_success() {
     };
 
     // In user context validate list of key entries associated with it.
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             GRANTEE_CTX,
@@ -161,6 +163,7 @@ fn keystore2_list_entries_fails_perm_denied() {
     let agid = 91 * AID_USER_OFFSET + 10001;
     static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(TARGET_CTX, Uid::from_raw(auid), Gid::from_raw(agid), move || {
             let keystore2 = get_keystore_service();
@@ -198,6 +201,7 @@ fn keystore2_list_entries_with_long_aliases_success() {
     static CLIENT_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static CLIENT_GID: u32 = CLIENT_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -264,6 +268,7 @@ fn keystore2_list_entries_batched_with_long_aliases_success() {
     static CLIENT_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static CLIENT_GID: u32 = CLIENT_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -331,6 +336,7 @@ fn keystore2_list_entries_batched_with_multi_procs_success() {
     static CLIENT_GID: u32 = CLIENT_UID;
     static ALIAS_PREFIX: &str = "key_test_batch_list";
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -361,6 +367,7 @@ fn keystore2_list_entries_batched_with_multi_procs_success() {
         })
     };
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -428,6 +435,7 @@ fn keystore2_list_entries_batched_with_empty_keystore_success() {
     static CLIENT_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static CLIENT_GID: u32 = CLIENT_UID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -511,6 +519,7 @@ fn keystore2_list_entries_batched_validate_count_and_order_success() {
     static CLIENT_GID: u32 = CLIENT_UID;
     static ALIAS_PREFIX: &str = "key_test_batch_list";
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(CLIENT_CTX, Uid::from_raw(CLIENT_UID), Gid::from_raw(CLIENT_GID), || {
             let keystore2 = get_keystore_service();
@@ -647,6 +656,7 @@ fn keystore2_list_entries_batched_fails_perm_denied() {
     let agid = 91 * AID_USER_OFFSET + 10001;
     static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(TARGET_CTX, Uid::from_raw(auid), Gid::from_raw(agid), move || {
             let keystore2 = get_keystore_service();
@@ -686,6 +696,7 @@ fn keystore2_get_number_of_entries_fails_perm_denied() {
     let agid = 91 * AID_USER_OFFSET + 10001;
     static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(TARGET_CTX, Uid::from_raw(auid), Gid::from_raw(agid), move || {
             let keystore2 = get_keystore_service();
