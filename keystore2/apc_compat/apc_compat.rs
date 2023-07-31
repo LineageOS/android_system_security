@@ -53,7 +53,10 @@ use std::{ffi::CString, slice};
 /// ```
 pub struct ApcHal(ApcCompatServiceHandle);
 
+// SAFETY: This is a wrapper around `ApcCompatSession`, which can be used from any thread.
 unsafe impl Send for ApcHal {}
+// SAFETY: `ApcCompatSession` can be called simultaneously from different threads because AIDL and
+// HIDL are thread-safe.
 unsafe impl Sync for ApcHal {}
 
 impl Drop for ApcHal {
@@ -120,6 +123,7 @@ impl ApcHal {
         // `closeUserConfirmationService` when dropped.
         let handle = unsafe { tryGetUserConfirmationService() };
         match handle {
+            // SAFETY: This is just a constant.
             h if h == unsafe { INVALID_SERVICE_HANDLE } => None,
             h => Some(Self(h)),
         }
