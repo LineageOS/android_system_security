@@ -95,22 +95,22 @@ cc_binary {
     target: {
         android_arm: {
             dist: {
-                dir: "rkp_factory_extraction_tool/arm",
+                dir: "rkp/arm",
             },
         },
         android_arm64: {
             dist: {
-                dir: "rkp_factory_extraction_tool/arm64",
+                dir: "rkp/arm64",
             },
         },
         android_x86: {
             dist: {
-                dir: "rkp_factory_extraction_tool/x86",
+                dir: "rkp/x86",
             },
         },
         android_x86_64: {
             dist: {
-                dir: "rkp_factory_extraction_tool/x86_64",
+                dir: "rkp/x86_64",
             },
         },
     },
