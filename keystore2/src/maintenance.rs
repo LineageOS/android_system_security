@@ -178,7 +178,7 @@ impl Maintenance {
             (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
             (SecurityLevel::STRONGBOX, "STRONGBOX"),
         ];
-        sec_levels.iter().fold(Ok(()), move |result, (sec_level, sec_level_string)| {
+        sec_levels.iter().try_fold((), |_result, (sec_level, sec_level_string)| {
             let curr_result = Maintenance::call_with_watchdog(*sec_level, name, &op);
             match curr_result {
                 Ok(()) => log::info!(
@@ -193,7 +193,7 @@ impl Maintenance {
                     e
                 ),
             }
-            result.and(curr_result)
+            curr_result
         })
     }
 
