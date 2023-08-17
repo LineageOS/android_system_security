@@ -150,7 +150,8 @@ class KeyMintDevice : public aidl::android::hardware::security::keymint::BnKeyMi
     // These are public to allow testing code to use them directly.
     // This class should not be used publicly anyway.
     std::variant<std::vector<Certificate>, KMV1_ErrorCode>
-    getCertificate(const std::vector<KeyParameter>& keyParams, const std::vector<uint8_t>& keyBlob);
+    getCertificate(const std::vector<KeyParameter>& keyParams, const std::vector<uint8_t>& keyBlob,
+                   bool isWrappedKey = false);
 
     void setNumFreeSlots(uint8_t numFreeSlots);
 
