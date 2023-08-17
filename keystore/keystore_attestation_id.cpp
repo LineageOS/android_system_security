@@ -158,7 +158,7 @@ status_t build_attestation_package_info(const KeyAttestationPackageInfo& pinfo,
         return BAD_VALUE;
     }
 
-    std::string pkg_name(String8(*pinfo.package_name()).string());
+    std::string pkg_name(String8(*pinfo.package_name()).c_str());
     if (!ASN1_OCTET_STRING_set(attestation_package_info->package_name,
                                reinterpret_cast<const unsigned char*>(pkg_name.data()),
                                pkg_name.size())) {
@@ -209,7 +209,7 @@ build_attestation_application_id(const KeyAttestationApplicationId& key_attestat
             ALOGE("Key attestation package info lacks package name");
             return BAD_VALUE;
         }
-        std::string package_name(String8(*pinfo->package_name()).string());
+        std::string package_name(String8(*pinfo->package_name()).c_str());
         std::unique_ptr<KM_ATTESTATION_PACKAGE_INFO> attestation_package_info;
         auto rc = build_attestation_package_info(*pinfo, &attestation_package_info);
         if (rc != NO_ERROR) {
@@ -283,7 +283,7 @@ StatusOr<std::vector<uint8_t>> gather_attestation_application_id(uid_t uid) {
         // caller is unknown.
         if (!status.isOk()) {
             ALOGW("package manager request for key attestation ID failed with: %s %d",
-                  status.exceptionMessage().string(), status.exceptionCode());
+                  status.exceptionMessage().c_str(), status.exceptionCode());
             auto pinfo = std::make_optional<KeyAttestationPackageInfo>(
                 String16(kUnknownPackageName), 1 /* version code */,
                 std::make_shared<KeyAttestationPackageInfo::SignaturesVector>());
