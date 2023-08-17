@@ -78,27 +78,6 @@ rust_library {
 }
 
 rust_library {
-    name: "libkeystore2_test_utils",
-    crate_name: "keystore2_test_utils",
-    srcs: ["test_utils/lib.rs"],
-    defaults: [
-        "keymint_use_latest_hal_aidl_rust",
-        "keystore2_use_latest_aidl_rust",
-    ],
-    rustlibs: [
-        "libbinder_rs",
-        "libkeystore2_selinux",
-        "liblog_rust",
-        "libnix",
-        "librand",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-        "libanyhow",
-    ],
-}
-
-rust_library {
     name: "libkeystore2_with_test_utils",
     defaults: ["libkeystore2_defaults"],
     features: [
@@ -108,30 +87,6 @@ rust_library {
         "liblibsqlite3_sys",
         "librusqlite",
         "libkeystore2_test_utils",
-    ],
-}
-
-rust_test {
-    name: "keystore2_test_utils_test",
-    srcs: ["test_utils/lib.rs"],
-    defaults: [
-        "keymint_use_latest_hal_aidl_rust",
-        "keystore2_use_latest_aidl_rust",
-    ],
-    test_suites: ["general-tests"],
-    require_root: true,
-    auto_gen_config: true,
-    compile_multilib: "first",
-    rustlibs: [
-        "libbinder_rs",
-        "libkeystore2_selinux",
-        "liblog_rust",
-        "libnix",
-        "librand",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-        "libanyhow",
     ],
 }
 

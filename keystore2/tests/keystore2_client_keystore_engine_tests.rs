@@ -26,7 +26,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 
 use keystore2_test_utils::{authorizations::AuthSetBuilder, get_keystore_service, run_as};
 
-use crate::ffi_test_utils::perform_crypto_op_using_keystore_engine;
+use keystore2_test_utils::ffi_test_utils::perform_crypto_op_using_keystore_engine;
 
 use openssl::x509::X509;
 
