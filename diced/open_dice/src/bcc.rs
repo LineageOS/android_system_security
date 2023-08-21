@@ -12,39 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This module mirrors the content in open-dice/include/dice/android/bcc.h
+//! This module mirrors the content in open-dice/include/dice/android.h
 
 use crate::dice::{Cdi, CdiValues, DiceArtifacts, InputValues, CDI_SIZE};
 use crate::error::{check_result, DiceError, Result};
-use open_dice_bcc_bindgen::{
-    BccConfigValues, BccFormatConfigDescriptor, BccHandoverMainFlow, BccHandoverParse, BccMainFlow,
-    BCC_INPUT_COMPONENT_NAME, BCC_INPUT_COMPONENT_VERSION, BCC_INPUT_RESETTABLE,
+use open_dice_android_bindgen::{
+    DiceAndroidConfigValues, DiceAndroidFormatConfigDescriptor, DiceAndroidHandoverMainFlow,
+    DiceAndroidHandoverParse, DiceAndroidMainFlow, DICE_ANDROID_CONFIG_COMPONENT_NAME,
+    DICE_ANDROID_CONFIG_COMPONENT_VERSION, DICE_ANDROID_CONFIG_RESETTABLE,
 };
 use std::{ffi::CStr, ptr};
 
-/// Formats a configuration descriptor following the BCC's specification.
-/// See https://cs.android.com/android/platform/superproject/+/master:hardware/interfaces/security/rkp/aidl/android/hardware/security/keymint/ProtectedData.aidl
+/// Formats a configuration descriptor following the Android Profile for DICE specification.
+/// See https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md
 pub fn bcc_format_config_descriptor(
     name: Option<&CStr>,
     version: Option<u64>,
     resettable: bool,
     buffer: &mut [u8],
 ) -> Result<usize> {
-    let mut inputs = 0;
+    let mut configs = 0;
     if name.is_some() {
-        inputs |= BCC_INPUT_COMPONENT_NAME;
+        configs |= DICE_ANDROID_CONFIG_COMPONENT_NAME;
     }
     if version.is_some() {
-        inputs |= BCC_INPUT_COMPONENT_VERSION;
+        configs |= DICE_ANDROID_CONFIG_COMPONENT_VERSION;
     }
     if resettable {
-        inputs |= BCC_INPUT_RESETTABLE;
+        configs |= DICE_ANDROID_CONFIG_RESETTABLE;
     }
 
-    let values = BccConfigValues {
-        inputs,
+    let values = DiceAndroidConfigValues {
+        configs,
         component_name: name.map_or(ptr::null(), |p| p.as_ptr()),
         component_version: version.unwrap_or(0),
+        security_version: 0,
     };
 
     let mut buffer_size = 0;
@@ -52,94 +54,99 @@ pub fn bcc_format_config_descriptor(
         // SAFETY: The function writes to the buffer, within the given bounds, and only reads the
         // input values. It writes its result to buffer_size.
         unsafe {
-            BccFormatConfigDescriptor(&values, buffer.len(), buffer.as_mut_ptr(), &mut buffer_size)
+            DiceAndroidFormatConfigDescriptor(
+                &values,
+                buffer.len(),
+                buffer.as_mut_ptr(),
+                &mut buffer_size,
+            )
         },
         buffer_size,
     )?;
     Ok(buffer_size)
 }
 
-/// Executes the main BCC flow.
+/// Executes the main Android DICE flow.
 ///
-/// Given a full set of input values along with the current BCC and CDI values,
-/// computes the next CDI values and matching updated BCC.
+/// Given a full set of input values along with the current DICE chain and CDI values,
+/// computes the next CDI values and matching updated DICE chain.
 pub fn bcc_main_flow(
     current_cdi_attest: &Cdi,
     current_cdi_seal: &Cdi,
-    current_bcc: &[u8],
+    current_chain: &[u8],
     input_values: &InputValues,
     next_cdi_values: &mut CdiValues,
-    next_bcc: &mut [u8],
+    next_chain: &mut [u8],
 ) -> Result<usize> {
-    let mut next_bcc_size = 0;
+    let mut next_chain_size = 0;
     check_result(
-        // SAFETY: `BccMainFlow` only reads the current `bcc` and CDI values and writes
-        // to `next_bcc` and next CDI values within its bounds. It also reads
-        // `input_values` as a constant input and doesn't store any pointer.
+        // SAFETY: `DiceAndroidMainFlow` only reads the `current_chain` and CDI values and writes
+        // to `next_chain` and next CDI values within its bounds. It also reads `input_values` as a
+        // constant input and doesn't store any pointer.
         // The first argument can be null and is not used in the current implementation.
         unsafe {
-            BccMainFlow(
+            DiceAndroidMainFlow(
                 ptr::null_mut(), // context
                 current_cdi_attest.as_ptr(),
                 current_cdi_seal.as_ptr(),
-                current_bcc.as_ptr(),
-                current_bcc.len(),
+                current_chain.as_ptr(),
+                current_chain.len(),
                 input_values.as_ptr(),
-                next_bcc.len(),
-                next_bcc.as_mut_ptr(),
-                &mut next_bcc_size,
+                next_chain.len(),
+                next_chain.as_mut_ptr(),
+                &mut next_chain_size,
                 next_cdi_values.cdi_attest.as_mut_ptr(),
                 next_cdi_values.cdi_seal.as_mut_ptr(),
             )
         },
-        next_bcc_size,
+        next_chain_size,
     )?;
-    Ok(next_bcc_size)
+    Ok(next_chain_size)
 }
 
-/// Executes the main BCC handover flow.
+/// Executes the main Android DICE handover flow.
 ///
-/// A BCC handover combines the BCC and CDIs in a single CBOR object.
-/// This function takes the current boot stage's BCC handover bundle and produces a
+/// A handover combines the DICE chain and CDIs in a single CBOR object.
+/// This function takes the current boot stage's handover bundle and produces a
 /// bundle for the next stage.
 pub fn bcc_handover_main_flow(
-    current_bcc_handover: &[u8],
+    current_handover: &[u8],
     input_values: &InputValues,
-    next_bcc_handover: &mut [u8],
+    next_handover: &mut [u8],
 ) -> Result<usize> {
-    let mut next_bcc_handover_size = 0;
+    let mut next_handover_size = 0;
     check_result(
-        // SAFETY: The function only reads `current_bcc_handover` and writes to `next_bcc_handover`
+        // SAFETY: The function only reads `current_handover` and writes to `next_handover`
         // within its bounds,
         // It also reads `input_values` as a constant input and doesn't store any pointer.
         // The first argument can be null and is not used in the current implementation.
         unsafe {
-            BccHandoverMainFlow(
+            DiceAndroidHandoverMainFlow(
                 ptr::null_mut(), // context
-                current_bcc_handover.as_ptr(),
-                current_bcc_handover.len(),
+                current_handover.as_ptr(),
+                current_handover.len(),
                 input_values.as_ptr(),
-                next_bcc_handover.len(),
-                next_bcc_handover.as_mut_ptr(),
-                &mut next_bcc_handover_size,
+                next_handover.len(),
+                next_handover.as_mut_ptr(),
+                &mut next_handover_size,
             )
         },
-        next_bcc_handover_size,
+        next_handover_size,
     )?;
 
-    Ok(next_bcc_handover_size)
+    Ok(next_handover_size)
 }
 
-/// A BCC handover combines the BCC and CDIs in a single CBOR object.
-/// This struct is used as return of the function `bcc_handover_parse`, its lifetime is tied
-/// to the lifetime of the raw BCC handover slice.
+/// An Android DICE handover object combines the DICE chain and CDIs in a single CBOR object.
+/// This struct is used as return of the function `android_dice_handover_parse`, its lifetime is
+/// tied to the lifetime of the raw handover slice.
 #[derive(Debug)]
 pub struct BccHandover<'a> {
     /// Attestation CDI.
     cdi_attest: &'a [u8; CDI_SIZE],
     /// Sealing CDI.
     cdi_seal: &'a [u8; CDI_SIZE],
-    /// Boot Certificate Chain.
+    /// DICE chain.
     bcc: Option<&'a [u8]>,
 }
 
@@ -157,32 +164,31 @@ impl<'a> DiceArtifacts for BccHandover<'a> {
     }
 }
 
-/// A BCC handover combines the BCC and CDIs in a single CBOR object.
-/// This function parses the `bcc_handover` to extracts the BCC and CDIs.
-/// The lifetime of the returned `BccHandover` is tied to the given `bcc_handover` slice.
-pub fn bcc_handover_parse(bcc_handover: &[u8]) -> Result<BccHandover> {
+/// This function parses the `handover` to extracts the DICE chain and CDIs.
+/// The lifetime of the returned `DiceAndroidHandover` is tied to the given `handover` slice.
+pub fn bcc_handover_parse(handover: &[u8]) -> Result<BccHandover> {
     let mut cdi_attest: *const u8 = ptr::null();
     let mut cdi_seal: *const u8 = ptr::null();
-    let mut bcc: *const u8 = ptr::null();
-    let mut bcc_size = 0;
+    let mut chain: *const u8 = ptr::null();
+    let mut chain_size = 0;
     check_result(
-        // SAFETY: The `bcc_handover` is only read and never stored and the returned pointers should
-        // all point within the address range of the `bcc_handover` or be NULL.
+        // SAFETY: The `handover` is only read and never stored and the returned pointers should
+        // all point within the address range of the `handover` or be NULL.
         unsafe {
-            BccHandoverParse(
-                bcc_handover.as_ptr(),
-                bcc_handover.len(),
+            DiceAndroidHandoverParse(
+                handover.as_ptr(),
+                handover.len(),
                 &mut cdi_attest,
                 &mut cdi_seal,
-                &mut bcc,
-                &mut bcc_size,
+                &mut chain,
+                &mut chain_size,
             )
         },
-        bcc_size,
+        chain_size,
     )?;
-    let cdi_attest = sub_slice(bcc_handover, cdi_attest, CDI_SIZE)?;
-    let cdi_seal = sub_slice(bcc_handover, cdi_seal, CDI_SIZE)?;
-    let bcc = sub_slice(bcc_handover, bcc, bcc_size).ok();
+    let cdi_attest = sub_slice(handover, cdi_attest, CDI_SIZE)?;
+    let cdi_seal = sub_slice(handover, cdi_seal, CDI_SIZE)?;
+    let bcc = sub_slice(handover, chain, chain_size).ok();
     Ok(BccHandover {
         cdi_attest: cdi_attest.try_into().map_err(|_| DiceError::PlatformError)?,
         cdi_seal: cdi_seal.try_into().map_err(|_| DiceError::PlatformError)?,

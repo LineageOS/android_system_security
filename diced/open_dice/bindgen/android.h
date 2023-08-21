@@ -14,4 +14,4 @@
 
 #pragma once
 
-#include <dice/android/bcc.h>
+#include <dice/android.h>
