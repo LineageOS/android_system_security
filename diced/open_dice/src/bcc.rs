@@ -20,34 +20,47 @@ use open_dice_android_bindgen::{
     DiceAndroidConfigValues, DiceAndroidFormatConfigDescriptor, DiceAndroidHandoverMainFlow,
     DiceAndroidHandoverParse, DiceAndroidMainFlow, DICE_ANDROID_CONFIG_COMPONENT_NAME,
     DICE_ANDROID_CONFIG_COMPONENT_VERSION, DICE_ANDROID_CONFIG_RESETTABLE,
+    DICE_ANDROID_CONFIG_SECURITY_VERSION,
 };
 use std::{ffi::CStr, ptr};
 
+/// Contains the input values used to construct the Android Profile for DICE
+/// configuration descriptor.
+#[derive(Default, Debug)]
+pub struct DiceConfigValues<'a> {
+    /// Name of the component.
+    pub component_name: Option<&'a CStr>,
+    /// Version of the component.
+    pub component_version: Option<u64>,
+    /// Whether the key changes on factory reset.
+    pub resettable: bool,
+    /// Monotonically increasing version of the component.
+    pub security_version: Option<u64>,
+}
+
 /// Formats a configuration descriptor following the Android Profile for DICE specification.
-/// See https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md
-pub fn bcc_format_config_descriptor(
-    name: Option<&CStr>,
-    version: Option<u64>,
-    resettable: bool,
-    buffer: &mut [u8],
-) -> Result<usize> {
+/// See https://pigweed.googlesource.com/open-dice/+/refs/heads/main/docs/android.md.
+pub fn bcc_format_config_descriptor(values: &DiceConfigValues, buffer: &mut [u8]) -> Result<usize> {
     let mut configs = 0;
-    if name.is_some() {
+
+    let component_name = values.component_name.map_or(ptr::null(), |name| {
         configs |= DICE_ANDROID_CONFIG_COMPONENT_NAME;
-    }
-    if version.is_some() {
+        name.as_ptr()
+    });
+    let component_version = values.component_version.map_or(0, |version| {
         configs |= DICE_ANDROID_CONFIG_COMPONENT_VERSION;
-    }
-    if resettable {
+        version
+    });
+    if values.resettable {
         configs |= DICE_ANDROID_CONFIG_RESETTABLE;
     }
+    let security_version = values.security_version.map_or(0, |version| {
+        configs |= DICE_ANDROID_CONFIG_SECURITY_VERSION;
+        version
+    });
 
-    let values = DiceAndroidConfigValues {
-        configs,
-        component_name: name.map_or(ptr::null(), |p| p.as_ptr()),
-        component_version: version.unwrap_or(0),
-        security_version: 0,
-    };
+    let values =
+        DiceAndroidConfigValues { configs, component_name, component_version, security_version };
 
     let mut buffer_size = 0;
     check_result(
