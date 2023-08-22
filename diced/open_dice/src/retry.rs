@@ -17,13 +17,12 @@
 //! memory allocation on heap, currently we only expose these functions in
 //! std environment.
 
-use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow};
+use crate::bcc::{bcc_format_config_descriptor, bcc_main_flow, DiceConfigValues};
 use crate::dice::{
     dice_main_flow, Cdi, CdiValues, DiceArtifacts, InputValues, CDI_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 use crate::error::{DiceError, Result};
 use crate::ops::generate_certificate;
-use std::ffi::CStr;
 
 /// Artifacts stores a set of dice artifacts comprising CDI_ATTEST, CDI_SEAL,
 /// and the BCC formatted attestation certificate chain.
@@ -69,14 +68,8 @@ where
 }
 
 /// Formats a configuration descriptor following the BCC's specification.
-pub fn retry_bcc_format_config_descriptor(
-    name: Option<&CStr>,
-    version: Option<u64>,
-    resettable: bool,
-) -> Result<Vec<u8>> {
-    retry_with_measured_buffer(|buffer| {
-        bcc_format_config_descriptor(name, version, resettable, buffer)
-    })
+pub fn retry_bcc_format_config_descriptor(values: &DiceConfigValues) -> Result<Vec<u8>> {
+    retry_with_measured_buffer(|buffer| bcc_format_config_descriptor(values, buffer))
 }
 
 /// Executes the main BCC flow.
