@@ -185,9 +185,7 @@ rust_defaults {
         "--allowlist-function=DiceAndroidHandoverParse",
 
         // We also need some constants in addition to the functions.
-        "--allowlist-var=DICE_ANDROID_CONFIG_COMPONENT_NAME",
-        "--allowlist-var=DICE_ANDROID_CONFIG_COMPONENT_VERSION",
-        "--allowlist-var=DICE_ANDROID_CONFIG_RESETTABLE",
+        "--allowlist-var=DICE_ANDROID_CONFIG_.*",
 
         // Prevent DiceInputValues from being generated a second time and
         // import it instead from open_dice_cbor_bindgen.

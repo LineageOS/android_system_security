@@ -20,8 +20,8 @@ use ciborium::{de, ser, value::Value};
 use coset::{iana, Algorithm, AsCborValue, CoseKey, KeyOperation, KeyType, Label};
 use diced_open_dice::{
     derive_cdi_private_key_seed, keypair_from_seed, retry_bcc_format_config_descriptor,
-    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceArtifacts, DiceMode, InputValues,
-    OwnedDiceArtifacts, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceArtifacts, DiceConfigValues, DiceMode,
+    InputValues, OwnedDiceArtifacts, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
 };
 use std::ffi::CStr;
 
@@ -106,11 +106,13 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
     let ed25519_public_key_value = ed25519_public_key_to_cbor_value(&public_key)?;
 
     // Gets the ABL certificate to as the root certificate of DICE chain.
-    let config_descriptor = retry_bcc_format_config_descriptor(
-        Some(CStr::from_bytes_with_nul(b"ABL\0").unwrap()),
-        Some(1), // version
-        true,
-    )?;
+    let config_values = DiceConfigValues {
+        component_name: Some(CStr::from_bytes_with_nul(b"ABL\0").unwrap()),
+        component_version: Some(1),
+        resettable: true,
+        ..Default::default()
+    };
+    let config_descriptor = retry_bcc_format_config_descriptor(&config_values)?;
     let input_values = InputValues::new(
         CODE_HASH_ABL,
         Config::Descriptor(config_descriptor.as_slice()),
@@ -128,11 +130,13 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
     ser::into_writer(&bcc_value, &mut bcc)?;
 
     // Appends AVB certificate to DICE chain.
-    let config_descriptor = retry_bcc_format_config_descriptor(
-        Some(CStr::from_bytes_with_nul(b"AVB\0").unwrap()),
-        Some(1), // version
-        true,
-    )?;
+    let config_values = DiceConfigValues {
+        component_name: Some(CStr::from_bytes_with_nul(b"AVB\0").unwrap()),
+        component_version: Some(1),
+        resettable: true,
+        ..Default::default()
+    };
+    let config_descriptor = retry_bcc_format_config_descriptor(&config_values)?;
     let input_values = InputValues::new(
         CODE_HASH_AVB,
         Config::Descriptor(config_descriptor.as_slice()),
@@ -145,11 +149,13 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
             .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
 
     // Appends Android certificate to DICE chain.
-    let config_descriptor = retry_bcc_format_config_descriptor(
-        Some(CStr::from_bytes_with_nul(b"Android\0").unwrap()),
-        Some(12), // version
-        true,
-    )?;
+    let config_values = DiceConfigValues {
+        component_name: Some(CStr::from_bytes_with_nul(b"Android\0").unwrap()),
+        component_version: Some(12),
+        resettable: true,
+        ..Default::default()
+    };
+    let config_descriptor = retry_bcc_format_config_descriptor(&config_values)?;
     let input_values = InputValues::new(
         [0u8; HASH_SIZE], // code_hash
         Config::Descriptor(config_descriptor.as_slice()),
