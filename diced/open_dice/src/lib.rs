@@ -29,7 +29,7 @@ mod retry;
 
 pub use bcc::{
     bcc_format_config_descriptor, bcc_handover_main_flow, bcc_handover_parse, bcc_main_flow,
-    BccHandover,
+    BccHandover, DiceConfigValues,
 };
 pub use dice::{
     derive_cdi_certificate_id, derive_cdi_private_key_seed, dice_main_flow, Cdi, CdiValues, Config,
