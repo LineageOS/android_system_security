@@ -279,21 +279,29 @@ impl Interface for Maintenance {}
 
 impl IKeystoreMaintenance for Maintenance {
     fn onUserPasswordChanged(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
+        log::info!(
+            "onUserPasswordChanged(user={}, password.is_some()={})",
+            user_id,
+            password.is_some()
+        );
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserPasswordChanged", 500);
         map_or_log_err(Self::on_user_password_changed(user_id, password.map(|pw| pw.into())), Ok)
     }
 
     fn onUserAdded(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserAdded(user={user_id})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserAdded", 500);
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
     fn onUserRemoved(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserRemoved(user={user_id})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserRemoved", 500);
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
     fn clearNamespace(&self, domain: Domain, nspace: i64) -> BinderResult<()> {
+        log::info!("clearNamespace({domain:?}, nspace={nspace})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::clearNamespace", 500);
         map_or_log_err(self.clear_namespace(domain, nspace), Ok)
     }
@@ -304,11 +312,13 @@ impl IKeystoreMaintenance for Maintenance {
     }
 
     fn earlyBootEnded(&self) -> BinderResult<()> {
+        log::info!("earlyBootEnded()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::earlyBootEnded", 500);
         map_or_log_err(Self::early_boot_ended(), Ok)
     }
 
     fn onDeviceOffBody(&self) -> BinderResult<()> {
+        log::info!("onDeviceOffBody()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onDeviceOffBody", 500);
         map_or_log_err(Self::on_device_off_body(), Ok)
     }
@@ -318,11 +328,13 @@ impl IKeystoreMaintenance for Maintenance {
         source: &KeyDescriptor,
         destination: &KeyDescriptor,
     ) -> BinderResult<()> {
+        log::info!("migrateKeyNamespace(src={source:?}, dest={destination:?})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::migrateKeyNamespace", 500);
         map_or_log_err(Self::migrate_key_namespace(source, destination), Ok)
     }
 
     fn deleteAllKeys(&self) -> BinderResult<()> {
+        log::warn!("deleteAllKeys()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
         map_or_log_err(Self::delete_all_keys(), Ok)
     }
