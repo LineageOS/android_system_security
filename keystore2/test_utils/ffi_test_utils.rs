@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! This module implements helper methods to access the functionalities implemented in CPP.
+
+use crate::key_generations::Error;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::Tag::Tag;
-use keystore2_test_utils::key_generations::Error;
 
 #[cxx::bridge]
 mod ffi {
@@ -46,6 +48,7 @@ pub fn validate_certchain(cert_buf: &[u8]) -> Result<bool, Error> {
     Err(Error::ValidateCertChainFailed)
 }
 
+/// Collect the result from CxxResult into a Rust supported structure.
 fn get_result(result: ffi::CxxResult) -> Result<Vec<u8>, Error> {
     if result.error == 0 && !result.data.is_empty() {
         Ok(result.data)
@@ -82,6 +85,7 @@ pub fn create_wrapped_key_additional_auth_data() -> Result<Vec<u8>, Error> {
     get_result(ffi::buildAsn1DerEncodedWrappedKeyDescription())
 }
 
+/// Performs crypto operation using Keystore-Engine APIs.
 pub fn perform_crypto_op_using_keystore_engine(grant_id: i64) -> Result<bool, Error> {
     if ffi::performCryptoOpUsingKeystoreEngine(grant_id) {
         return Ok(true);
@@ -90,6 +94,7 @@ pub fn perform_crypto_op_using_keystore_engine(grant_id: i64) -> Result<bool, Er
     Err(Error::Keystore2EngineOpFailed)
 }
 
+/// Get the value of the given `Tag` from attestation record.
 pub fn get_value_from_attest_record(cert_buf: &[u8], tag: Tag) -> Result<Vec<u8>, Error> {
     let result = ffi::getValueFromAttestRecord(cert_buf.to_vec(), tag.0);
     if result.error == 0 && !result.data.is_empty() {
