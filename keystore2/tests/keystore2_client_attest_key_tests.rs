@@ -28,7 +28,7 @@ use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error,
 };
 
-use crate::ffi_test_utils::{get_value_from_attest_record, validate_certchain};
+use keystore2_test_utils::ffi_test_utils::{get_value_from_attest_record, validate_certchain};
 
 use crate::{
     skip_test_if_no_app_attest_key_feature, skip_test_if_no_device_id_attestation_feature,

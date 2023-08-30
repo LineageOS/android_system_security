@@ -32,7 +32,9 @@ use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error,
 };
 
-use crate::ffi_test_utils::{create_wrapped_key, create_wrapped_key_additional_auth_data};
+use keystore2_test_utils::ffi_test_utils::{
+    create_wrapped_key, create_wrapped_key_additional_auth_data,
+};
 
 use crate::keystore2_client_test_utils::{
     encrypt_secure_key, encrypt_transport_key, has_default_keymint,
