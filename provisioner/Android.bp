@@ -30,7 +30,6 @@ cc_defaults {
     ],
     shared_libs: [
         "libbinder_ndk",
-        "libcrypto",
         "liblog",
     ],
     static_libs: [
@@ -40,6 +39,7 @@ cc_defaults {
         "libbase",
         "libcppbor_external",
         "libcppcose_rkp",
+        "libcrypto_static",
         "libjsoncpp",
         "libkeymint_remote_prov_support",
         "libmediadrmrkp",
