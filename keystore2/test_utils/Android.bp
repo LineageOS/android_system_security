@@ -40,28 +40,15 @@ rust_defaults {
         "libthiserror",
     ],
     static_libs: [
-        "libgtest",
-        "libkeymint_vts_test_utils",
         "libkeystore2_ffi_test_utils",
     ],
     shared_libs: [
-        // libkeymint_vts_test_utils needs to be static for atest,
-        // and that pulls in keymint shared lib dependency
-        "android.hardware.security.keymint-V3-ndk",
-        "libbase",
-        "libbinder",
-        "libbinder_ndk",
-        "libcppbor_external",
-        "libcppcose_rkp",
         "libcrypto",
-        "libcutils",
         "libkeymaster_messages",
         "libkeymaster_portable",
-        "libkeymint_remote_prov_support",
         "libkeymint_support",
+        "libkeymint_vts_test_utils",
         "libkeystore-engine",
-        "libutils",
-        "packagemanager_aidl-cpp",
     ],
 }
 
@@ -94,14 +81,12 @@ cc_library_static {
         "libkeystore2_ffi_test_utils_bridge_header",
     ],
     generated_sources: ["libkeystore2_ffi_test_utils_bridge_code"],
-    static_libs: [
-        "libkeymint_vts_test_utils",
-    ],
     shared_libs: [
         "libcppbor_external",
         "libkeymaster_messages",
         "libkeymaster_portable",
         "libkeystore-engine",
+        "libkeymint_vts_test_utils",
     ],
 }
 
