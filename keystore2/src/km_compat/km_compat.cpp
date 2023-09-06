@@ -1450,7 +1450,12 @@ KeymasterDevices enumerateKeymasterDevices(IServiceManager* serviceManager) {
 
 KeymasterDevices initializeKeymasters() {
     auto serviceManager = IServiceManager::getService();
-    CHECK(serviceManager.get()) << "Failed to get ServiceManager";
+    if (!serviceManager.get()) {
+        // New devices no longer have HIDL support, so failing to get hwservicemanager is
+        // expected behavior.
+        LOG(INFO) << "Skipping keymaster compat, this system is AIDL only.";
+        return KeymasterDevices();
+    }
     auto result = enumerateKeymasterDevices<Keymaster4>(serviceManager.get());
     auto softKeymaster = result[SecurityLevel::SOFTWARE];
     if ((!result[SecurityLevel::TRUSTED_ENVIRONMENT]) && (!result[SecurityLevel::STRONGBOX])) {
