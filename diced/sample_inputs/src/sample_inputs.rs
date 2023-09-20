@@ -15,15 +15,17 @@
 //! This module provides a set of sample input values for a DICE chain, a sample UDS,
 //! as well as tuple of CDIs and BCC derived thereof.
 
-use anyhow::{anyhow, Context, Result};
+use alloc::vec;
+use alloc::vec::Vec;
 use ciborium::{de, ser, value::Value};
+use core::ffi::CStr;
 use coset::{iana, Algorithm, AsCborValue, CoseKey, KeyOperation, KeyType, Label};
 use diced_open_dice::{
     derive_cdi_private_key_seed, keypair_from_seed, retry_bcc_format_config_descriptor,
-    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceArtifacts, DiceConfigValues, DiceMode,
-    InputValues, OwnedDiceArtifacts, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
+    retry_bcc_main_flow, retry_dice_main_flow, Config, DiceArtifacts, DiceConfigValues, DiceError,
+    DiceMode, InputValues, OwnedDiceArtifacts, Result, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE,
 };
-use std::ffi::CStr;
+use log::error;
 
 /// Sample UDS used to perform the root dice flow by `make_sample_bcc_and_cdis`.
 const UDS: &[u8; CDI_SIZE] = &[
@@ -88,8 +90,10 @@ fn ed25519_public_key_to_cbor_value(public_key: &[u8]) -> Result<Value> {
         ],
         ..Default::default()
     };
-    key.to_cbor_value()
-        .map_err(|e| anyhow!(format!("Failed to serialize the key to CBOR data. Error: {e}")))
+    key.to_cbor_value().map_err(|e| {
+        error!("Failed to serialize the key to CBOR data: {e}");
+        DiceError::InvalidInput
+    })
 }
 
 /// Makes a DICE chain (BCC) from the sample input.
@@ -97,12 +101,16 @@ fn ed25519_public_key_to_cbor_value(public_key: &[u8]) -> Result<Value> {
 /// The DICE chain is of the following format:
 /// public key derived from UDS -> ABL certificate -> AVB certificate -> Android certificate
 pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
-    let private_key_seed = derive_cdi_private_key_seed(UDS)
-        .context("In make_sample_bcc_and_cdis: Trying to derive private key seed.")?;
+    let private_key_seed = derive_cdi_private_key_seed(UDS).map_err(|e| {
+        error!("In make_sample_bcc_and_cdis: Trying to derive private key seed. Error: {e}");
+        e
+    })?;
 
     // Gets the root public key in DICE chain (BCC).
-    let (public_key, _) = keypair_from_seed(private_key_seed.as_array())
-        .context("In make_sample_bcc_and_cids: Failed to generate key pair.")?;
+    let (public_key, _) = keypair_from_seed(private_key_seed.as_array()).map_err(|e| {
+        error!("In make_sample_bcc_and_cids: Failed to generate key pair. Error: {e}");
+        e
+    })?;
     let ed25519_public_key_value = ed25519_public_key_to_cbor_value(&public_key)?;
 
     // Gets the ABL certificate to as the root certificate of DICE chain.
@@ -120,14 +128,22 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
         DiceMode::kDiceModeNormal,
         HIDDEN_ABL,
     );
-    let (cdi_values, cert) = retry_dice_main_flow(UDS, UDS, &input_values)
-        .context("In make_sample_bcc_and_cdis: Trying to run first main flow.")?;
+    let (cdi_values, cert) = retry_dice_main_flow(UDS, UDS, &input_values).map_err(|e| {
+        error!("In make_sample_bcc_and_cdis: Trying to run first main flow. Error: {e}");
+        e
+    })?;
     let bcc_value = Value::Array(vec![
         ed25519_public_key_value,
-        de::from_reader(&cert[..]).context("Deserialize root DICE certificate failed")?,
+        de::from_reader(&cert[..]).map_err(|e| {
+            error!("Deserialize root DICE certificate failed: {e}");
+            DiceError::InvalidInput
+        })?,
     ]);
     let mut bcc: Vec<u8> = vec![];
-    ser::into_writer(&bcc_value, &mut bcc)?;
+    ser::into_writer(&bcc_value, &mut bcc).map_err(|e| {
+        error!("Serialize BCC failed: {e}");
+        DiceError::InvalidInput
+    })?;
 
     // Appends AVB certificate to DICE chain.
     let config_values = DiceConfigValues {
@@ -146,7 +162,12 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
     );
     let dice_artifacts =
         retry_bcc_main_flow(&cdi_values.cdi_attest, &cdi_values.cdi_seal, &bcc, &input_values)
-            .context("In make_sample_bcc_and_cdis: Trying to run first bcc main flow.")?;
+            .map_err(|e| {
+                error!(
+                    "In make_sample_bcc_and_cdis: Trying to run first bcc main flow. Error: {e}"
+                );
+                e
+            })?;
 
     // Appends Android certificate to DICE chain.
     let config_values = DiceConfigValues {
@@ -166,8 +187,14 @@ pub fn make_sample_bcc_and_cdis() -> Result<OwnedDiceArtifacts> {
     retry_bcc_main_flow(
         dice_artifacts.cdi_attest(),
         dice_artifacts.cdi_seal(),
-        dice_artifacts.bcc().ok_or_else(|| anyhow!("bcc is none"))?,
+        dice_artifacts.bcc().ok_or_else(|| {
+            error!("bcc is none");
+            DiceError::InvalidInput
+        })?,
         &input_values,
     )
-    .context("In make_sample_bcc_and_cdis: Trying to run second bcc main flow.")
+    .map_err(|e| {
+        error!("In make_sample_bcc_and_cdis: Trying to run second bcc main flow. Error: {e}");
+        e
+    })
 }
