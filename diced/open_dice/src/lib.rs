@@ -17,6 +17,9 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 #[cfg(not(feature = "std"))]
 extern crate core as std;
 
@@ -24,7 +27,7 @@ mod bcc;
 mod dice;
 mod error;
 mod ops;
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 mod retry;
 
 pub use bcc::{
@@ -38,7 +41,7 @@ pub use dice::{
 };
 pub use error::{DiceError, Result};
 pub use ops::{generate_certificate, hash, kdf, keypair_from_seed, sign, verify};
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 pub use retry::{
     retry_bcc_format_config_descriptor, retry_bcc_main_flow, retry_dice_main_flow,
     retry_generate_certificate, OwnedDiceArtifacts,

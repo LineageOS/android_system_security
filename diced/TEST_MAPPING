@@ -15,5 +15,10 @@
     {
       "name": "libdiced_sample_inputs.integration_test"
     }
+  ],
+  "postsubmit": [
+    {
+      "name": "libdiced_sample_inputs_nostd.integration_test"
+    }
   ]
 }
