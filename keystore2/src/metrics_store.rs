@@ -17,7 +17,7 @@
 //!    stores them in an in-memory store.
 //! 2. Returns the collected metrics when requested by the statsd proxy.
 
-use crate::error::get_error_code;
+use crate::error::anyhow_error_to_serialized_error;
 use crate::globals::DB;
 use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
 use crate::ks_err;
@@ -202,7 +202,7 @@ fn process_key_creation_event_stats<U>(
     };
 
     if let Err(ref e) = result {
-        key_creation_with_general_info.error_code = get_error_code(e);
+        key_creation_with_general_info.error_code = anyhow_error_to_serialized_error(e).0;
     }
 
     key_creation_with_auth_info.security_level = process_security_level(sec_level);
