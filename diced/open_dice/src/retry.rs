@@ -23,6 +23,8 @@ use crate::dice::{
 };
 use crate::error::{DiceError, Result};
 use crate::ops::generate_certificate;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 
 /// Artifacts stores a set of dice artifacts comprising CDI_ATTEST, CDI_SEAL,
 /// and the BCC formatted attestation certificate chain.
