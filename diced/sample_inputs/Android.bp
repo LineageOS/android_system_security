@@ -21,25 +21,61 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
-rust_library {
-    name: "libdiced_sample_inputs",
+rust_defaults {
+    name: "libdiced_sample_inputs_defaults",
     crate_name: "diced_sample_inputs",
     srcs: ["src/lib.rs"],
+}
+
+rust_library {
+    name: "libdiced_sample_inputs",
+    defaults: ["libdiced_sample_inputs_defaults"],
+    features: [
+        "std",
+    ],
     rustlibs: [
-        "libanyhow",
         "libciborium",
         "libcoset",
         "libdiced_open_dice",
+        "liblog_rust",
     ],
+}
+
+rust_library_rlib {
+    name: "libdiced_sample_inputs_nostd",
+    defaults: ["libdiced_sample_inputs_defaults"],
+    rustlibs: [
+        "libciborium_nostd",
+        "libcoset_nostd",
+        "libdiced_open_dice_nostd",
+        "liblog_rust_nostd",
+    ],
+    visibility: [
+        "//packages/modules/Virtualization:__subpackages__",
+    ],
+}
+
+rust_defaults {
+    name: "libdiced_sample_inputs_test_defaults",
+    crate_name: "diced_sample_inputs_test",
+    srcs: ["tests/*.rs"],
+    test_suites: ["general-tests"],
 }
 
 rust_test {
     name: "libdiced_sample_inputs.integration_test",
-    crate_name: "diced_sample_inputs_test",
-    srcs: ["tests/*.rs"],
-    test_suites: ["general-tests"],
+    defaults: ["libdiced_sample_inputs_test_defaults"],
     rustlibs: [
         "libdiced_open_dice",
         "libdiced_sample_inputs",
+    ],
+}
+
+rust_test {
+    name: "libdiced_sample_inputs_nostd.integration_test",
+    defaults: ["libdiced_sample_inputs_test_defaults"],
+    rustlibs: [
+        "libdiced_open_dice_nostd",
+        "libdiced_sample_inputs_nostd",
     ],
 }
