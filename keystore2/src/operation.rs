@@ -126,7 +126,10 @@
 //! Either way, we have to revaluate the pruning scores.
 
 use crate::enforcements::AuthInfo;
-use crate::error::{map_err_with, map_km_error, map_or_log_err, Error, ErrorCode, ResponseCode};
+use crate::error::{
+    error_to_serialized_error, map_err_with, map_km_error, map_or_log_err, Error, ErrorCode,
+    ResponseCode, SerializedError,
+};
 use crate::ks_err;
 use crate::metrics_store::log_key_operation_event_stats;
 use crate::utils::watchdog as wd;
@@ -162,7 +165,7 @@ pub enum Outcome {
     /// Operation is pruned.
     Pruned,
     /// Operation is failed with the error code.
-    ErrorCode(ErrorCode),
+    ErrorCode(SerializedError),
 }
 
 /// Operation bundles all of the operation related resources and tracks the operation's
@@ -305,8 +308,7 @@ impl Operation {
         err: Result<T, Error>,
     ) -> Result<T, Error> {
         match &err {
-            Err(Error::Km(e)) => *locked_outcome = Outcome::ErrorCode(*e),
-            Err(_) => *locked_outcome = Outcome::ErrorCode(ErrorCode::UNKNOWN_ERROR),
+            Err(e) => *locked_outcome = Outcome::ErrorCode(error_to_serialized_error(e)),
             Ok(_) => (),
         }
         err
