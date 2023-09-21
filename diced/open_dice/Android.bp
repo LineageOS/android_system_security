@@ -13,9 +13,12 @@ rust_library_rlib {
     name: "libdiced_open_dice_nostd",
     defaults: ["libdiced_open_dice_defaults"],
     rustlibs: [
-        "libopen_dice_bcc_bindgen_nostd",
+        "libopen_dice_android_bindgen_nostd",
         "libopen_dice_cbor_bindgen_nostd",
         "libzeroize_nostd",
+    ],
+    features: [
+        "alloc",
     ],
     whole_static_libs: [
         "libopen_dice_cbor",
@@ -23,6 +26,7 @@ rust_library_rlib {
     ],
     visibility: [
         "//packages/modules/Virtualization:__subpackages__",
+        "//system/security/diced/sample_inputs",
     ],
 }
 
@@ -31,11 +35,12 @@ rust_library {
     defaults: ["libdiced_open_dice_defaults"],
     vendor_available: true,
     rustlibs: [
-        "libopen_dice_bcc_bindgen",
+        "libopen_dice_android_bindgen",
         "libopen_dice_cbor_bindgen",
         "libzeroize",
     ],
     features: [
+        "alloc",
         "std",
     ],
     shared_libs: [
@@ -45,7 +50,7 @@ rust_library {
         "libopen_dice_cbor",
     ],
     whole_static_libs: [
-        "libopen_dice_bcc",
+        "libopen_dice_android",
     ],
     visibility: [
         "//system/security/diced:__subpackages__",
@@ -172,22 +177,20 @@ rust_bindgen {
 }
 
 rust_defaults {
-    name: "libopen_dice_bcc_bindgen.rust_defaults",
-    wrapper_src: "bindgen/android/bcc.h",
-    crate_name: "open_dice_bcc_bindgen",
+    name: "libopen_dice_android_bindgen.rust_defaults",
+    wrapper_src: "bindgen/android.h",
+    crate_name: "open_dice_android_bindgen",
     source_stem: "bindings",
     bindgen_flags: [
         // By generating only essential functions, we can make bindings concise and
         // optimize compilation time.
-        "--allowlist-function=BccFormatConfigDescriptor",
-        "--allowlist-function=BccMainFlow",
-        "--allowlist-function=BccHandoverMainFlow",
-        "--allowlist-function=BccHandoverParse",
+        "--allowlist-function=DiceAndroidFormatConfigDescriptor",
+        "--allowlist-function=DiceAndroidMainFlow",
+        "--allowlist-function=DiceAndroidHandoverMainFlow",
+        "--allowlist-function=DiceAndroidHandoverParse",
 
         // We also need some constants in addition to the functions.
-        "--allowlist-var=BCC_INPUT_COMPONENT_NAME",
-        "--allowlist-var=BCC_INPUT_COMPONENT_VERSION",
-        "--allowlist-var=BCC_INPUT_RESETTABLE",
+        "--allowlist-var=DICE_ANDROID_CONFIG_.*",
 
         // Prevent DiceInputValues from being generated a second time and
         // import it instead from open_dice_cbor_bindgen.
@@ -206,27 +209,27 @@ rust_defaults {
 }
 
 rust_bindgen {
-    name: "libopen_dice_bcc_bindgen",
+    name: "libopen_dice_android_bindgen",
     defaults: [
         "libopen_dice.rust_defaults",
-        "libopen_dice_bcc_bindgen.rust_defaults",
+        "libopen_dice_android_bindgen.rust_defaults",
     ],
     rustlibs: [
         "libopen_dice_cbor_bindgen",
     ],
-    whole_static_libs: ["libopen_dice_bcc"],
+    whole_static_libs: ["libopen_dice_android"],
 }
 
 rust_bindgen {
-    name: "libopen_dice_bcc_bindgen_nostd",
+    name: "libopen_dice_android_bindgen_nostd",
     defaults: [
-        "libopen_dice_bcc_bindgen.rust_defaults",
+        "libopen_dice_android_bindgen.rust_defaults",
         "libopen_dice_bindgen_nostd.rust_defaults",
     ],
     rustlibs: [
         "libopen_dice_cbor_bindgen_nostd",
     ],
-    whole_static_libs: ["libopen_dice_bcc_baremetal"],
+    whole_static_libs: ["libopen_dice_android_baremetal"],
 }
 
 rust_test {
@@ -242,11 +245,11 @@ rust_test {
 }
 
 rust_test {
-    name: "libopen_dice_bcc_bindgen_test",
+    name: "libopen_dice_android_bindgen_test",
     srcs: [
-        ":libopen_dice_bcc_bindgen",
+        ":libopen_dice_android_bindgen",
     ],
-    crate_name: "open_dice_bcc_bindgen_test",
+    crate_name: "open_dice_android_bindgen_test",
     rustlibs: [
         "libopen_dice_cbor_bindgen",
     ],

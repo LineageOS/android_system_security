@@ -644,17 +644,17 @@ impl SuperKeyManager {
                 // super key is not unlocked or the LSKF is not setup, an error is returned.
                 match self
                     .get_user_state(db, legacy_importer, user_id)
-                    .context(ks_err!("Failed to get user state."))?
+                    .context(ks_err!("Failed to get user state for user {user_id}"))?
                 {
-                    UserState::LskfUnlocked(super_key) => {
-                        Self::encrypt_with_aes_super_key(key_blob, &super_key)
-                            .context(ks_err!("Failed to encrypt with LskfBound key."))
-                    }
+                    UserState::LskfUnlocked(super_key) => Self::encrypt_with_aes_super_key(
+                        key_blob, &super_key,
+                    )
+                    .context(ks_err!("Failed to encrypt with LskfBound key for user {user_id}")),
                     UserState::LskfLocked => {
                         Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
                     }
                     UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
-                        .context(ks_err!("LSKF is not setup for the user.")),
+                        .context(ks_err!("LSKF is not setup for user {user_id}")),
                 }
             }
             SuperEncryptionType::ScreenLockBound => {
@@ -912,9 +912,11 @@ impl SuperKeyManager {
                 .context(ks_err!("load_key_entry failed"))?;
             let km_dev: KeyMintDevice = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
                 .context(ks_err!("KeyMintDevice::get failed"))?;
+            let mut errs = vec![];
             for sid in &biometric.sids {
+                let sid = *sid;
                 if let Some((auth_token_entry, _)) = db.find_auth_token_entry(|entry| {
-                    entry.auth_token().userId == *sid || entry.auth_token().authenticatorId == *sid
+                    entry.auth_token().userId == sid || entry.auth_token().authenticatorId == sid
                 }) {
                     let res: Result<(Arc<SuperKey>, Arc<SuperKey>)> = (|| {
                         let slb = biometric.screen_lock_bound.decrypt(
@@ -941,13 +943,20 @@ impl SuperKeyManager {
                             entry.screen_lock_bound_private = Some(slbp.clone());
                             self.data.add_key_to_key_index(&slb)?;
                             self.data.add_key_to_key_index(&slbp)?;
-                            log::info!("Successfully unlocked with biometric");
+                            log::info!("Successfully unlocked user {user_id} with biometric {sid}",);
                             return Ok(());
                         }
                         Err(e) => {
-                            log::warn!("attempt failed: {:?}", e)
+                            // Don't log an error yet, as some other biometric SID might work.
+                            errs.push((sid, e));
                         }
                     }
+                }
+            }
+            if !errs.is_empty() {
+                log::warn!("biometric unlock failed for all SIDs, with errors:");
+                for (sid, err) in errs {
+                    log::warn!("  biometric {sid}: {err}");
                 }
             }
         }
@@ -988,6 +997,7 @@ impl SuperKeyManager {
         legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<()> {
+        log::info!("remove_user(user={user_id})");
         // Mark keys created on behalf of the user as unreferenced.
         legacy_importer
             .bulk_delete_user(user_id, false)
@@ -1008,6 +1018,7 @@ impl SuperKeyManager {
         legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<()> {
+        log::info!("reset_user(user={user_id})");
         match self.get_user_state(db, legacy_importer, user_id)? {
             UserState::Uninitialized => {
                 Err(Error::sys()).context(ks_err!("Tried to reset an uninitialized user!"))
@@ -1039,6 +1050,7 @@ impl SuperKeyManager {
         user_id: UserId,
         password: &Password,
     ) -> Result<()> {
+        log::info!("init_user(user={user_id})");
         match self.get_user_state(db, legacy_importer, user_id)? {
             UserState::LskfUnlocked(_) | UserState::LskfLocked => {
                 Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"))
@@ -1091,6 +1103,7 @@ impl SuperKeyManager {
         user_id: UserId,
         password: &Password,
     ) -> Result<()> {
+        log::info!("unlock_user(user={user_id})");
         match self.get_user_state(db, legacy_importer, user_id)? {
             UserState::LskfUnlocked(_) => self.unlock_screen_lock_bound_key(db, user_id, password),
             UserState::Uninitialized => {

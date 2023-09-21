@@ -489,8 +489,8 @@ mod tests {
         let input = vec![0; 16];
         let mut out = vec![0; 16];
         let mut out2 = vec![0; 16];
-        let key = vec![0; 16];
-        let iv = vec![0; 12];
+        let key = [0; 16];
+        let iv = [0; 12];
         let mut tag = vec![0; 16];
         // SAFETY: The various pointers are obtained from references so they are valid, and
         // `AES_gcm_encrypt` and `AES_gcm_decrypt` don't do anything with them after they return.
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_create_key_id() {
-        let blob = vec![0; 16];
+        let blob = [0; 16];
         let mut out: u64 = 0;
         // SAFETY: The pointers are obtained from references so they are valid, the length matches
         // the length of the array, and `CreateKeyId` doesn't access them after it returns.
@@ -537,8 +537,8 @@ mod tests {
     #[test]
     fn test_generate_key_from_password() {
         let mut key = vec![0; 16];
-        let pw = vec![0; 16];
-        let salt = vec![0; 16];
+        let pw = [0; 16];
+        let salt = [0; 16];
         // SAFETY: The pointers are obtained from references so they are valid, the salt is the
         // expected length, the other lengths match the lengths of the arrays, and
         // `generateKeyFromPassword` doesn't access them after it returns.

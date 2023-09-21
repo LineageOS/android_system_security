@@ -22,6 +22,7 @@ use std::{env::temp_dir, ops::Deref};
 use android_system_keystore2::aidl::android::system::keystore2::IKeystoreService::IKeystoreService;
 
 pub mod authorizations;
+pub mod ffi_test_utils;
 pub mod key_generations;
 pub mod run_as;
 

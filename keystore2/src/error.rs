@@ -13,22 +13,19 @@
 // limitations under the License.
 
 //! Keystore error provides convenience methods and types for Keystore error handling.
-//! Clients of Keystore expect one of two error codes, i.e., a Keystore ResponseCode as
-//! defined by the Keystore AIDL interface, or a Keymint ErrorCode as defined by
-//! the Keymint HAL specification.
-//! This crate provides `Error` which can wrap both. It is to be used
-//! internally by Keystore to diagnose error conditions that need to be reported to
-//! the client. To report the error condition to the client the Keystore AIDL
-//! interface defines a wire type `Result` which is distinctly different from Rust's
-//! `enum Result<T,E>`.
 //!
-//! This crate provides the convenience method `map_or_log_err` to convert `anyhow::Error`
-//! into this wire type. In addition to handling the conversion of `Error`
-//! to the `Result` wire type it handles any other error by mapping it to
-//! `ResponseCode::SYSTEM_ERROR` and logs any error condition.
+//! Here are some important types and helper functions:
 //!
-//! Keystore functions should use `anyhow::Result` to return error conditions, and
-//! context should be added every time an error is forwarded.
+//! `Error` type encapsulate Keystore, Keymint, and Binder errors. It is used internally by
+//! Keystore to diagnose error conditions that need to be reported to the client.
+//!
+//! `SerializedError` is used send error codes on the wire.
+//!
+//! `map_or_log_err` is a convenience method used to convert `anyhow::Error` into `SerializedError`
+//! wire type.
+//!
+//! Keystore functions should use `anyhow::Result` to return error conditions, and context should
+//! be added every time an error is forwarded.
 
 pub use android_hardware_security_keymint::aidl::android::hardware::security::keymint::ErrorCode::ErrorCode;
 pub use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
@@ -55,10 +52,6 @@ pub enum Error {
     /// Wraps a Binder status code.
     #[error("Binder transaction error {0:?}")]
     BinderTransaction(StatusCode),
-    /// Wraps a Remote Provisioning ErrorCode as defined by the IRemotelyProvisionedComponent
-    /// AIDL interface spec.
-    #[error("Error::Rp({0:?})")]
-    Rp(ErrorCode),
 }
 
 impl Error {
@@ -103,16 +96,6 @@ pub fn map_km_error<T>(r: BinderResult<T>) -> Result<T, Error> {
     })
 }
 
-/// Helper function to map the binder status we get from calls into a RemotelyProvisionedComponent
-/// to a Keystore Error. We don't create an anyhow error here to make
-/// it easier to evaluate service specific errors.
-pub fn map_rem_prov_error<T>(r: BinderResult<T>) -> Result<T, Error> {
-    r.map_err(|s| match s.exception_code() {
-        ExceptionCode::SERVICE_SPECIFIC => Error::Rp(ErrorCode(s.service_specific_error())),
-        e_code => Error::Binder(e_code, 0),
-    })
-}
-
 /// This function is similar to map_km_error only that we don't expect
 /// any KeyMint error codes, we simply preserve the exception code and optional
 /// service specific exception.
@@ -139,14 +122,6 @@ pub fn map_binder_status_code<T>(r: Result<T, StatusCode>) -> Result<T, Error> {
 /// into service specific exceptions.
 ///
 /// All error conditions get logged by this function, except for KEY_NOT_FOUND error.
-///
-/// All `Error::Rc(x)` and `Error::Km(x)` variants get mapped onto a service specific error
-/// code of x. This is possible because KeyMint `ErrorCode` errors are always negative and
-/// `ResponseCode` codes are always positive.
-/// `selinux::Error::PermissionDenied` is mapped on `ResponseCode::PERMISSION_DENIED`.
-///
-/// All non `Error` error conditions and the Error::Binder variant get mapped onto
-/// ResponseCode::SYSTEM_ERROR`.
 ///
 /// `handle_ok` will be called if `result` is `Ok(value)` where `value` will be passed
 /// as argument to `handle_ok`. `handle_ok` must generate a `BinderResult<T>`, but it
@@ -214,9 +189,9 @@ where
     result.map_or_else(
         |e| {
             let e = map_err(e);
-            let rc = get_error_code(&e);
+            let rc = anyhow_error_to_serialized_error(&e);
             Err(BinderStatus::new_service_specific_error(
-                rc,
+                rc.0,
                 anyhow_error_to_cstring(&e).as_deref(),
             ))
         },
@@ -224,22 +199,42 @@ where
     )
 }
 
-/// Returns the error code given a reference to the error
-pub fn get_error_code(e: &anyhow::Error) -> i32 {
+/// This type is used to send error codes on the wire.
+///
+/// Errors are squashed into one number space using following rules:
+/// - All Keystore and Keymint errors codes are identity mapped. It's possible because by
+///   convention Keystore `ResponseCode` errors are positive, and Keymint `ErrorCode` errors are
+///   negative.
+/// - `selinux::Error::PermissionDenied` is mapped to `ResponseCode::PERMISSION_DENIED`.
+/// - All other error conditions, e.g. Binder errors, are mapped to `ResponseCode::SYSTEM_ERROR`.
+///
+/// The type should be used to forward all error codes to clients of Keystore AIDL interface and to
+/// metrics events.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct SerializedError(pub i32);
+
+/// Returns a SerializedError given a reference to Error.
+pub fn error_to_serialized_error(e: &Error) -> SerializedError {
+    match e {
+        Error::Rc(rcode) => SerializedError(rcode.0),
+        Error::Km(ec) => SerializedError(ec.0),
+        // Binder errors are reported as system error.
+        Error::Binder(_, _) | Error::BinderTransaction(_) => {
+            SerializedError(ResponseCode::SYSTEM_ERROR.0)
+        }
+    }
+}
+
+/// Returns a SerializedError given a reference to anyhow::Error.
+pub fn anyhow_error_to_serialized_error(e: &anyhow::Error) -> SerializedError {
     let root_cause = e.root_cause();
     match root_cause.downcast_ref::<Error>() {
-        Some(Error::Rc(rcode)) => rcode.0,
-        Some(Error::Km(ec)) => ec.0,
-        Some(Error::Rp(_)) => ResponseCode::SYSTEM_ERROR.0,
-        // If an Error::Binder reaches this stage we report a system error.
-        // The exception code and possible service specific error will be
-        // printed in the error log above.
-        Some(Error::Binder(_, _)) | Some(Error::BinderTransaction(_)) => {
-            ResponseCode::SYSTEM_ERROR.0
-        }
+        Some(e) => error_to_serialized_error(e),
         None => match root_cause.downcast_ref::<selinux::Error>() {
-            Some(selinux::Error::PermissionDenied) => ResponseCode::PERMISSION_DENIED.0,
-            _ => ResponseCode::SYSTEM_ERROR.0,
+            Some(selinux::Error::PermissionDenied) => {
+                SerializedError(ResponseCode::PERMISSION_DENIED.0)
+            }
+            _ => SerializedError(ResponseCode::SYSTEM_ERROR.0),
         },
     }
 }

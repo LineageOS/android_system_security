@@ -17,6 +17,10 @@
 //! Provides a set of sample inputs for a DICE chain and CDI values derived
 //! from it.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 mod sample_inputs;
 
 pub use sample_inputs::make_sample_bcc_and_cdis;
