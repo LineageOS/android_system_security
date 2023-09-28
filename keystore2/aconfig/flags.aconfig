@@ -5,4 +5,5 @@ flag {
   namespace: "hardware_backed_security"
   description: "This flag controls changing journalmode to wal"
   bug: "191777960"
+  is_fixed_read_only: true
 }
