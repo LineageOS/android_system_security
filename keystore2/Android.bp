@@ -28,7 +28,6 @@ rust_defaults {
     defaults: [
         "keymint_use_latest_hal_aidl_rust",
         "keystore2_use_latest_aidl_rust",
-        "framework-minus-apex-aconfig-libraries",
     ],
 
     rustlibs: [
