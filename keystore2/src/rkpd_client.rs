@@ -685,6 +685,10 @@ mod tests {
                         tag: Tag::ALGORITHM,
                         value: KeyParameterValue::Algorithm(Algorithm::AES),
                     },
+                    KeyParameter {
+                        tag: Tag::ATTESTATION_CHALLENGE,
+                        value: KeyParameterValue::Blob(vec![0; 16]),
+                    },
                     KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) },
                 ];
                 let attestation_key = AttestationKey {
