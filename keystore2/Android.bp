@@ -42,6 +42,7 @@ rust_defaults {
         "android.security.metrics-rust",
         "android.security.rkp_aidl-rust",
         "libanyhow",
+        "libkeystore2_flags_rust",
         "libbinder_rs",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
@@ -145,4 +146,17 @@ rust_binary {
         "librusqlite",
     ],
     afdo: true,
+}
+
+// Keystore Flag definitions
+aconfig_declarations {
+    name: "keystore2_flags",
+    package: "android.security.keystore2",
+    srcs: ["aconfig/flags.aconfig"],
+}
+
+rust_aconfig_library {
+    name: "libkeystore2_flags_rust",
+    crate_name: "keystore2_flags",
+    aconfig_declarations: "keystore2_flags",
 }
