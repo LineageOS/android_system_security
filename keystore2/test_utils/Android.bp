@@ -39,6 +39,7 @@ rust_defaults {
         "libserde",
         "libserde_cbor",
         "libthiserror",
+        "android.security.authorization-rust",
     ],
     static_libs: [
         "libkeystore2_ffi_test_utils",

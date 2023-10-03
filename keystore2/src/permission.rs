@@ -149,6 +149,9 @@ implement_class!(
         /// Checked on calls to IRemotelyProvisionedKeyPool::getAttestationKey
         #[selinux(name = get_attestation_key)]
         GetAttestationKey,
+        /// Checked on IKeystoreAuthorization::getLastAuthTime() is called.
+        #[selinux(name = get_last_auth_time)]
+        GetLastAuthTime,
     }
 );
 
