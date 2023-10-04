@@ -55,11 +55,6 @@ use crate::{
     error::{Error as KsError, ErrorCode, ResponseCode},
     super_key::SuperKeyType,
 };
-use anyhow::{anyhow, Context, Result};
-use std::{convert::TryFrom, convert::TryInto, ops::Deref, time::SystemTimeError};
-use utils as db_utils;
-use utils::SqlField;
-
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
     SecurityLevel::SecurityLevel,
@@ -70,6 +65,11 @@ use android_security_metrics::aidl::android::security::metrics::{
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
+use anyhow::{anyhow, Context, Result};
+use keystore2_flags;
+use std::{convert::TryFrom, convert::TryInto, ops::Deref, time::SystemTimeError};
+use utils as db_utils;
+use utils::SqlField;
 
 use keystore2_crypto::ZVec;
 use lazy_static::lazy_static;
@@ -1036,6 +1036,11 @@ impl KeystoreDB {
             break;
         }
 
+        if keystore2_flags::wal_db_journalmode() {
+            // Update journal mode to WAL
+            conn.pragma_update(None, "journal_mode", "WAL")
+                .context("Failed to connect in WAL mode for persistent db")?;
+        }
         // Drop the cache size from default (2M) to 0.5M
         conn.execute("PRAGMA persistent.cache_size = -500;", params![])
             .context("Failed to decrease cache size for persistent db")?;
