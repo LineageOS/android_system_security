@@ -28,10 +28,10 @@ interface IKeystoreMaintenance {
 
     /**
      * Allows LockSettingsService to inform keystore about adding a new user.
-     * Callers require 'AddUser' permission.
+     * Callers require 'ChangeUser' permission.
      *
      * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'AddUser' permission.
+     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'ChangeUser' permission.
      * `ResponseCode::SYSTEM_ERROR` - if failed to delete the keys of an existing user with the same
      * user id.
      *
@@ -41,10 +41,10 @@ interface IKeystoreMaintenance {
 
     /**
      * Allows LockSettingsService to inform keystore about removing a user.
-     * Callers require 'RemoveUser' permission.
+     * Callers require 'ChangeUser' permission.
      *
      * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'RemoveUser' permission.
+     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'ChangeUser' permission.
      * `ResponseCode::SYSTEM_ERROR` - if failed to delete the keys of the user being deleted.
      *
      * @param userId - Android user id
