@@ -1,26 +1,21 @@
 #include "ffi_test_utils.hpp"
 
 #include <iostream>
-
-#include <android-base/logging.h>
-
-#include <KeyMintAidlTestBase.h>
-#include <aidl/android/hardware/security/keymint/ErrorCode.h>
-#include <keymaster/UniquePtr.h>
-
 #include <vector>
 
-#include <hardware/keymaster_defs.h>
-#include <keymaster/android_keymaster_utils.h>
-#include <keymaster/keymaster_tags.h>
-
+#include <android-base/logging.h>
 #include <keymaster/km_openssl/attestation_record.h>
 #include <keymaster/km_openssl/openssl_err.h>
 #include <keymaster/km_openssl/openssl_utils.h>
+#include <keymint_support/attestation_record.h>
+#include <openssl/mem.h>
 
-#include <android-base/logging.h>
-
-using aidl::android::hardware::security::keymint::ErrorCode;
+using keymaster::ASN1_OBJECT_Ptr;
+using keymaster::EVP_PKEY_Ptr;
+using keymaster::X509_Ptr;
+using std::endl;
+using std::string;
+using std::vector;
 
 #define TAG_SEQUENCE 0x30
 #define LENGTH_MASK 0x80
@@ -28,6 +23,8 @@ using aidl::android::hardware::security::keymint::ErrorCode;
 
 /* EVP_PKEY_from_keystore is from system/security/keystore-engine. */
 extern "C" EVP_PKEY* EVP_PKEY_from_keystore(const char* key_id);
+
+typedef std::vector<uint8_t> certificate_t;
 
 /**
  * ASN.1 structure for `KeyDescription` Schema.
@@ -91,6 +88,94 @@ struct TEST_SECURE_KEY_WRAPPER_Delete {
 
 const std::string keystore2_grant_id_prefix("ks2_keystore-engine_grant_id:");
 
+string bin2hex(const vector<uint8_t>& data) {
+    string retval;
+    char nibble2hex[16] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                           '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+    retval.reserve(data.size() * 2 + 1);
+    for (uint8_t byte : data) {
+        retval.push_back(nibble2hex[0x0F & (byte >> 4)]);
+        retval.push_back(nibble2hex[0x0F & byte]);
+    }
+    return retval;
+}
+
+string x509NameToStr(X509_NAME* name) {
+    char* s = X509_NAME_oneline(name, nullptr, 0);
+    string retval(s);
+    OPENSSL_free(s);
+    return retval;
+}
+
+X509_Ptr parseCertBlob(const vector<uint8_t>& blob) {
+    const uint8_t* p = blob.data();
+    return X509_Ptr(d2i_X509(nullptr /* allocate new */, &p, blob.size()));
+}
+
+// Extract attestation record from cert. Returned object is still part of cert; don't free it
+// separately.
+ASN1_OCTET_STRING* getAttestationRecord(X509* certificate) {
+    ASN1_OBJECT_Ptr oid(OBJ_txt2obj(aidl::android::hardware::security::keymint::kAttestionRecordOid,
+                                    1 /* dotted string format */));
+    if (!oid.get()) return nullptr;
+
+    int location = X509_get_ext_by_OBJ(certificate, oid.get(), -1 /* search from beginning */);
+    if (location == -1) return nullptr;
+
+    X509_EXTENSION* attest_rec_ext = X509_get_ext(certificate, location);
+    if (!attest_rec_ext) return nullptr;
+
+    ASN1_OCTET_STRING* attest_rec = X509_EXTENSION_get_data(attest_rec_ext);
+    return attest_rec;
+}
+
+bool ChainSignaturesAreValid(const vector<certificate_t>& chain, bool strict_issuer_check) {
+    std::stringstream cert_data;
+
+    for (size_t i = 0; i < chain.size(); ++i) {
+        cert_data << bin2hex(chain[i]) << std::endl;
+
+        X509_Ptr key_cert(parseCertBlob(chain[i]));
+        X509_Ptr signing_cert;
+        if (i < chain.size() - 1) {
+            signing_cert = parseCertBlob(chain[i + 1]);
+        } else {
+            signing_cert = parseCertBlob(chain[i]);
+        }
+        if (!key_cert.get() || !signing_cert.get()) {
+            LOG(ERROR) << cert_data.str();
+            return false;
+        }
+
+        EVP_PKEY_Ptr signing_pubkey(X509_get_pubkey(signing_cert.get()));
+        if (!signing_pubkey.get()) {
+            LOG(ERROR) << cert_data.str();
+            return false;
+        }
+
+        if (!X509_verify(key_cert.get(), signing_pubkey.get())) {
+            LOG(ERROR) << "Verification of certificate " << i << " failed "
+                       << "OpenSSL error string: " << ERR_error_string(ERR_get_error(), NULL)
+                       << '\n'
+                       << cert_data.str();
+            return false;
+        }
+
+        string cert_issuer = x509NameToStr(X509_get_issuer_name(key_cert.get()));
+        string signer_subj = x509NameToStr(X509_get_subject_name(signing_cert.get()));
+        if (cert_issuer != signer_subj && strict_issuer_check) {
+            LOG(ERROR) << "Cert " << i << " has wrong issuer.\n"
+                       << " Signer subject is " << signer_subj << " Issuer subject is "
+                       << cert_issuer << endl
+                       << cert_data.str();
+        }
+    }
+
+    // Dump cert data.
+    LOG(ERROR) << cert_data.str();
+    return true;
+}
+
 /* This function extracts a certificate from the certs_chain_buffer at the given
  * offset. Each DER encoded certificate starts with TAG_SEQUENCE followed by the
  * total length of the certificate. The length of the certificate is determined
@@ -101,13 +186,12 @@ const std::string keystore2_grant_id_prefix("ks2_keystore-engine_grant_id:");
  * @data_size: Length of the DER encoded X.509 certificates buffer.
  * @index: DER encoded X.509 certificates buffer offset.
  * @cert: Encoded certificate to be extracted from buffer as outcome.
- * @return: ErrorCode::OK on success, otherwise ErrorCode::UNKNOWN_ERROR.
+ * @return: true on success, otherwise false.
  */
-ErrorCode
-extractCertFromCertChainBuffer(uint8_t* certs_chain_buffer, int certs_chain_buffer_size, int& index,
-                               aidl::android::hardware::security::keymint::Certificate& cert) {
+bool extractCertFromCertChainBuffer(uint8_t* certs_chain_buffer, int certs_chain_buffer_size,
+                                    int& index, certificate_t& cert) {
     if (index >= certs_chain_buffer_size) {
-        return ErrorCode::UNKNOWN_ERROR;
+        return false;
     }
 
     uint32_t length = 0;
@@ -140,7 +224,7 @@ extractCertFromCertChainBuffer(uint8_t* certs_chain_buffer, int certs_chain_buff
                 length += 6;
             } else {
                 // Length is larger than uint32_t max limit.
-                return ErrorCode::UNKNOWN_ERROR;
+                return false;
             }
         }
         cert_bytes.insert(cert_bytes.end(), (certs_chain_buffer + index),
@@ -148,53 +232,47 @@ extractCertFromCertChainBuffer(uint8_t* certs_chain_buffer, int certs_chain_buff
         index += length;
 
         for (int i = 0; i < cert_bytes.size(); i++) {
-            cert.encodedCertificate = std::move(cert_bytes);
+            cert = std::move(cert_bytes);
         }
     } else {
         // SEQUENCE TAG MISSING.
-        return ErrorCode::UNKNOWN_ERROR;
+        return false;
     }
 
-    return ErrorCode::OK;
+    return true;
 }
 
-ErrorCode getCertificateChain(
-    rust::Vec<rust::u8>& chainBuffer,
-    std::vector<aidl::android::hardware::security::keymint::Certificate>& certChain) {
+bool getCertificateChain(rust::Vec<rust::u8>& chainBuffer, std::vector<certificate_t>& certChain) {
     uint8_t* data = chainBuffer.data();
     int index = 0;
     int data_size = chainBuffer.size();
 
     while (index < data_size) {
-        aidl::android::hardware::security::keymint::Certificate cert =
-            aidl::android::hardware::security::keymint::Certificate();
-        if (extractCertFromCertChainBuffer(data, data_size, index, cert) != ErrorCode::OK) {
-            return ErrorCode::UNKNOWN_ERROR;
+        certificate_t cert;
+        if (!extractCertFromCertChainBuffer(data, data_size, index, cert)) {
+            return false;
         }
         certChain.push_back(std::move(cert));
     }
-    return ErrorCode::OK;
+    return true;
 }
 
 bool validateCertChain(rust::Vec<rust::u8> cert_buf, uint32_t cert_len, bool strict_issuer_check) {
-    std::vector<aidl::android::hardware::security::keymint::Certificate> cert_chain =
-        std::vector<aidl::android::hardware::security::keymint::Certificate>();
+    std::vector<certificate_t> cert_chain = std::vector<certificate_t>();
     if (cert_len <= 0) {
         return false;
     }
-    if (getCertificateChain(cert_buf, cert_chain) != ErrorCode::OK) {
+    if (!getCertificateChain(cert_buf, cert_chain)) {
         return false;
     }
 
+    std::stringstream cert_data;
     for (int i = 0; i < cert_chain.size(); i++) {
-        std::cout << cert_chain[i].toString() << "\n";
+        cert_data << bin2hex(cert_chain[i]) << std::endl;
     }
-    auto result = aidl::android::hardware::security::keymint::test::ChainSignaturesAreValid(
-        cert_chain, strict_issuer_check);
+    LOG(INFO) << cert_data.str() << "\n";
 
-    if (result == testing::AssertionSuccess()) return true;
-
-    return false;
+    return ChainSignaturesAreValid(cert_chain, strict_issuer_check);
 }
 
 /**
@@ -278,7 +356,7 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
                            rust::Vec<rust::u8> tag) {
     CxxResult cxx_result{};
     keymaster_error_t error;
-    cxx_result.error = KM_ERROR_OK;
+    cxx_result.error = false;
 
     uint8_t* enc_secure_key_data = encrypted_secure_key.data();
     int enc_secure_key_size = encrypted_secure_key.size();
@@ -295,13 +373,16 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
     keymaster::UniquePtr<TEST_SECURE_KEY_WRAPPER, TEST_SECURE_KEY_WRAPPER_Delete> sec_key_wrapper(
         TEST_SECURE_KEY_WRAPPER_new());
     if (!sec_key_wrapper.get()) {
-        cxx_result.error = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+        LOG(ERROR) << "createWrappedKey - Failed to allocate a memory";
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // Fill version = 0
     if (!ASN1_INTEGER_set(sec_key_wrapper->version, 0)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling version: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
@@ -309,14 +390,18 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
     if (enc_transport_key_size &&
         !ASN1_OCTET_STRING_set(sec_key_wrapper->encrypted_transport_key, enc_transport_key_data,
                                enc_transport_key_size)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling encrypted transport key: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // Fill encrypted secure key.
     if (enc_secure_key_size && !ASN1_OCTET_STRING_set(sec_key_wrapper->encrypted_key,
                                                       enc_secure_key_data, enc_secure_key_size)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling encrypted secure key: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
@@ -324,46 +409,55 @@ CxxResult createWrappedKey(rust::Vec<rust::u8> encrypted_secure_key,
     keymaster::AuthorizationSet auth_list = build_wrapped_key_auth_list();
     error = build_auth_list(auth_list, sec_key_wrapper->key_desc->key_params);
     if (error != KM_ERROR_OK) {
-        cxx_result.error = error;
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // Fill secure key format.
     if (!ASN1_INTEGER_set(sec_key_wrapper->key_desc->key_format, KM_KEY_FORMAT_RAW)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling secure key format: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // Fill initialization vector used for encrypting secure key.
     if (iv_size &&
         !ASN1_OCTET_STRING_set(sec_key_wrapper->initialization_vector, iv_data, iv_size)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling IV: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // Fill GCM-tag, extracted during secure key encryption.
     if (tag_size && !ASN1_OCTET_STRING_set(sec_key_wrapper->tag, tag_data, tag_size)) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while filling GCM-tag: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
     // ASN.1 DER-encoding of secure key wrapper.
     int asn1_data_len = i2d_TEST_SECURE_KEY_WRAPPER(sec_key_wrapper.get(), nullptr);
     if (asn1_data_len < 0) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "createWrappedKey - Error while performing DER encode: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
     std::vector<uint8_t> asn1_data(asn1_data_len, 0);
 
     if (!asn1_data.data()) {
-        cxx_result.error = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+        LOG(ERROR) << "createWrappedKey - Failed to allocate a memory for asn1_data";
+        cxx_result.error = true;
         return cxx_result;
     }
 
     uint8_t* p = asn1_data.data();
     asn1_data_len = i2d_TEST_SECURE_KEY_WRAPPER(sec_key_wrapper.get(), &p);
     if (asn1_data_len < 0) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
@@ -508,7 +602,7 @@ bool performCryptoOpUsingKeystoreEngine(int64_t grant_id) {
 
 CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
     CxxResult cxx_result{};
-    cxx_result.error = KM_ERROR_OK;
+    cxx_result.error = false;
 
     uint8_t* cert_data = cert_buf.data();
     int cert_data_size = cert_buf.size();
@@ -516,17 +610,18 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
     std::vector<uint8_t> cert_bytes;
     cert_bytes.insert(cert_bytes.end(), cert_data, (cert_data + cert_data_size));
 
-    aidl::android::hardware::security::keymint::X509_Ptr cert(
-        aidl::android::hardware::security::keymint::test::parse_cert_blob(cert_bytes));
+    X509_Ptr cert(parseCertBlob(cert_bytes));
     if (!cert.get()) {
-        cxx_result.error = KM_ERROR_MEMORY_ALLOCATION_FAILED;
+        LOG(ERROR) << "getValueFromAttestRecord - Failed to allocate a memory for certificate";
+        cxx_result.error = true;
         return cxx_result;
     }
 
-    ASN1_OCTET_STRING* attest_rec =
-        aidl::android::hardware::security::keymint::test::get_attestation_record(cert.get());
+    ASN1_OCTET_STRING* attest_rec = getAttestationRecord(cert.get());
     if (!attest_rec) {
-        cxx_result.error = keymaster::TranslateLastOpenSslError();
+        LOG(ERROR) << "getValueFromAttestRecord - Error in getAttestationRecord: "
+                   << keymaster::TranslateLastOpenSslError();
+        cxx_result.error = true;
         return cxx_result;
     }
 
@@ -540,13 +635,14 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
     std::vector<uint8_t> att_unique_id;
     std::vector<uint8_t> att_app_id;
 
-    auto error = aidl::android::hardware::security::keymint::parse_attestation_record(
-        attest_rec->data, attest_rec->length, &att_attestation_version,
-        &att_attestation_security_level, &att_keymint_version, &att_keymint_security_level,
-        &att_challenge, &att_sw_enforced, &att_hw_enforced, &att_unique_id);
-    EXPECT_EQ(ErrorCode::OK, error);
-    if (error != ErrorCode::OK) {
-        cxx_result.error = static_cast<int32_t>(error);
+    int32_t error =
+        static_cast<int32_t>(aidl::android::hardware::security::keymint::parse_attestation_record(
+            attest_rec->data, attest_rec->length, &att_attestation_version,
+            &att_attestation_security_level, &att_keymint_version, &att_keymint_security_level,
+            &att_challenge, &att_sw_enforced, &att_hw_enforced, &att_unique_id));
+    if (error) {
+        LOG(ERROR) << "getValueFromAttestRecord - Error in parse_attestation_record: " << error;
+        cxx_result.error = true;
         return cxx_result;
     }
 
@@ -557,7 +653,8 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
         int pos = att_sw_enforced.find(
             aidl::android::hardware::security::keymint::Tag::ATTESTATION_APPLICATION_ID);
         if (pos == -1) {
-            cxx_result.error = KM_ERROR_ATTESTATION_APPLICATION_ID_MISSING;
+            LOG(ERROR) << "getValueFromAttestRecord - Attestation-application-id missing.";
+            cxx_result.error = true;
             return cxx_result;
         }
         aidl::android::hardware::security::keymint::KeyParameter param = att_sw_enforced[pos];
@@ -569,7 +666,8 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
 
     if (auth_tag == aidl::android::hardware::security::keymint::Tag::ATTESTATION_CHALLENGE) {
         if (att_challenge.size() == 0) {
-            cxx_result.error = KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
+            LOG(ERROR) << "getValueFromAttestRecord - Attestation-challenge missing.";
+            cxx_result.error = true;
             return cxx_result;
         }
         std::move(att_challenge.begin(), att_challenge.end(), std::back_inserter(cxx_result.data));
@@ -578,7 +676,8 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
 
     if (auth_tag == aidl::android::hardware::security::keymint::Tag::UNIQUE_ID) {
         if (att_unique_id.size() == 0) {
-            cxx_result.error = KM_ERROR_UNSUPPORTED_TAG;
+            LOG(ERROR) << "getValueFromAttestRecord - unsupported tag - UNIQUE_ID.";
+            cxx_result.error = true;
             return cxx_result;
         }
         std::move(att_unique_id.begin(), att_unique_id.end(), std::back_inserter(cxx_result.data));
@@ -587,7 +686,8 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
 
     int pos = att_hw_enforced.find(auth_tag);
     if (pos == -1) {
-        cxx_result.error = KM_ERROR_UNSUPPORTED_TAG;
+        LOG(ERROR) << "getValueFromAttestRecord - unsupported tag.";
+        cxx_result.error = true;
         return cxx_result;
     }
     aidl::android::hardware::security::keymint::KeyParameter param = att_hw_enforced[pos];

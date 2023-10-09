@@ -21,7 +21,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 mod ffi {
     struct CxxResult {
         data: Vec<u8>,
-        error: i32,
+        error: bool,
     }
 
     unsafe extern "C++" {
@@ -50,7 +50,7 @@ pub fn validate_certchain(cert_buf: &[u8]) -> Result<bool, Error> {
 
 /// Collect the result from CxxResult into a Rust supported structure.
 fn get_result(result: ffi::CxxResult) -> Result<Vec<u8>, Error> {
-    if result.error == 0 && !result.data.is_empty() {
+    if !result.error && !result.data.is_empty() {
         Ok(result.data)
     } else {
         Err(Error::DerEncodeFailed)
@@ -97,7 +97,7 @@ pub fn perform_crypto_op_using_keystore_engine(grant_id: i64) -> Result<bool, Er
 /// Get the value of the given `Tag` from attestation record.
 pub fn get_value_from_attest_record(cert_buf: &[u8], tag: Tag) -> Result<Vec<u8>, Error> {
     let result = ffi::getValueFromAttestRecord(cert_buf.to_vec(), tag.0);
-    if result.error == 0 && !result.data.is_empty() {
+    if !result.error && !result.data.is_empty() {
         return Ok(result.data);
     }
     Err(Error::AttestRecordGetValueFailed)
