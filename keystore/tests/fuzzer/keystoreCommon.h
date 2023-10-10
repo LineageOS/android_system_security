@@ -16,18 +16,18 @@
 #ifndef KEYSTORECOMMON_H
 #define KEYSTORECOMMON_H
 
+#include <android/security/keystore/KeyAttestationPackageInfo.h>
+#include <android/security/keystore/Signature.h>
 #include <binder/Parcel.h>
 #include <binder/Parcelable.h>
-#include <keystore/KeyAttestationPackageInfo.h>
-#include <keystore/Signature.h>
 #include <vector>
 
 #include "fuzzer/FuzzedDataProvider.h"
 
 using namespace android;
 using namespace std;
-using ::content::pm::Signature;
-using ::security::keymaster::KeyAttestationPackageInfo;
+using ::android::security::keystore::KeyAttestationPackageInfo;
+using ::android::security::keystore::Signature;
 
 constexpr size_t kSignatureSizeMin = 1;
 constexpr size_t kSignatureSizeMax = 1000;
@@ -38,7 +38,7 @@ constexpr size_t kSignatureVectorSizeMax = 1000;
 struct PackageInfoData {
     string packageName;
     int64_t versionCode;
-    KeyAttestationPackageInfo::SharedSignaturesVector sharedSignaturesVector;
+    std::shared_ptr<std::vector<Signature>> sharedSignaturesVector;
 };
 
 inline void invokeReadWriteParcel(Parcelable* obj) {
@@ -60,18 +60,20 @@ inline PackageInfoData initPackageInfoData(FuzzedDataProvider* fdp) {
     packageInfoData.versionCode = fdp->ConsumeIntegral<int64_t>();
     size_t signatureVectorSize =
         fdp->ConsumeIntegralInRange(kSignatureVectorSizeMin, kSignatureVectorSizeMax);
-    KeyAttestationPackageInfo::SignaturesVector signatureVector;
+    std::vector<Signature> signatureVector;
     for (size_t size = 0; size < signatureVectorSize; ++size) {
         bool shouldUseParameterizedConstructor = fdp->ConsumeBool();
         if (shouldUseParameterizedConstructor) {
             vector<uint8_t> signatureData = initSignatureData(fdp);
-            signatureVector.push_back(make_optional<Signature>(signatureData));
+            auto sign = Signature();
+            sign.data = signatureData;
+            signatureVector.push_back(std::move(sign));
         } else {
-            signatureVector.push_back(std::nullopt);
+            signatureVector.push_back(Signature());
         }
     }
     packageInfoData.sharedSignaturesVector =
-        make_shared<KeyAttestationPackageInfo::SignaturesVector>(std::move(signatureVector));
+        make_shared<std::vector<Signature>>(std::move(signatureVector));
     return packageInfoData;
 }
 #endif  // KEYSTORECOMMON_H
