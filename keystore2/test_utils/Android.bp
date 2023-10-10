@@ -35,6 +35,7 @@ rust_defaults {
         "liblog_rust",
         "libnix",
         "librand",
+        "librustutils",
         "libserde",
         "libserde_cbor",
         "libthiserror",
@@ -82,7 +83,6 @@ cc_library_static {
     shared_libs: [
         "libbase",
         "libcrypto",
-        "libcppbor_external",
         "libkeymaster_portable",
         "libkeystore-engine",
         "libkeymint_support",

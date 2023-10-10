@@ -36,6 +36,9 @@ mod ffi {
         fn buildAsn1DerEncodedWrappedKeyDescription() -> CxxResult;
         fn performCryptoOpUsingKeystoreEngine(grant_id: i64) -> bool;
         fn getValueFromAttestRecord(cert_buf: Vec<u8>, tag: i32) -> CxxResult;
+        fn getOsVersion() -> u32;
+        fn getOsPatchlevel() -> u32;
+        fn getVendorPatchlevel() -> u32;
     }
 }
 
@@ -101,4 +104,19 @@ pub fn get_value_from_attest_record(cert_buf: &[u8], tag: Tag) -> Result<Vec<u8>
         return Ok(result.data);
     }
     Err(Error::AttestRecordGetValueFailed)
+}
+
+/// Get OS Version
+pub fn get_os_version() -> u32 {
+    ffi::getOsVersion()
+}
+
+/// Get OS Patch Level
+pub fn get_os_patchlevel() -> u32 {
+    ffi::getOsPatchlevel()
+}
+
+/// Get vendor Patch Level
+pub fn get_vendor_patchlevel() -> u32 {
+    ffi::getVendorPatchlevel()
 }
