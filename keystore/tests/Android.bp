@@ -35,6 +35,7 @@ cc_test {
         "libutils",
     ],
     shared_libs: [
+        "android.security.aaid_aidl-cpp",
         "libbinder",
         "libkeymaster_messages",
         "libkeystore-attestation-application-id",
