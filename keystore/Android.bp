@@ -69,19 +69,16 @@ cc_library {
     defaults: ["keystore_defaults"],
 
     srcs: [
-        ":IKeyAttestationApplicationIdProvider.aidl",
         "keystore_attestation_id.cpp",
-        "KeyAttestationApplicationId.cpp",
-        "KeyAttestationPackageInfo.cpp",
-        "Signature.cpp",
     ],
     shared_libs: [
+        "android.security.aaid_aidl-cpp",
         "libbase",
         "libbinder",
+        "libcrypto",
         "libhidlbase",
         "liblog",
         "libutils",
-        "libcrypto",
     ],
 
     export_include_dirs: ["include"],

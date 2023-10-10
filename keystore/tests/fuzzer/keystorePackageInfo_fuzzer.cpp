@@ -28,9 +28,12 @@ class KeystorePackageInfoFuzzer {
 
 void KeystorePackageInfoFuzzer::invokePackageInfo() {
     auto packageInfoData = initPackageInfoData(mFdp.get());
-    KeyAttestationPackageInfo packageInfo(String16((packageInfoData.packageName).c_str()),
-                                          packageInfoData.versionCode,
-                                          packageInfoData.sharedSignaturesVector);
+    auto packageInfo = KeyAttestationPackageInfo();
+    packageInfo.packageName = String16((packageInfoData.packageName).c_str());
+    packageInfo.versionCode = packageInfoData.versionCode;
+    std::move(packageInfoData.sharedSignaturesVector->begin(),
+              packageInfoData.sharedSignaturesVector->end(),
+              std::back_inserter(packageInfo.signatures));
     invokeReadWriteParcel(&packageInfo);
 }
 
