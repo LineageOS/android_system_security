@@ -25,11 +25,11 @@ namespace security {
 
 constexpr size_t KEY_ATTESTATION_APPLICATION_ID_MAX_SIZE = 1024;
 
-namespace keymaster {
+namespace keystore {
 
 class KeyAttestationApplicationId;
 
-}  // namespace keymaster
+}  // namespace keystore
 
 template <typename T> class StatusOr {
   public:
@@ -77,7 +77,7 @@ StatusOr<std::vector<uint8_t>> gather_attestation_application_id(uid_t uid);
  */
 
 StatusOr<std::vector<uint8_t>> build_attestation_application_id(
-    const ::android::security::keymaster::KeyAttestationApplicationId& key_attestation_id);
+    const ::android::security::keystore::KeyAttestationApplicationId& key_attestation_id);
 
 }  // namespace security
 }  // namespace android

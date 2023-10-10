@@ -55,6 +55,7 @@ cc_defaults {
         "libhidlbase",
     ],
     shared_libs: [
+        "android.security.aaid_aidl-cpp",
         "libbinder",
         "libcrypto",
         "libutils",
