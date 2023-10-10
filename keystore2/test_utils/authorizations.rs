@@ -242,6 +242,33 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Set active date-time.
+    pub fn active_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ACTIVE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set origination expire date-time.
+    pub fn origination_expire_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ORIGINATION_EXPIRE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set usage expire date-time.
+    pub fn usage_expire_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::USAGE_EXPIRE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
