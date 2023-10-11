@@ -32,6 +32,11 @@ use android_security_compat::aidl::android::security::compat::IKeystoreCompatSer
 use anyhow::Context;
 use keystore2_crypto::{hmac_sha256, HMAC_SHA256_LEN};
 
+/// Magic prefix used by the km_compat C++ code to mark a key that is owned by an
+/// underlying Keymaster hardware device that has been wrapped by km_compat. (The
+/// final zero byte indicates that the blob is not software emulated.)
+pub const KEYMASTER_BLOB_HW_PREFIX: &[u8] = b"pKMblob\x00";
+
 /// Key data associated with key generation/import.
 #[derive(Debug, PartialEq, Eq)]
 pub enum KeyImportData<'a> {
