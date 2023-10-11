@@ -914,11 +914,12 @@ fn get_key_characteristics_without_app_data(
     uuid: &Uuid,
     blob: &[u8],
 ) -> Result<(Vec<KeyParameter>, Option<Vec<u8>>)> {
-    let (km_dev, _) = crate::globals::get_keymint_dev_by_uuid(uuid)
+    let (km_dev, info) = crate::globals::get_keymint_dev_by_uuid(uuid)
         .with_context(|| ks_err!("Trying to get km device for id {:?}", uuid))?;
 
     let (characteristics, upgraded_blob) = upgrade_keyblob_if_required_with(
         &*km_dev,
+        info.versionNumber,
         blob,
         &[],
         |blob| {
