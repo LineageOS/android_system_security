@@ -8,6 +8,7 @@
 #include <keymaster/km_openssl/openssl_err.h>
 #include <keymaster/km_openssl/openssl_utils.h>
 #include <keymint_support/attestation_record.h>
+#include <keymint_support/keymint_utils.h>
 #include <openssl/mem.h>
 
 using keymaster::ASN1_OBJECT_Ptr;
@@ -695,4 +696,16 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
         param.value.get<aidl::android::hardware::security::keymint::KeyParameterValue::blob>();
     std::move(val.begin(), val.end(), std::back_inserter(cxx_result.data));
     return cxx_result;
+}
+
+uint32_t getOsVersion() {
+    return aidl::android::hardware::security::keymint::getOsVersion();
+}
+
+uint32_t getOsPatchlevel() {
+    return aidl::android::hardware::security::keymint::getOsPatchlevel();
+}
+
+uint32_t getVendorPatchlevel() {
+    return aidl::android::hardware::security::keymint::getVendorPatchlevel();
 }
