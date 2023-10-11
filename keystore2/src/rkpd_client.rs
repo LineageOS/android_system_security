@@ -666,7 +666,7 @@ mod tests {
     fn test_rkpd_attestation_key_upgrade() {
         binder::ProcessState::start_thread_pool();
         let security_level = SecurityLevel::TRUSTED_ENVIRONMENT;
-        let (keymint, _, _) = get_keymint_device(&security_level).unwrap();
+        let (keymint, info, _) = get_keymint_device(&security_level).unwrap();
         let key_id = get_next_key_id();
         let mut key_upgraded = false;
 
@@ -676,6 +676,7 @@ mod tests {
 
         upgrade_keyblob_if_required_with(
             &*keymint,
+            info.versionNumber,
             &key.keyBlob,
             /*upgrade_params=*/ &[],
             /*km_op=*/
