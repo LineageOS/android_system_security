@@ -17,8 +17,8 @@
 //! main DICE functions depend on.
 
 use crate::dice::{
-    Hash, InputValues, PrivateKey, PublicKey, Signature, HASH_SIZE, PRIVATE_KEY_SEED_SIZE,
-    PRIVATE_KEY_SIZE, PUBLIC_KEY_SIZE, SIGNATURE_SIZE,
+    derive_cdi_private_key_seed, DiceArtifacts, Hash, InputValues, PrivateKey, PublicKey,
+    Signature, HASH_SIZE, PRIVATE_KEY_SEED_SIZE, PRIVATE_KEY_SIZE, PUBLIC_KEY_SIZE, SIGNATURE_SIZE,
 };
 use crate::error::{check_result, Result};
 use open_dice_cbor_bindgen::{
@@ -89,6 +89,16 @@ pub fn keypair_from_seed(seed: &[u8; PRIVATE_KEY_SEED_SIZE]) -> Result<(PublicKe
         public_key.len(),
     )?;
     Ok((public_key, private_key))
+}
+
+/// Derives the CDI_Leaf_Priv from the provided `dice_artifacts`.
+///
+/// The corresponding public key is included in the leaf certificate of the DICE chain
+/// contained in `dice_artifacts`.
+pub fn derive_cdi_leaf_priv(dice_artifacts: &dyn DiceArtifacts) -> Result<PrivateKey> {
+    let cdi_priv_key_seed = derive_cdi_private_key_seed(dice_artifacts.cdi_attest())?;
+    let (_, private_key) = keypair_from_seed(cdi_priv_key_seed.as_array())?;
+    Ok(private_key)
 }
 
 /// Signs the `message` with the give `private_key` using `DiceSign`.
