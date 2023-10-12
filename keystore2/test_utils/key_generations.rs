@@ -15,10 +15,12 @@
 //! This module implements test utils to generate various types of keys.
 
 use anyhow::Result;
-
 use core::ops::Range;
+use nix::unistd::getuid;
 use std::collections::HashSet;
 use std::fmt::Write;
+
+use binder::ThreadState;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
@@ -27,13 +29,16 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     KeyPurpose::KeyPurpose, PaddingMode::PaddingMode, Tag::Tag,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    AuthenticatorSpec::AuthenticatorSpec, Authorization::Authorization, Domain::Domain,
+    AuthenticatorSpec::AuthenticatorSpec, Authorization::Authorization,
+    CreateOperationResponse::CreateOperationResponse, Domain::Domain,
     IKeystoreSecurityLevel::IKeystoreSecurityLevel, KeyDescriptor::KeyDescriptor,
     KeyMetadata::KeyMetadata, ResponseCode::ResponseCode,
 };
 
 use crate::authorizations::AuthSetBuilder;
 use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
+
+use crate::ffi_test_utils::{get_os_patchlevel, get_os_version, get_vendor_patchlevel};
 
 /// Shell namespace.
 pub const SELINUX_SHELL_NAMESPACE: i64 = 1;
@@ -388,7 +393,12 @@ pub fn check_key_param(authorizations: &[Authorization], key_param: &KeyParamete
     authorizations.iter().any(|auth| &auth.keyParameter == key_param)
 }
 
-fn check_key_authorizations(authorizations: &[Authorization], expected_params: &[KeyParameter]) {
+/// Verify the given key authorizations with the expected authorizations.
+pub fn check_key_authorizations(
+    authorizations: &[Authorization],
+    expected_params: &[KeyParameter],
+    expected_key_origin: KeyOrigin,
+) {
     // Make sure key authorizations contains only `ALLOWED_TAGS_IN_KEY_AUTHS`
     authorizations.iter().all(|auth| {
         assert!(
@@ -410,6 +420,54 @@ fn check_key_authorizations(authorizations: &[Authorization], expected_params: &
         }
         true
     });
+
+    check_common_auths(authorizations, expected_key_origin);
+}
+
+/// Verify common key authorizations.
+fn check_common_auths(authorizations: &[Authorization], expected_key_origin: KeyOrigin) {
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::OS_VERSION,
+            value: KeyParameterValue::Integer(get_os_version().try_into().unwrap())
+        }
+    ));
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::OS_PATCHLEVEL,
+            value: KeyParameterValue::Integer(get_os_patchlevel().try_into().unwrap())
+        }
+    ));
+
+    // Access denied for finding vendor-patch-level ("ro.vendor.build.security_patch") property
+    // in a test running with `untrusted_app` context. Keeping this check to verify
+    // vendor-patch-level in tests running with `su` context.
+    if getuid().is_root() {
+        assert!(check_key_param(
+            authorizations,
+            &KeyParameter {
+                tag: Tag::VENDOR_PATCHLEVEL,
+                value: KeyParameterValue::Integer(get_vendor_patchlevel().try_into().unwrap())
+            }
+        ));
+    }
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(expected_key_origin) }
+    ));
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::USER_ID,
+            value: KeyParameterValue::Integer(
+                rustutils::users::multiuser_get_user_id(ThreadState::get_calling_uid())
+                    .try_into()
+                    .unwrap()
+            )
+        }
+    ));
 }
 
 /// Generate EC Key using given security level and domain with below key parameters and
@@ -455,7 +513,11 @@ pub fn generate_ec_p256_signing_key(
                 assert!(key_metadata.key.blob.is_some());
             }
 
-            check_key_authorizations(&key_metadata.authorizations, &gen_params);
+            check_key_authorizations(
+                &key_metadata.authorizations,
+                &gen_params,
+                KeyOrigin::GENERATED,
+            );
             Ok(key_metadata)
         }
         Err(e) => Err(e),
@@ -498,7 +560,7 @@ pub fn generate_ec_key(
     } else {
         assert!(key_metadata.key.blob.is_none());
     }
-    check_key_authorizations(&key_metadata.authorizations, &gen_params);
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -560,7 +622,7 @@ pub fn generate_rsa_key(
             || key_metadata.key.blob.is_none()
     );
 
-    check_key_authorizations(&key_metadata.authorizations, &gen_params);
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     // If `RSA_OAEP_MGF_DIGEST` tag is not mentioned explicitly while generating/importing a key,
     // then make sure `RSA_OAEP_MGF_DIGEST` tag with default value (SHA1) must not be included in
     // key authorization list.
@@ -617,7 +679,7 @@ pub fn generate_sym_key(
 
     // Should not have an attestation record.
     assert!(key_metadata.certificateChain.is_none());
-    check_key_authorizations(&key_metadata.authorizations, &gen_params);
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -657,7 +719,7 @@ pub fn generate_hmac_key(
     // Should not have an attestation record.
     assert!(key_metadata.certificateChain.is_none());
 
-    check_key_authorizations(&key_metadata.authorizations, &gen_params);
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -742,7 +804,11 @@ pub fn generate_ec_attestation_key(
     // Should have an attestation record.
     assert!(attestation_key_metadata.certificateChain.is_some());
 
-    check_key_authorizations(&attestation_key_metadata.authorizations, &gen_params);
+    check_key_authorizations(
+        &attestation_key_metadata.authorizations,
+        &gen_params,
+        KeyOrigin::GENERATED,
+    );
     Ok(attestation_key_metadata)
 }
 
@@ -777,7 +843,7 @@ pub fn generate_ec_256_attested_key(
     // Shouldn't have an attestation record.
     assert!(ec_key_metadata.certificateChain.is_none());
 
-    check_key_authorizations(&ec_key_metadata.authorizations, &ec_gen_params);
+    check_key_authorizations(&ec_key_metadata.authorizations, &ec_gen_params, KeyOrigin::GENERATED);
     Ok(ec_key_metadata)
 }
 
@@ -802,7 +868,7 @@ pub fn import_rsa_2048_key(
     assert!(key_metadata.certificate.is_some());
     assert!(key_metadata.certificateChain.is_none());
 
-    check_key_authorizations(&key_metadata.authorizations, &import_params);
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
 
     // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
@@ -865,7 +931,7 @@ pub fn import_ec_p_256_key(
     assert!(key_metadata.certificate.is_some());
     assert!(key_metadata.certificateChain.is_none());
 
-    check_key_authorizations(&key_metadata.authorizations, &import_params);
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
 
     // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
@@ -917,7 +983,7 @@ pub fn import_aes_key(
         AES_KEY,
     )?;
 
-    check_key_authorizations(&key_metadata.authorizations, &import_params);
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
 
     // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
@@ -976,7 +1042,7 @@ pub fn import_3des_key(
         TRIPLE_DES_KEY,
     )?;
 
-    check_key_authorizations(&key_metadata.authorizations, &import_params);
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
 
     // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
@@ -1036,7 +1102,7 @@ pub fn import_hmac_key(
         HMAC_KEY,
     )?;
 
-    check_key_authorizations(&key_metadata.authorizations, &import_params);
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
 
     // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
@@ -1188,7 +1254,11 @@ pub fn generate_ec_agree_key(
                 assert!(key_metadata.key.blob.is_some());
             }
 
-            check_key_authorizations(&key_metadata.authorizations, &gen_params);
+            check_key_authorizations(
+                &key_metadata.authorizations,
+                &gen_params,
+                KeyOrigin::GENERATED,
+            );
             Ok(key_metadata)
         }
         Err(e) => Err(e),
@@ -1287,4 +1357,52 @@ pub fn generate_key_with_attest_id(
         0,
         b"entropy",
     )
+}
+
+/// Generate Key and validate key characteristics.
+pub fn generate_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &AuthSetBuilder,
+    alias: &str,
+) -> binder::Result<KeyMetadata> {
+    let key_metadata = sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    if gen_params.iter().any(|kp| {
+        matches!(
+            kp.value,
+            KeyParameterValue::Algorithm(Algorithm::RSA)
+                | KeyParameterValue::Algorithm(Algorithm::EC)
+        )
+    }) {
+        assert!(key_metadata.certificate.is_some());
+        if gen_params.iter().any(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE) {
+            assert!(key_metadata.certificateChain.is_some());
+        }
+    }
+    check_key_authorizations(&key_metadata.authorizations, gen_params, KeyOrigin::GENERATED);
+
+    Ok(key_metadata)
+}
+
+/// Generate a key using given authorizations and create an operation using the generated key.
+pub fn create_key_and_operation(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &AuthSetBuilder,
+    op_params: &AuthSetBuilder,
+    alias: &str,
+) -> binder::Result<CreateOperationResponse> {
+    let key_metadata = generate_key(sec_level, gen_params, alias)?;
+
+    sec_level.createOperation(&key_metadata.key, op_params, false)
 }
