@@ -15,7 +15,9 @@
 //! This module implements helper methods to access the functionalities implemented in CPP.
 
 use crate::key_generations::Error;
-use android_hardware_security_keymint::aidl::android::hardware::security::keymint::Tag::Tag;
+use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+    SecurityLevel::SecurityLevel, Tag::Tag,
+};
 
 #[cxx::bridge]
 mod ffi {
@@ -35,7 +37,11 @@ mod ffi {
         ) -> CxxResult;
         fn buildAsn1DerEncodedWrappedKeyDescription() -> CxxResult;
         fn performCryptoOpUsingKeystoreEngine(grant_id: i64) -> bool;
-        fn getValueFromAttestRecord(cert_buf: Vec<u8>, tag: i32) -> CxxResult;
+        fn getValueFromAttestRecord(
+            cert_buf: Vec<u8>,
+            tag: i32,
+            expected_sec_level: i32,
+        ) -> CxxResult;
         fn getOsVersion() -> u32;
         fn getOsPatchlevel() -> u32;
         fn getVendorPatchlevel() -> u32;
@@ -98,8 +104,12 @@ pub fn perform_crypto_op_using_keystore_engine(grant_id: i64) -> Result<bool, Er
 }
 
 /// Get the value of the given `Tag` from attestation record.
-pub fn get_value_from_attest_record(cert_buf: &[u8], tag: Tag) -> Result<Vec<u8>, Error> {
-    let result = ffi::getValueFromAttestRecord(cert_buf.to_vec(), tag.0);
+pub fn get_value_from_attest_record(
+    cert_buf: &[u8],
+    tag: Tag,
+    expected_sec_level: SecurityLevel,
+) -> Result<Vec<u8>, Error> {
+    let result = ffi::getValueFromAttestRecord(cert_buf.to_vec(), tag.0, expected_sec_level.0);
     if !result.error && !result.data.is_empty() {
         return Ok(result.data);
     }
