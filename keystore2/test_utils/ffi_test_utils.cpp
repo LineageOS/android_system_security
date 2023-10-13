@@ -601,7 +601,8 @@ bool performCryptoOpUsingKeystoreEngine(int64_t grant_id) {
     return result;
 }
 
-CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
+CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag,
+                                   int32_t expected_sec_level) {
     CxxResult cxx_result{};
     cxx_result.error = false;
 
@@ -649,6 +650,8 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
 
     aidl::android::hardware::security::keymint::Tag auth_tag =
         static_cast<aidl::android::hardware::security::keymint::Tag>(tag);
+    aidl::android::hardware::security::keymint::SecurityLevel tag_security_level =
+        static_cast<aidl::android::hardware::security::keymint::SecurityLevel>(expected_sec_level);
 
     if (auth_tag == aidl::android::hardware::security::keymint::Tag::ATTESTATION_APPLICATION_ID) {
         int pos = att_sw_enforced.find(
@@ -682,6 +685,36 @@ CxxResult getValueFromAttestRecord(rust::Vec<rust::u8> cert_buf, int32_t tag) {
             return cxx_result;
         }
         std::move(att_unique_id.begin(), att_unique_id.end(), std::back_inserter(cxx_result.data));
+        return cxx_result;
+    }
+
+    if (auth_tag == aidl::android::hardware::security::keymint::Tag::USAGE_COUNT_LIMIT) {
+        aidl::android::hardware::security::keymint::KeyParameter param;
+        int pos = att_hw_enforced.find(auth_tag);
+        if (tag_security_level ==
+                aidl::android::hardware::security::keymint::SecurityLevel::SOFTWARE ||
+            tag_security_level ==
+                aidl::android::hardware::security::keymint::SecurityLevel::KEYSTORE) {
+            pos = att_sw_enforced.find(auth_tag);
+            if (pos == -1) {
+                LOG(ERROR) << "USAGE_COUNT_LIMIT not found in software enforced auth list";
+                cxx_result.error = KM_ERROR_INVALID_TAG;
+                return cxx_result;
+            }
+            param = att_sw_enforced[pos];
+        } else {
+            pos = att_hw_enforced.find(auth_tag);
+            if (pos == -1) {
+                LOG(ERROR) << "USAGE_COUNT_LIMIT not found in hardware enforced auth list";
+                cxx_result.error = KM_ERROR_INVALID_TAG;
+                return cxx_result;
+            }
+            param = att_hw_enforced[pos];
+        }
+        std::string val = std::to_string(
+            param.value
+                .get<aidl::android::hardware::security::keymint::KeyParameterValue::integer>());
+        std::move(val.begin(), val.end(), std::back_inserter(cxx_result.data));
         return cxx_result;
     }
 
