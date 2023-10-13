@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-use diced_open_dice::DiceArtifacts;
+use anyhow::Result;
+use diced_open_dice::{derive_cdi_leaf_priv, sign, DiceArtifacts};
 use diced_sample_inputs::make_sample_bcc_and_cdis;
+use hwtrust::{dice, session::Session};
 
 const EXPECTED_SAMPLE_CDI_ATTEST: &[u8] = &[
     0x3e, 0x57, 0x65, 0x5d, 0x48, 0x02, 0xbd, 0x5c, 0x66, 0xcc, 0x1f, 0x0f, 0xbe, 0x5e, 0x32, 0xb6,
@@ -121,6 +123,7 @@ const EXPECTED_SAMPLE_BCC: &[u8] = &[
     0x78, 0x76, 0xab, 0xd0, 0xbe, 0xfc, 0xe4, 0x79, 0xcb, 0x1b, 0x2b, 0xaa, 0x4d, 0xdd, 0x15, 0x61,
     0x42, 0x06,
 ];
+const MESSAGE: &[u8] = b"Message for testing";
 
 #[test]
 fn sample_bcc_and_cdis_are_as_expected() {
@@ -128,4 +131,16 @@ fn sample_bcc_and_cdis_are_as_expected() {
     assert_eq!(dice_artifacts.cdi_attest(), EXPECTED_SAMPLE_CDI_ATTEST);
     assert_eq!(dice_artifacts.cdi_seal(), EXPECTED_SAMPLE_CDI_SEAL);
     assert_eq!(dice_artifacts.bcc(), Some(EXPECTED_SAMPLE_BCC));
+}
+
+#[test]
+fn cdi_leaf_priv_corresponds_to_leaf_public_key_in_dice_chain() -> Result<()> {
+    let dice_artifacts = make_sample_bcc_and_cdis().unwrap();
+    let private_key = derive_cdi_leaf_priv(&dice_artifacts).unwrap();
+    let signature = sign(MESSAGE, private_key.as_array()).unwrap();
+
+    let session = Session::default();
+    let chain = dice::Chain::from_cbor(&session, dice_artifacts.bcc().unwrap())?;
+    let public_key = chain.leaf().subject_public_key();
+    public_key.verify(&signature, MESSAGE)
 }
