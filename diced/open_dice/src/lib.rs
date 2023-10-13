@@ -40,7 +40,9 @@ pub use dice::{
     PublicKey, Signature, CDI_SIZE, HASH_SIZE, HIDDEN_SIZE, ID_SIZE, PRIVATE_KEY_SEED_SIZE,
 };
 pub use error::{DiceError, Result};
-pub use ops::{generate_certificate, hash, kdf, keypair_from_seed, sign, verify};
+pub use ops::{
+    derive_cdi_leaf_priv, generate_certificate, hash, kdf, keypair_from_seed, sign, verify,
+};
 #[cfg(feature = "alloc")]
 pub use retry::{
     retry_bcc_format_config_descriptor, retry_bcc_main_flow, retry_dice_main_flow,

@@ -60,6 +60,10 @@ rust_defaults {
     crate_name: "diced_sample_inputs_test",
     srcs: ["tests/*.rs"],
     test_suites: ["general-tests"],
+    rustlibs: [
+        "libanyhow",
+        "libhwtrust",
+    ],
 }
 
 rust_test {
