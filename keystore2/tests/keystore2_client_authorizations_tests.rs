@@ -17,7 +17,12 @@ use std::time::SystemTime;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
-    SecurityLevel::SecurityLevel,
+    SecurityLevel::SecurityLevel, Tag::Tag,
+};
+
+use android_system_keystore2::aidl::android::system::keystore2::{
+    IKeystoreSecurityLevel::IKeystoreSecurityLevel, KeyMetadata::KeyMetadata,
+    ResponseCode::ResponseCode,
 };
 
 use keystore2_test_utils::{
@@ -25,9 +30,84 @@ use keystore2_test_utils::{
 };
 
 use crate::keystore2_client_test_utils::{
-    delete_app_key, perform_sample_hmac_sign_verify_op, perform_sample_sym_key_decrypt_op,
-    perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
+    delete_app_key, perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
+    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
 };
+
+use keystore2_test_utils::ffi_test_utils::get_value_from_attest_record;
+
+fn generate_key_and_perform_sign_verify_op_max_times(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &authorizations::AuthSetBuilder,
+    alias: &str,
+    max_usage_count: i32,
+) -> binder::Result<KeyMetadata> {
+    let key_metadata = key_generations::generate_key(sec_level, gen_params, alias)?;
+
+    // Use above generated key `max_usage_count` times.
+    for _ in 0..max_usage_count {
+        perform_sample_asym_sign_verify_op(sec_level, &key_metadata, None, Some(Digest::SHA_2_256));
+    }
+
+    Ok(key_metadata)
+}
+
+/// Generate a key with `USAGE_COUNT_LIMIT` and verify the key characteristics. Test should be able
+/// to use the key successfully `max_usage_count` times. After exceeding key usage `max_usage_count`
+/// times subsequent attempts to use the key in test should fail with response code `KEY_NOT_FOUND`.
+/// Test should also verify that the attest record includes `USAGE_COUNT_LIMIT` for attested keys.
+fn generate_key_and_perform_op_with_max_usage_limit(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &authorizations::AuthSetBuilder,
+    alias: &str,
+    max_usage_count: i32,
+    check_attestation: bool,
+) {
+    // Generate a key and use the key for `max_usage_count` times.
+    let key_metadata = generate_key_and_perform_sign_verify_op_max_times(
+        sec_level,
+        gen_params,
+        alias,
+        max_usage_count,
+    )
+    .unwrap();
+
+    let auth = key_generations::get_key_auth(&key_metadata.authorizations, Tag::USAGE_COUNT_LIMIT)
+        .unwrap();
+    if check_attestation {
+        // Check usage-count-limit is included in attest-record.
+        assert_ne!(
+            gen_params.iter().filter(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE).count(),
+            0,
+            "Attestation challenge is missing in generated key parameters."
+        );
+        let result = get_value_from_attest_record(
+            key_metadata.certificate.as_ref().unwrap(),
+            Tag::USAGE_COUNT_LIMIT,
+            auth.securityLevel,
+        )
+        .expect("Attest id verification failed.");
+        let usage_count: i32 = std::str::from_utf8(&result).unwrap().parse().unwrap();
+        assert_eq!(usage_count, max_usage_count);
+    }
+    if max_usage_count == 1 {
+        assert!(matches!(
+            auth.securityLevel,
+            SecurityLevel::KEYSTORE | SecurityLevel::TRUSTED_ENVIRONMENT
+        ));
+    } else {
+        assert_eq!(auth.securityLevel, SecurityLevel::KEYSTORE);
+    }
+
+    // Try to use the key one more time.
+    let result = key_generations::map_ks_error(sec_level.createOperation(
+        &key_metadata.key,
+        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
+        false,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
+}
 
 /// Generate a key with `ACTIVE_DATETIME` set to current time. Test should successfully generate
 /// a key and verify the key characteristics. Test should be able to create a sign operation using
@@ -56,7 +136,6 @@ fn keystore2_gen_key_auth_active_datetime_test_success() {
         &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
         alias,
     );
-
     assert!(result.is_ok());
     delete_app_key(&keystore2, alias).unwrap();
 }
@@ -319,4 +398,195 @@ fn keystore2_gen_key_auth_usage_expire_datetime_decrypt_op_fail() {
     assert!(result.is_err());
     assert_eq!(Error::Km(ErrorCode::KEY_EXPIRED), result.unwrap_err());
     delete_app_key(&keystore2, alias).unwrap();
+}
+
+/// Generate a key with `BOOTLOADER_ONLY`. Test should successfully generate
+/// a key and verify the key characteristics. Test should fail with error code `INVALID_KEY_BLOB`
+/// during creation of an operation using this key.
+#[test]
+fn keystore2_gen_key_auth_boot_loader_only_op_fail() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .boot_loader_only();
+
+    let alias = "ks_test_auth_tags_test";
+    let result = key_generations::map_ks_error(key_generations::create_key_and_operation(
+        &sec_level,
+        &gen_params,
+        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
+        alias,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
+}
+
+/// Generate a key with `EARLY_BOOT_ONLY`. Test should successfully generate
+/// a key and verify the key characteristics. Test should fail with error code `EARLY_BOOT_ENDED`
+/// during creation of an operation using this key.
+#[test]
+fn keystore2_gen_key_auth_early_boot_only_op_fail() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .early_boot_only();
+
+    let alias = "ks_test_auth_tags_test";
+    let result = key_generations::map_ks_error(key_generations::create_key_and_operation(
+        &sec_level,
+        &gen_params,
+        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
+        alias,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::EARLY_BOOT_ENDED), result.unwrap_err());
+    delete_app_key(&keystore2, alias).unwrap();
+}
+
+/// Generate a key with `MAX_USES_PER_BOOT`. Test should successfully generate
+/// a key and verify the key characteristics. Test should be able to use the key successfully
+/// `MAX_USES_COUNT` times. After exceeding key usage `MAX_USES_COUNT` times
+/// subsequent attempts to use the key in test should fail with error code MAX_OPS_EXCEEDED.
+#[test]
+fn keystore2_gen_key_auth_max_uses_per_boot() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    const MAX_USES_COUNT: i32 = 3;
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .max_uses_per_boot(MAX_USES_COUNT);
+
+    let alias = "ks_test_auth_tags_test";
+    // Generate a key and use the key for `MAX_USES_COUNT` times.
+    let key_metadata = generate_key_and_perform_sign_verify_op_max_times(
+        &sec_level,
+        &gen_params,
+        alias,
+        MAX_USES_COUNT,
+    )
+    .unwrap();
+
+    // Try to use the key one more time.
+    let result = key_generations::map_ks_error(sec_level.createOperation(
+        &key_metadata.key,
+        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
+        false,
+    ));
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::KEY_MAX_OPS_EXCEEDED), result.unwrap_err());
+    delete_app_key(&keystore2, alias).unwrap();
+}
+
+/// Generate a key with `USAGE_COUNT_LIMIT`. Test should successfully generate
+/// a key and verify the key characteristics. Test should be able to use the key successfully
+/// `MAX_USES_COUNT` times. After exceeding key usage `MAX_USES_COUNT` times
+/// subsequent attempts to use the key in test should fail with response code `KEY_NOT_FOUND`.
+/// Test should also verify that the attest record includes `USAGE_COUNT_LIMIT`.
+#[test]
+fn keystore2_gen_key_auth_usage_count_limit() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    const MAX_USES_COUNT: i32 = 3;
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .usage_count_limit(MAX_USES_COUNT);
+
+    let alias = "ks_test_auth_tags_test";
+    generate_key_and_perform_op_with_max_usage_limit(
+        &sec_level,
+        &gen_params,
+        alias,
+        MAX_USES_COUNT,
+        true,
+    );
+}
+
+/// Generate a key with `USAGE_COUNT_LIMIT`. Test should successfully generate
+/// a key and verify the key characteristics. Test should be able to use the key successfully
+/// `MAX_USES_COUNT` times. After exceeding key usage `MAX_USES_COUNT` times
+/// subsequent attempts to use the key in test should fail with response code `KEY_NOT_FOUND`.
+/// Test should also verify that the attest record includes `USAGE_COUNT_LIMIT`.
+#[test]
+fn keystore2_gen_key_auth_usage_count_limit_one() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    const MAX_USES_COUNT: i32 = 1;
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .usage_count_limit(MAX_USES_COUNT);
+
+    let alias = "ks_test_auth_tags_test";
+    generate_key_and_perform_op_with_max_usage_limit(
+        &sec_level,
+        &gen_params,
+        alias,
+        MAX_USES_COUNT,
+        true,
+    );
+}
+
+/// Generate a non-attested key with `USAGE_COUNT_LIMIT`. Test should successfully generate
+/// a key and verify the key characteristics. Test should be able to use the key successfully
+/// `MAX_USES_COUNT` times. After exceeding key usage `MAX_USES_COUNT` times
+/// subsequent attempts to use the key in test should fail with response code `KEY_NOT_FOUND`.
+#[test]
+fn keystore2_gen_non_attested_key_auth_usage_count_limit() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+    const MAX_USES_COUNT: i32 = 2;
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .usage_count_limit(MAX_USES_COUNT);
+
+    let alias = "ks_test_auth_tags_test";
+    generate_key_and_perform_op_with_max_usage_limit(
+        &sec_level,
+        &gen_params,
+        alias,
+        MAX_USES_COUNT,
+        false,
+    );
 }
