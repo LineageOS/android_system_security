@@ -470,6 +470,18 @@ fn check_common_auths(authorizations: &[Authorization], expected_key_origin: Key
     ));
 }
 
+/// Get the key `Authorization` for the given auth `Tag`.
+pub fn get_key_auth(authorizations: &[Authorization], tag: Tag) -> Option<&Authorization> {
+    let auths: Vec<&Authorization> =
+        authorizations.iter().filter(|auth| auth.keyParameter.tag == tag).collect();
+
+    if !auths.is_empty() {
+        Some(auths[0])
+    } else {
+        None
+    }
+}
+
 /// Generate EC Key using given security level and domain with below key parameters and
 /// optionally allow the generated key to be attested with factory provisioned attest key using
 /// given challenge and application id -
