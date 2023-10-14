@@ -556,9 +556,12 @@ fn generate_attested_key_with_device_attest_ids(algorithm: Algorithm) {
         cert_chain.extend(attest_key_metadata.certificateChain.as_ref().unwrap());
 
         validate_certchain(&cert_chain).expect("Error while validating cert chain");
-        let attest_id_value =
-            get_value_from_attest_record(key_metadata.certificate.as_ref().unwrap(), attest_id)
-                .expect("Attest id verification failed.");
+        let attest_id_value = get_value_from_attest_record(
+            key_metadata.certificate.as_ref().unwrap(),
+            attest_id,
+            SecurityLevel::TRUSTED_ENVIRONMENT,
+        )
+        .expect("Attest id verification failed.");
         assert_eq!(attest_id_value, value);
     }
 }
