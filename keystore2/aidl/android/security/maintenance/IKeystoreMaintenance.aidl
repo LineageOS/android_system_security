@@ -16,7 +16,6 @@ package android.security.maintenance;
 
 import android.system.keystore2.Domain;
 import android.system.keystore2.KeyDescriptor;
-import android.security.maintenance.UserState;
 
 /**
  * IKeystoreMaintenance interface exposes the methods for adding/removing users and changing the
@@ -75,19 +74,6 @@ interface IKeystoreMaintenance {
      *                 the SEPolicy namespace if domain is Domain.SELINUX.
      */
     void clearNamespace(Domain domain, long nspace);
-
-    /**
-     * Allows querying user state, given user id.
-     * Callers require 'GetState' permission.
-     *
-     * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'GetState'
-     *                                     permission.
-     * `ResponseCode::SYSTEM_ERROR` - if an error occurred when querying the user state.
-     *
-     * @param userId - Android user id
-     */
-    UserState getState(in int userId);
 
     /**
      * This function notifies the Keymint device of the specified securityLevel that
