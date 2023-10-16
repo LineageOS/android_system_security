@@ -26,7 +26,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, HardwareAuthenticatorType::HardwareAuthenticatorType,
     KeyOrigin::KeyOrigin, KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue,
-    KeyPurpose::KeyPurpose, PaddingMode::PaddingMode, Tag::Tag,
+    KeyPurpose::KeyPurpose, PaddingMode::PaddingMode, SecurityLevel::SecurityLevel, Tag::Tag,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
     AuthenticatorSpec::AuthenticatorSpec, Authorization::Authorization,
@@ -38,7 +38,10 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 use crate::authorizations::AuthSetBuilder;
 use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
 
-use crate::ffi_test_utils::{get_os_patchlevel, get_os_version, get_vendor_patchlevel};
+use crate::ffi_test_utils::{
+    get_os_patchlevel, get_os_version, get_value_from_attest_record, get_vendor_patchlevel,
+    validate_certchain,
+};
 
 /// Shell namespace.
 pub const SELINUX_SHELL_NAMESPACE: i64 = 1;
@@ -388,6 +391,12 @@ pub fn map_ks_error<T>(r: BinderResult<T>) -> Result<T, Error> {
     })
 }
 
+/// Indicate whether the default device is KeyMint (rather than Keymaster).
+pub fn has_default_keymint() -> bool {
+    binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
+        .expect("Could not check for declared keymint interface")
+}
+
 /// Verify that given key param is listed in given authorizations list.
 pub fn check_key_param(authorizations: &[Authorization], key_param: &KeyParameter) -> bool {
     authorizations.iter().any(|auth| &auth.keyParameter == key_param)
@@ -468,6 +477,13 @@ fn check_common_auths(authorizations: &[Authorization], expected_key_origin: Key
             )
         }
     ));
+
+    if has_default_keymint() {
+        assert!(authorizations
+            .iter()
+            .map(|auth| &auth.keyParameter)
+            .any(|key_param| key_param.tag == Tag::CREATION_DATETIME));
+    }
 }
 
 /// Get the key `Authorization` for the given auth `Tag`.
@@ -1400,6 +1416,32 @@ pub fn generate_key(
         assert!(key_metadata.certificate.is_some());
         if gen_params.iter().any(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE) {
             assert!(key_metadata.certificateChain.is_some());
+            let mut cert_chain: Vec<u8> = Vec::new();
+            cert_chain.extend(key_metadata.certificate.as_ref().unwrap());
+            cert_chain.extend(key_metadata.certificateChain.as_ref().unwrap());
+            validate_certchain(&cert_chain).expect("Error while validating cert chain");
+        }
+
+        if let Some(challenge_param) =
+            gen_params.iter().find(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE)
+        {
+            if let KeyParameterValue::Blob(val) = &challenge_param.value {
+                let att_challenge = get_value_from_attest_record(
+                    key_metadata.certificate.as_ref().unwrap(),
+                    challenge_param.tag,
+                    key_metadata.keySecurityLevel,
+                )
+                .expect("Attestation challenge verification failed.");
+                assert_eq!(&att_challenge, val);
+            }
+
+            let att_app_id = get_value_from_attest_record(
+                key_metadata.certificate.as_ref().unwrap(),
+                Tag::ATTESTATION_APPLICATION_ID,
+                SecurityLevel::KEYSTORE,
+            )
+            .expect("Attestation application id verification failed.");
+            assert!(!att_app_id.is_empty());
         }
     }
     check_key_authorizations(&key_metadata.authorizations, gen_params, KeyOrigin::GENERATED);
