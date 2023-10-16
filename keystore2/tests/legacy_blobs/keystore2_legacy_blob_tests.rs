@@ -25,9 +25,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
 
-use android_security_maintenance::aidl::android::security::maintenance::{
-    IKeystoreMaintenance::IKeystoreMaintenance, UserState::UserState,
-};
+use android_security_maintenance::aidl::android::security::maintenance::IKeystoreMaintenance::IKeystoreMaintenance;
 
 use android_security_authorization::aidl::android::security::authorization::{
     IKeystoreAuthorization::IKeystoreAuthorization, LockScreenEvent::LockScreenEvent,
@@ -240,9 +238,6 @@ fn keystore2_encrypted_characteristics() -> anyhow::Result<()> {
                     panic!("Unlock should have succeeded: {:?}", e);
                 }
             }
-
-            let maint_service = get_maintenance();
-            assert_eq!(Ok(UserState(1)), maint_service.getState(99));
 
             let mut key_params: Vec<KsKeyparameter> = Vec::new();
             for param in key_metadata.authorizations {
@@ -501,9 +496,6 @@ fn keystore2_encrypted_certificates() -> anyhow::Result<()> {
                     panic!("Unlock should have succeeded: {:?}", e);
                 }
             }
-
-            let maint_service = get_maintenance();
-            assert_eq!(Ok(UserState(1)), maint_service.getState(98));
 
             let mut key_params: Vec<KsKeyparameter> = Vec::new();
             for param in key_metadata.authorizations {
