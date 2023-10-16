@@ -305,6 +305,24 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Set creation date-time.
+    pub fn creation_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CREATION_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set include unique id.
+    pub fn include_unique_id(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::INCLUDE_UNIQUE_ID,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
