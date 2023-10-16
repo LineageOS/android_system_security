@@ -104,12 +104,6 @@ macro_rules! skip_test_if_no_device_id_attestation_feature {
     };
 }
 
-/// Indicate whether the default device is KeyMint (rather than Keymaster).
-pub fn has_default_keymint() -> bool {
-    binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
-        .expect("Could not check for declared keymint interface")
-}
-
 /// Generate EC key and grant it to the list of users with given access vector.
 /// Returns the list of granted keys `nspace` values in the order of given grantee uids.
 pub fn generate_ec_key_and_grant_to_users(
