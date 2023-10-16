@@ -29,9 +29,8 @@ use crate::utils::{
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
 };
-use android_security_maintenance::aidl::android::security::maintenance::{
-    IKeystoreMaintenance::{BnKeystoreMaintenance, IKeystoreMaintenance},
-    UserState::UserState as AidlUserState,
+use android_security_maintenance::aidl::android::security::maintenance::IKeystoreMaintenance::{
+    BnKeystoreMaintenance, IKeystoreMaintenance,
 };
 use android_security_maintenance::binder::{
     BinderFeatures, Interface, Result as BinderResult, Strong, ThreadState,
@@ -133,27 +132,6 @@ impl Maintenance {
         self.delete_listener
             .delete_namespace(domain, nspace)
             .context(ks_err!("While invoking the delete listener."))
-    }
-
-    fn get_state(user_id: i32) -> Result<AidlUserState> {
-        // Check permission. Function should return if this failed. Therefore having '?' at the end
-        // is very important.
-        check_keystore_permission(KeystorePerm::GetState).context("In get_state.")?;
-        let state = DB
-            .with(|db| {
-                SUPER_KEY.read().unwrap().get_user_state(
-                    &mut db.borrow_mut(),
-                    &LEGACY_IMPORTER,
-                    user_id as u32,
-                )
-            })
-            .context(ks_err!("Trying to get UserState."))?;
-
-        match state {
-            UserState::Uninitialized => Ok(AidlUserState::UNINITIALIZED),
-            UserState::LskfUnlocked(_) => Ok(AidlUserState::LSKF_UNLOCKED),
-            UserState::LskfLocked => Ok(AidlUserState::LSKF_LOCKED),
-        }
     }
 
     fn call_with_watchdog<F>(sec_level: SecurityLevel, name: &'static str, op: &F) -> Result<()>
@@ -304,11 +282,6 @@ impl IKeystoreMaintenance for Maintenance {
         log::info!("clearNamespace({domain:?}, nspace={nspace})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::clearNamespace", 500);
         map_or_log_err(self.clear_namespace(domain, nspace), Ok)
-    }
-
-    fn getState(&self, user_id: i32) -> BinderResult<AidlUserState> {
-        let _wp = wd::watch_millis("IKeystoreMaintenance::getState", 500);
-        map_or_log_err(Self::get_state(user_id), Ok)
     }
 
     fn earlyBootEnded(&self) -> BinderResult<()> {
