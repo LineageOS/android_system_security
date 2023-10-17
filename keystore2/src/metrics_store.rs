@@ -119,15 +119,14 @@ impl MetricsStore {
         // It is ok to unwrap here since the mutex cannot be poisoned according to the way it is
         // used in this module. And the lock is not acquired by this thread before.
         let mut metrics_store_guard = self.metrics_store.lock().unwrap();
-        let atom_count_map = metrics_store_guard.entry(atom_id).or_insert_with(HashMap::new);
+        let atom_count_map = metrics_store_guard.entry(atom_id).or_default();
         if atom_count_map.len() < MetricsStore::SINGLE_ATOM_STORE_MAX_SIZE {
             let atom_count = atom_count_map.entry(atom).or_insert(0);
             *atom_count += 1;
         } else {
             // Insert an overflow atom
-            let overflow_atom_count_map = metrics_store_guard
-                .entry(AtomID::KEYSTORE2_ATOM_WITH_OVERFLOW)
-                .or_insert_with(HashMap::new);
+            let overflow_atom_count_map =
+                metrics_store_guard.entry(AtomID::KEYSTORE2_ATOM_WITH_OVERFLOW).or_default();
 
             if overflow_atom_count_map.len() < MetricsStore::SINGLE_ATOM_STORE_MAX_SIZE {
                 let overflow_atom = Keystore2AtomWithOverflow { atom_id };
