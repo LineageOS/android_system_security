@@ -49,6 +49,7 @@ mod audit_log;
 mod gc;
 mod km_compat;
 mod super_key;
+mod sw_keyblob;
 
 #[cfg(feature = "watchdog")]
 mod watchdog;
