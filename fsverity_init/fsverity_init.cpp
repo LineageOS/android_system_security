@@ -43,6 +43,7 @@
 #include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/strings.h>
+#include <android_security_flag.h>
 #include <log/log.h>
 #include <mini_keyctl_utils.h>
 
@@ -79,6 +80,13 @@ void LoadKeyFromVerifiedPartitions(key_serial_t keyring_id) {
 }
 
 int main(int argc, const char** argv) {
+    if (android::security::flag::deprecate_fsverity_init()) {
+        // Don't load keys to the built-in fs-verity keyring in kernel. This will make existing
+        // files not readable. We expect to only enable the flag when there are no such files or
+        // when failure is ok (e.g. with a fallback).
+        return 0;
+    }
+
     if (argc < 2) {
         LOG(ERROR) << "Not enough arguments";
         return -1;
