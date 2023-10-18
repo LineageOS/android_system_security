@@ -80,7 +80,7 @@ pub struct SuperKeyType<'a> {
     pub algorithm: SuperEncryptionAlgorithm,
 }
 
-/// Key used for LskfLocked keys; the corresponding superencryption key is loaded in memory
+/// Key used for LskfBound keys; the corresponding superencryption key is loaded in memory
 /// when the user first unlocks, and remains in memory until the device reboots.
 pub const USER_SUPER_KEY: SuperKeyType =
     SuperKeyType { alias: "USER_SUPER_KEY", algorithm: SuperEncryptionAlgorithm::Aes256Gcm };
@@ -646,11 +646,11 @@ impl SuperKeyManager {
                     .get_user_state(db, legacy_importer, user_id)
                     .context(ks_err!("Failed to get user state for user {user_id}"))?
                 {
-                    UserState::LskfUnlocked(super_key) => Self::encrypt_with_aes_super_key(
+                    UserState::AfterFirstUnlock(super_key) => Self::encrypt_with_aes_super_key(
                         key_blob, &super_key,
                     )
                     .context(ks_err!("Failed to encrypt with LskfBound key for user {user_id}")),
-                    UserState::LskfLocked => {
+                    UserState::BeforeFirstUnlock => {
                         Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
                     }
                     UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
@@ -973,7 +973,7 @@ impl SuperKeyManager {
         user_id: UserId,
     ) -> Result<UserState> {
         match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(super_key) => Ok(UserState::LskfUnlocked(super_key)),
+            Some(super_key) => Ok(UserState::AfterFirstUnlock(super_key)),
             None => {
                 // Check if a super key exists in the database or legacy database.
                 // If so, return locked user state.
@@ -981,7 +981,7 @@ impl SuperKeyManager {
                     .super_key_exists_in_db_for_user(db, legacy_importer, user_id)
                     .context(ks_err!())?
                 {
-                    Ok(UserState::LskfLocked)
+                    Ok(UserState::BeforeFirstUnlock)
                 } else {
                     Ok(UserState::Uninitialized)
                 }
@@ -1023,10 +1023,10 @@ impl SuperKeyManager {
             UserState::Uninitialized => {
                 Err(Error::sys()).context(ks_err!("Tried to reset an uninitialized user!"))
             }
-            UserState::LskfLocked => {
+            UserState::BeforeFirstUnlock => {
                 Err(Error::sys()).context(ks_err!("Tried to reset a locked user's password!"))
             }
-            UserState::LskfUnlocked(_) => {
+            UserState::AfterFirstUnlock(_) => {
                 // Mark keys created on behalf of the user as unreferenced.
                 legacy_importer
                     .bulk_delete_user(user_id, true)
@@ -1042,7 +1042,7 @@ impl SuperKeyManager {
     }
 
     /// If the user hasn't been initialized yet, then this function generates the user's super keys
-    /// and sets the user's state to LskfUnlocked.  Otherwise this function returns an error.
+    /// and sets the user's state to AfterFirstUnlock.  Otherwise this function returns an error.
     pub fn init_user(
         &mut self,
         db: &mut KeystoreDB,
@@ -1052,7 +1052,7 @@ impl SuperKeyManager {
     ) -> Result<()> {
         log::info!("init_user(user={user_id})");
         match self.get_user_state(db, legacy_importer, user_id)? {
-            UserState::LskfUnlocked(_) | UserState::LskfLocked => {
+            UserState::AfterFirstUnlock(_) | UserState::BeforeFirstUnlock => {
                 Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"))
             }
             UserState::Uninitialized => {
@@ -1089,11 +1089,11 @@ impl SuperKeyManager {
 
     /// Unlocks the given user with the given password.
     ///
-    /// If the user is LskfLocked:
+    /// If the user state is BeforeFirstUnlock:
     /// - Unlock the per_boot super key
     /// - Unlock the screen_lock_bound super key
     ///
-    /// If the user is LskfUnlocked:
+    /// If the user state is AfterFirstUnlock:
     /// - Unlock the screen_lock_bound super key only
     ///
     pub fn unlock_user(
@@ -1105,11 +1105,13 @@ impl SuperKeyManager {
     ) -> Result<()> {
         log::info!("unlock_user(user={user_id})");
         match self.get_user_state(db, legacy_importer, user_id)? {
-            UserState::LskfUnlocked(_) => self.unlock_screen_lock_bound_key(db, user_id, password),
+            UserState::AfterFirstUnlock(_) => {
+                self.unlock_screen_lock_bound_key(db, user_id, password)
+            }
             UserState::Uninitialized => {
                 Err(Error::sys()).context(ks_err!("Tried to unlock an uninitialized user!"))
             }
-            UserState::LskfLocked => {
+            UserState::BeforeFirstUnlock => {
                 let alias = &USER_SUPER_KEY;
                 let result = legacy_importer
                     .with_try_import_super_key(user_id, password, || {
@@ -1142,11 +1144,11 @@ impl SuperKeyManager {
 pub enum UserState {
     // The user has registered LSKF and has unlocked the device by entering PIN/Password,
     // and hence the per-boot super key is available in the cache.
-    LskfUnlocked(Arc<SuperKey>),
+    AfterFirstUnlock(Arc<SuperKey>),
     // The user has registered LSKF, but has not unlocked the device using password, after reboot.
     // Hence the per-boot super-key(s) is not available in the cache.
     // However, the encrypted super key is available in the database.
-    LskfLocked,
+    BeforeFirstUnlock,
     // There's no user in the device for the given user id, or the user with the user id has not
     // setup LSKF.
     Uninitialized,
@@ -1241,7 +1243,7 @@ mod tests {
         let user_state =
             skm.write().unwrap().get_user_state(keystore_db, legacy_importer, user_id).unwrap();
         match user_state {
-            UserState::LskfUnlocked(_) => {}
+            UserState::AfterFirstUnlock(_) => {}
             _ => panic!("{}", err_msg),
         }
     }
@@ -1256,7 +1258,7 @@ mod tests {
         let user_state =
             skm.write().unwrap().get_user_state(keystore_db, legacy_importer, user_id).unwrap();
         match user_state {
-            UserState::LskfLocked => {}
+            UserState::BeforeFirstUnlock => {}
             _ => panic!("{}", err_msg),
         }
     }

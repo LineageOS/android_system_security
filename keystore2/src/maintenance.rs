@@ -82,7 +82,7 @@ impl Maintenance {
             .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
         }
 
-        if let UserState::LskfLocked = DB
+        if let UserState::BeforeFirstUnlock = DB
             .with(|db| skm.get_user_state(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32))
             .context(ks_err!("Could not get user state while changing password!"))?
         {
