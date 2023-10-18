@@ -217,7 +217,7 @@ impl Maintenance {
 
         let user_id = uid_to_android_user(calling_uid);
 
-        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+        let super_key = SUPER_KEY.read().unwrap().get_after_first_unlock_key_by_user_id(user_id);
 
         DB.with(|db| {
             let (key_id_guard, _) = LEGACY_IMPORTER

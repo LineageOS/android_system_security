@@ -80,9 +80,10 @@ pub struct SuperKeyType<'a> {
     pub algorithm: SuperEncryptionAlgorithm,
 }
 
-/// Key used for LskfBound keys; the corresponding superencryption key is loaded in memory
-/// when the user first unlocks, and remains in memory until the device reboots.
-pub const USER_SUPER_KEY: SuperKeyType =
+/// The user's AfterFirstUnlock super key. This super key is loaded into memory when the user first
+/// unlocks the device, and it remains in memory until the device reboots. This is used to encrypt
+/// keys that require user authentication but not an unlocked device.
+pub const USER_AFTER_FIRST_UNLOCK_SUPER_KEY: SuperKeyType =
     SuperKeyType { alias: "USER_SUPER_KEY", algorithm: SuperEncryptionAlgorithm::Aes256Gcm };
 /// Key used for ScreenLockBound keys; the corresponding superencryption key is loaded in memory
 /// each time the user enters their LSKF, and cleared from memory each time the device is locked.
@@ -104,8 +105,8 @@ pub const USER_SCREEN_LOCK_BOUND_P521_KEY: SuperKeyType = SuperKeyType {
 pub enum SuperEncryptionType {
     /// Do not superencrypt this key.
     None,
-    /// Superencrypt with a key that remains in memory from first unlock to reboot.
-    LskfBound,
+    /// Superencrypt with the AfterFirstUnlock super key.
+    AfterFirstUnlock,
     /// Superencrypt with a key cleared from memory when the device is locked.
     ScreenLockBound,
     /// Superencrypt with a key based on the desired boot level
@@ -239,12 +240,12 @@ struct BiometricUnlock {
 
 #[derive(Default)]
 struct UserSuperKeys {
-    /// The per boot key is used for LSKF binding of authentication bound keys. There is one
-    /// key per android user. The key is stored on flash encrypted with a key derived from a
-    /// secret, that is itself derived from the user's lock screen knowledge factor (LSKF).
-    /// When the user unlocks the device for the first time, this key is unlocked, i.e., decrypted,
-    /// and stays memory resident until the device reboots.
-    per_boot: Option<Arc<SuperKey>>,
+    /// The AfterFirstUnlock super key is used for LSKF binding of authentication bound keys. There
+    /// is one key per android user. The key is stored on flash encrypted with a key derived from a
+    /// secret, that is itself derived from the user's lock screen knowledge factor (LSKF). When the
+    /// user unlocks the device for the first time, this key is unlocked, i.e., decrypted, and stays
+    /// memory resident until the device reboots.
+    after_first_unlock: Option<Arc<SuperKey>>,
     /// The screen lock key works like the per boot key with the distinction that it is cleared
     /// from memory when the screen lock is engaged.
     screen_lock_bound: Option<Arc<SuperKey>>,
@@ -351,7 +352,7 @@ impl SuperKeyManager {
         self.data.user_keys.remove(&user);
     }
 
-    fn install_per_boot_key_for_user(
+    fn install_after_first_unlock_key_for_user(
         &mut self,
         user: UserId,
         super_key: Arc<SuperKey>,
@@ -359,7 +360,7 @@ impl SuperKeyManager {
         self.data
             .add_key_to_key_index(&super_key)
             .context(ks_err!("add_key_to_key_index failed"))?;
-        self.data.user_keys.entry(user).or_default().per_boot = Some(super_key);
+        self.data.user_keys.entry(user).or_default().after_first_unlock = Some(super_key);
         Ok(())
     }
 
@@ -387,16 +388,21 @@ impl SuperKeyManager {
         })
     }
 
-    pub fn get_per_boot_key_by_user_id(
+    /// Returns the AfterFirstUnlock superencryption key for the given user ID, or None if the user
+    /// has not yet unlocked the device since boot.
+    pub fn get_after_first_unlock_key_by_user_id(
         &self,
         user_id: UserId,
     ) -> Option<Arc<dyn AesGcm + Send + Sync>> {
-        self.get_per_boot_key_by_user_id_internal(user_id)
+        self.get_after_first_unlock_key_by_user_id_internal(user_id)
             .map(|sk| -> Arc<dyn AesGcm + Send + Sync> { sk })
     }
 
-    fn get_per_boot_key_by_user_id_internal(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
-        self.data.user_keys.get(&user_id).and_then(|e| e.per_boot.as_ref().cloned())
+    fn get_after_first_unlock_key_by_user_id_internal(
+        &self,
+        user_id: UserId,
+    ) -> Option<Arc<SuperKey>> {
+        self.data.user_keys.get(&user_id).and_then(|e| e.after_first_unlock.as_ref().cloned())
     }
 
     /// Check if a given key is super-encrypted, from its metadata. If so, unwrap the key using
@@ -470,7 +476,12 @@ impl SuperKeyManager {
         user_id: UserId,
     ) -> Result<bool> {
         let key_in_db = db
-            .key_exists(Domain::APP, user_id as u64 as i64, USER_SUPER_KEY.alias, KeyType::Super)
+            .key_exists(
+                Domain::APP,
+                user_id as u64 as i64,
+                USER_AFTER_FIRST_UNLOCK_SUPER_KEY.alias,
+                KeyType::Super,
+            )
             .context(ks_err!())?;
 
         if key_in_db {
@@ -490,8 +501,8 @@ impl SuperKeyManager {
     ) -> Result<Arc<SuperKey>> {
         let super_key = Self::extract_super_key_from_key_entry(algorithm, entry, pw, None)
             .context(ks_err!("Failed to extract super key from key entry"))?;
-        self.install_per_boot_key_for_user(user_id, super_key.clone())
-            .context(ks_err!("Failed to install per boot key for user!"))?;
+        self.install_after_first_unlock_key_for_user(user_id, super_key.clone())
+            .context(ks_err!("Failed to install AfterFirstUnlock super key for user!"))?;
         Ok(super_key)
     }
 
@@ -639,17 +650,18 @@ impl SuperKeyManager {
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         match Enforcements::super_encryption_required(domain, key_parameters, flags) {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
-            SuperEncryptionType::LskfBound => {
-                // Encrypt the given key blob with the user's per-boot super key.  If the per-boot
-                // super key is not unlocked or the LSKF is not setup, an error is returned.
+            SuperEncryptionType::AfterFirstUnlock => {
+                // Encrypt the given key blob with the user's AfterFirstUnlock super key. If the
+                // user has not unlocked the device since boot or has no LSKF, an error is returned.
                 match self
                     .get_user_state(db, legacy_importer, user_id)
                     .context(ks_err!("Failed to get user state for user {user_id}"))?
                 {
-                    UserState::AfterFirstUnlock(super_key) => Self::encrypt_with_aes_super_key(
-                        key_blob, &super_key,
-                    )
-                    .context(ks_err!("Failed to encrypt with LskfBound key for user {user_id}")),
+                    UserState::AfterFirstUnlock(super_key) => {
+                        Self::encrypt_with_aes_super_key(key_blob, &super_key).context(ks_err!(
+                            "Failed to encrypt with AfterFirstUnlock super key for user {user_id}"
+                        ))
+                    }
                     UserState::BeforeFirstUnlock => {
                         Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
                     }
@@ -972,7 +984,7 @@ impl SuperKeyManager {
         legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
+        match self.get_after_first_unlock_key_by_user_id_internal(user_id) {
             Some(super_key) => Ok(UserState::AfterFirstUnlock(super_key)),
             None => {
                 // Check if a super key exists in the database or legacy database.
@@ -1041,8 +1053,9 @@ impl SuperKeyManager {
         }
     }
 
-    /// If the user hasn't been initialized yet, then this function generates the user's super keys
-    /// and sets the user's state to AfterFirstUnlock.  Otherwise this function returns an error.
+    /// If the user hasn't been initialized yet, then this function generates the user's
+    /// AfterFirstUnlock super key and sets the user's state to AfterFirstUnlock. Otherwise this
+    /// function returns an error.
     pub fn init_user(
         &mut self,
         db: &mut KeystoreDB,
@@ -1068,7 +1081,7 @@ impl SuperKeyManager {
                 let key_entry = db
                     .store_super_key(
                         user_id,
-                        &USER_SUPER_KEY,
+                        &USER_AFTER_FIRST_UNLOCK_SUPER_KEY,
                         &encrypted_super_key,
                         &blob_metadata,
                         &KeyMetaData::new(),
@@ -1077,7 +1090,7 @@ impl SuperKeyManager {
 
                 self.populate_cache_from_super_key_blob(
                     user_id,
-                    USER_SUPER_KEY.algorithm,
+                    USER_AFTER_FIRST_UNLOCK_SUPER_KEY.algorithm,
                     key_entry,
                     password,
                 )
@@ -1090,7 +1103,7 @@ impl SuperKeyManager {
     /// Unlocks the given user with the given password.
     ///
     /// If the user state is BeforeFirstUnlock:
-    /// - Unlock the per_boot super key
+    /// - Unlock the user's AfterFirstUnlock super key
     /// - Unlock the screen_lock_bound super key
     ///
     /// If the user state is AfterFirstUnlock:
@@ -1112,7 +1125,7 @@ impl SuperKeyManager {
                 Err(Error::sys()).context(ks_err!("Tried to unlock an uninitialized user!"))
             }
             UserState::BeforeFirstUnlock => {
-                let alias = &USER_SUPER_KEY;
+                let alias = &USER_AFTER_FIRST_UNLOCK_SUPER_KEY;
                 let result = legacy_importer
                     .with_try_import_super_key(user_id, password, || {
                         db.load_super_key(alias, user_id)
@@ -1143,11 +1156,11 @@ impl SuperKeyManager {
 /// For now, only three states are defined. More states may be added later.
 pub enum UserState {
     // The user has registered LSKF and has unlocked the device by entering PIN/Password,
-    // and hence the per-boot super key is available in the cache.
+    // and hence the AfterFirstUnlock super key is available in the cache.
     AfterFirstUnlock(Arc<SuperKey>),
     // The user has registered LSKF, but has not unlocked the device using password, after reboot.
-    // Hence the per-boot super-key(s) is not available in the cache.
-    // However, the encrypted super key is available in the database.
+    // Hence the AfterFirstUnlock and UnlockedDeviceRequired super keys are not available in the
+    // cache. However, they exist in the database in encrypted form.
     BeforeFirstUnlock,
     // There's no user in the device for the given user id, or the user with the user id has not
     // setup LSKF.
