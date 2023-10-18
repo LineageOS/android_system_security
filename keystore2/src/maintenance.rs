@@ -77,9 +77,9 @@ impl Maintenance {
 
         if let Some(pw) = password.as_ref() {
             DB.with(|db| {
-                skm.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
+                skm.unlock_unlocked_device_required_keys(&mut db.borrow_mut(), user_id as u32, pw)
             })
-            .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
+            .context(ks_err!("unlock_unlocked_device_required_keys failed"))?;
         }
 
         if let UserState::BeforeFirstUnlock = DB
