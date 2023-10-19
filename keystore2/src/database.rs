@@ -2855,7 +2855,7 @@ pub mod tests {
     };
     use crate::key_perm_set;
     use crate::permission::{KeyPerm, KeyPermSet};
-    use crate::super_key::{SuperKeyManager, USER_SUPER_KEY, SuperEncryptionAlgorithm, SuperKeyType};
+    use crate::super_key::{SuperKeyManager, USER_AFTER_FIRST_UNLOCK_SUPER_KEY, SuperEncryptionAlgorithm, SuperKeyType};
     use keystore2_test_utils::TempDir;
     use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
         HardwareAuthToken::HardwareAuthToken,
@@ -4966,18 +4966,23 @@ pub mod tests {
             SuperKeyManager::encrypt_with_password(&super_key, &pw)?;
         db.store_super_key(
             1,
-            &USER_SUPER_KEY,
+            &USER_AFTER_FIRST_UNLOCK_SUPER_KEY,
             &encrypted_super_key,
             &metadata,
             &KeyMetaData::new(),
         )?;
 
         // Check if super key exists.
-        assert!(db.key_exists(Domain::APP, 1, USER_SUPER_KEY.alias, KeyType::Super)?);
+        assert!(db.key_exists(
+            Domain::APP,
+            1,
+            USER_AFTER_FIRST_UNLOCK_SUPER_KEY.alias,
+            KeyType::Super
+        )?);
 
-        let (_, key_entry) = db.load_super_key(&USER_SUPER_KEY, 1)?.unwrap();
+        let (_, key_entry) = db.load_super_key(&USER_AFTER_FIRST_UNLOCK_SUPER_KEY, 1)?.unwrap();
         let loaded_super_key = SuperKeyManager::extract_super_key_from_key_entry(
-            USER_SUPER_KEY.algorithm,
+            USER_AFTER_FIRST_UNLOCK_SUPER_KEY.algorithm,
             key_entry,
             &pw,
             None,

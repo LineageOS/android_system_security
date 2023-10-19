@@ -191,7 +191,7 @@ impl AuthorizationManager {
                 ENFORCEMENTS.set_device_locked(user_id, true);
                 let mut skm = SUPER_KEY.write().unwrap();
                 DB.with(|db| {
-                    skm.lock_screen_lock_bound_key(
+                    skm.lock_unlocked_device_required_keys(
                         &mut db.borrow_mut(),
                         user_id as u32,
                         unlocking_sids.unwrap_or(&[]),
