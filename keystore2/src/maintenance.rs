@@ -77,12 +77,12 @@ impl Maintenance {
 
         if let Some(pw) = password.as_ref() {
             DB.with(|db| {
-                skm.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
+                skm.unlock_unlocked_device_required_keys(&mut db.borrow_mut(), user_id as u32, pw)
             })
-            .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
+            .context(ks_err!("unlock_unlocked_device_required_keys failed"))?;
         }
 
-        if let UserState::LskfLocked = DB
+        if let UserState::BeforeFirstUnlock = DB
             .with(|db| skm.get_user_state(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32))
             .context(ks_err!("Could not get user state while changing password!"))?
         {
@@ -217,7 +217,7 @@ impl Maintenance {
 
         let user_id = uid_to_android_user(calling_uid);
 
-        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+        let super_key = SUPER_KEY.read().unwrap().get_after_first_unlock_key_by_user_id(user_id);
 
         DB.with(|db| {
             let (key_id_guard, _) = LEGACY_IMPORTER
