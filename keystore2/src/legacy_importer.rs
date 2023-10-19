@@ -22,7 +22,7 @@ use crate::error::{map_km_error, Error};
 use crate::key_parameter::{KeyParameter, KeyParameterValue};
 use crate::ks_err;
 use crate::legacy_blob::{self, Blob, BlobValue, LegacyKeyCharacteristics};
-use crate::super_key::USER_SUPER_KEY;
+use crate::super_key::USER_AFTER_FIRST_UNLOCK_SUPER_KEY;
 use crate::utils::{
     key_characteristics_to_internal, uid_to_android_user, upgrade_keyblob_if_required_with,
     watchdog as wd, AesGcm,
@@ -450,7 +450,7 @@ impl LegacyImporterState {
 
         match self
             .db
-            .load_super_key(&USER_SUPER_KEY, user_id)
+            .load_super_key(&USER_AFTER_FIRST_UNLOCK_SUPER_KEY, user_id)
             .context(ks_err!("Failed to load super key"))?
         {
             Some((_, entry)) => Ok(entry.id()),
@@ -729,7 +729,7 @@ impl LegacyImporterState {
             self.db
                 .store_super_key(
                     user_id,
-                    &USER_SUPER_KEY,
+                    &USER_AFTER_FIRST_UNLOCK_SUPER_KEY,
                     &blob,
                     &blob_metadata,
                     &KeyMetaData::new(),
@@ -772,7 +772,7 @@ impl LegacyImporterState {
 
         let super_key_id = self
             .db
-            .load_super_key(&USER_SUPER_KEY, user_id)
+            .load_super_key(&USER_AFTER_FIRST_UNLOCK_SUPER_KEY, user_id)
             .context(ks_err!("Failed to load super key"))?
             .map(|(_, entry)| entry.id());
 

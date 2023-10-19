@@ -774,10 +774,10 @@ impl Enforcements {
                     Candidate { priority: 3, enc_type: SuperEncryptionType::BootLevel(*level) }
                 }
                 KeyParameterValue::UnlockedDeviceRequired if *domain == Domain::APP => {
-                    Candidate { priority: 2, enc_type: SuperEncryptionType::ScreenLockBound }
+                    Candidate { priority: 2, enc_type: SuperEncryptionType::UnlockedDeviceRequired }
                 }
                 KeyParameterValue::UserSecureID(_) if *domain == Domain::APP => {
-                    Candidate { priority: 1, enc_type: SuperEncryptionType::LskfBound }
+                    Candidate { priority: 1, enc_type: SuperEncryptionType::AfterFirstUnlock }
                 }
                 _ => Candidate { priority: 0, enc_type: SuperEncryptionType::None },
             };

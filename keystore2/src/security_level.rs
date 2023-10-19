@@ -247,7 +247,7 @@ impl KeystoreSecurityLevel {
                 let super_key = SUPER_KEY
                     .read()
                     .unwrap()
-                    .get_per_boot_key_by_user_id(uid_to_android_user(caller_uid));
+                    .get_after_first_unlock_key_by_user_id(uid_to_android_user(caller_uid));
                 let (key_id_guard, mut key_entry) = DB
                     .with::<_, Result<(KeyIdGuard, KeyEntry)>>(|db| {
                         LEGACY_IMPORTER.with_try_import(key, caller_uid, super_key, || {
@@ -733,7 +733,7 @@ impl KeystoreSecurityLevel {
         // Import_wrapped_key requires the rebind permission for the new key.
         check_key_permission(KeyPerm::Rebind, &key, &None).context(ks_err!())?;
 
-        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+        let super_key = SUPER_KEY.read().unwrap().get_after_first_unlock_key_by_user_id(user_id);
 
         let (wrapping_key_id_guard, mut wrapping_key_entry) = DB
             .with(|db| {
