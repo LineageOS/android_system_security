@@ -420,6 +420,13 @@ pub fn check_key_authorizations(
 
     //Check allowed-expected-key-parameters are present in given key authorizations list.
     expected_params.iter().all(|key_param| {
+        // `INCLUDE_UNIQUE_ID` is not strictly expected to be in key authorizations but has been
+        // put there by some implementations so cope with that.
+        if key_param.tag == Tag::INCLUDE_UNIQUE_ID
+            && !authorizations.iter().any(|auth| auth.keyParameter.tag == key_param.tag)
+        {
+            return true;
+        }
         if ALLOWED_TAGS_IN_KEY_AUTHS.contains(&key_param.tag) {
             assert!(
                 check_key_param(authorizations, key_param),
