@@ -31,6 +31,7 @@ rust_defaults {
         "android.security.legacykeystore-rust",
         "libanyhow",
         "libbinder_rs",
+        "libkeystore2_flags_rust",
         "liblog_rust",
         "librusqlite",
         "librustutils",
@@ -43,6 +44,7 @@ rust_library {
     defaults: ["liblegacykeystore-rust_defaults"],
     rustlibs: [
         "libkeystore2",
+        "libkeystore2_flags_rust",
         "librusqlite",
     ],
 }
@@ -59,6 +61,7 @@ rust_test {
         "libbinder_rs",
         "libkeystore2",
         "libkeystore2_test_utils",
+        "libkeystore2_flags_rust",
         "liblog_rust",
         "librusqlite",
         "librustutils",
