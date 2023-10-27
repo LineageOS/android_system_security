@@ -30,6 +30,7 @@ rust_test {
     srcs: ["keystore2_client_tests.rs"],
     test_suites: [
         "general-tests",
+        "vts",
     ],
     test_config: "AndroidTest.xml",
 
