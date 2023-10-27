@@ -717,6 +717,46 @@ impl SuperKeyManager {
         }
     }
 
+    fn create_super_key(
+        &mut self,
+        db: &mut KeystoreDB,
+        user_id: UserId,
+        key_type: &SuperKeyType,
+        password: &Password,
+        reencrypt_with: Option<Arc<SuperKey>>,
+    ) -> Result<Arc<SuperKey>> {
+        let (super_key, public_key) = match key_type.algorithm {
+            SuperEncryptionAlgorithm::Aes256Gcm => {
+                (generate_aes256_key().context(ks_err!("Failed to generate AES-256 key."))?, None)
+            }
+            SuperEncryptionAlgorithm::EcdhP521 => {
+                let key =
+                    ECDHPrivateKey::generate().context(ks_err!("Failed to generate ECDH key"))?;
+                (
+                    key.private_key().context(ks_err!("private_key failed"))?,
+                    Some(key.public_key().context(ks_err!("public_key failed"))?),
+                )
+            }
+        };
+        // Derive an AES-256 key from the password and re-encrypt the super key before we insert it
+        // in the database.
+        let (encrypted_super_key, blob_metadata) =
+            Self::encrypt_with_password(&super_key, password).context(ks_err!())?;
+        let mut key_metadata = KeyMetaData::new();
+        if let Some(pk) = public_key {
+            key_metadata.add(KeyMetaEntry::Sec1PublicKey(pk));
+        }
+        let key_entry = db
+            .store_super_key(user_id, key_type, &encrypted_super_key, &blob_metadata, &key_metadata)
+            .context(ks_err!("Failed to store super key."))?;
+        Ok(Arc::new(SuperKey {
+            algorithm: key_type.algorithm,
+            key: super_key,
+            id: SuperKeyIdentifier::DatabaseId(key_entry.id()),
+            reencrypt_with,
+        }))
+    }
+
     /// Fetch a superencryption key from the database, or create it if it doesn't already exist.
     /// When this is called, the caller must hold the lock on the SuperKeyManager.
     /// So it's OK that the check and creation are different DB transactions.
@@ -737,43 +777,7 @@ impl SuperKeyManager {
                 reencrypt_with,
             )?)
         } else {
-            let (super_key, public_key) = match key_type.algorithm {
-                SuperEncryptionAlgorithm::Aes256Gcm => (
-                    generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?,
-                    None,
-                ),
-                SuperEncryptionAlgorithm::EcdhP521 => {
-                    let key = ECDHPrivateKey::generate()
-                        .context(ks_err!("Failed to generate ECDH key"))?;
-                    (
-                        key.private_key().context(ks_err!("private_key failed"))?,
-                        Some(key.public_key().context(ks_err!("public_key failed"))?),
-                    )
-                }
-            };
-            // Derive an AES256 key from the password and re-encrypt the super key
-            // before we insert it in the database.
-            let (encrypted_super_key, blob_metadata) =
-                Self::encrypt_with_password(&super_key, password).context(ks_err!())?;
-            let mut key_metadata = KeyMetaData::new();
-            if let Some(pk) = public_key {
-                key_metadata.add(KeyMetaEntry::Sec1PublicKey(pk));
-            }
-            let key_entry = db
-                .store_super_key(
-                    user_id,
-                    key_type,
-                    &encrypted_super_key,
-                    &blob_metadata,
-                    &key_metadata,
-                )
-                .context(ks_err!("Failed to store super key."))?;
-            Ok(Arc::new(SuperKey {
-                algorithm: key_type.algorithm,
-                key: super_key,
-                id: SuperKeyIdentifier::DatabaseId(key_entry.id()),
-                reencrypt_with,
-            }))
+            self.create_super_key(db, user_id, key_type, password, reencrypt_with)
         }
     }
 
