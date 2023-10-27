@@ -78,26 +78,35 @@ pub struct SuperKeyType<'a> {
     pub alias: &'a str,
     /// Encryption algorithm
     pub algorithm: SuperEncryptionAlgorithm,
+    /// What to call this key in log messages. Not used for anything else.
+    pub name: &'a str,
 }
 
 /// The user's AfterFirstUnlock super key. This super key is loaded into memory when the user first
 /// unlocks the device, and it remains in memory until the device reboots. This is used to encrypt
 /// keys that require user authentication but not an unlocked device.
-pub const USER_AFTER_FIRST_UNLOCK_SUPER_KEY: SuperKeyType =
-    SuperKeyType { alias: "USER_SUPER_KEY", algorithm: SuperEncryptionAlgorithm::Aes256Gcm };
+pub const USER_AFTER_FIRST_UNLOCK_SUPER_KEY: SuperKeyType = SuperKeyType {
+    alias: "USER_SUPER_KEY",
+    algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+    name: "AfterFirstUnlock super key",
+};
+
 /// The user's UnlockedDeviceRequired symmetric super key. This super key is loaded into memory each
 /// time the user unlocks the device, and it is cleared from memory each time the user locks the
 /// device. This is used to encrypt keys that use the UnlockedDeviceRequired key parameter.
 pub const USER_UNLOCKED_DEVICE_REQUIRED_SYMMETRIC_SUPER_KEY: SuperKeyType = SuperKeyType {
     alias: "USER_SCREEN_LOCK_BOUND_KEY",
     algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+    name: "UnlockedDeviceRequired symmetric super key",
 };
+
 /// The user's UnlockedDeviceRequired asymmetric super key. This is used to allow, while the device
 /// is locked, the creation of keys that use the UnlockedDeviceRequired key parameter. The private
 /// part of this key is loaded and cleared when the symmetric key is loaded and cleared.
 pub const USER_UNLOCKED_DEVICE_REQUIRED_P521_SUPER_KEY: SuperKeyType = SuperKeyType {
     alias: "USER_SCREEN_LOCK_BOUND_P521_KEY",
     algorithm: SuperEncryptionAlgorithm::EcdhP521,
+    name: "UnlockedDeviceRequired asymmetric super key",
 };
 
 /// Superencryption to apply to a new key.
@@ -725,6 +734,7 @@ impl SuperKeyManager {
         password: &Password,
         reencrypt_with: Option<Arc<SuperKey>>,
     ) -> Result<Arc<SuperKey>> {
+        log::info!("Creating {} for user {}", key_type.name, user_id);
         let (super_key, public_key) = match key_type.algorithm {
             SuperEncryptionAlgorithm::Aes256Gcm => {
                 (generate_aes256_key().context(ks_err!("Failed to generate AES-256 key."))?, None)

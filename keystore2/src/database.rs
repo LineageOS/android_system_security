@@ -4890,11 +4890,13 @@ pub mod tests {
         let key_name_enc = SuperKeyType {
             alias: "test_super_key_1",
             algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+            name: "test_super_key_1",
         };
 
         let key_name_nonenc = SuperKeyType {
             alias: "test_super_key_2",
             algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+            name: "test_super_key_2",
         };
 
         // Install two super keys.
