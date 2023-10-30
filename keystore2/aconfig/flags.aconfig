@@ -7,3 +7,11 @@ flag {
   bug: "191777960"
   is_fixed_read_only: true
 }
+
+flag {
+  name: "deprecate_legacy_keystore"
+  namespace: "hardware_backed_security"
+  description: "This flag rolls out legacy keystore deprecation and makes it so that the put command returns a deprecation error"
+  bug: "307460850"
+  is_fixed_read_only: true
+}
