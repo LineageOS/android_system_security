@@ -400,11 +400,6 @@ impl DateTime {
     pub fn to_millis_epoch(self) -> i64 {
         self.0
     }
-
-    /// Returns unix epoch time in seconds.
-    pub fn to_secs_epoch(self) -> i64 {
-        self.0 / 1000
-    }
 }
 
 impl ToSql for DateTime {
@@ -541,7 +536,7 @@ impl KeyIdLockDb {
     /// This function blocks until an exclusive lock for the given key entry id can
     /// be acquired. It returns a guard object, that represents the lifecycle of the
     /// acquired lock.
-    pub fn get(&self, key_id: i64) -> KeyIdGuard {
+    fn get(&self, key_id: i64) -> KeyIdGuard {
         let mut locked_keys = self.locked_keys.lock().unwrap();
         while locked_keys.contains(&key_id) {
             locked_keys = self.cond_var.wait(locked_keys).unwrap();
@@ -554,7 +549,7 @@ impl KeyIdLockDb {
     /// given key id is already taken the function returns None immediately. If a lock
     /// can be acquired this function returns a guard object, that represents the
     /// lifecycle of the acquired lock.
-    pub fn try_get(&self, key_id: i64) -> Option<KeyIdGuard> {
+    fn try_get(&self, key_id: i64) -> Option<KeyIdGuard> {
         let mut locked_keys = self.locked_keys.lock().unwrap();
         if locked_keys.insert(key_id) {
             Some(KeyIdGuard(key_id))
@@ -683,10 +678,6 @@ impl KeyEntry {
     pub fn take_cert(&mut self) -> Option<Vec<u8>> {
         self.cert.take()
     }
-    /// Exposes the optional public certificate chain.
-    pub fn cert_chain(&self) -> &Option<Vec<u8>> {
-        &self.cert_chain
-    }
     /// Extracts the optional public certificate_chain.
     pub fn take_cert_chain(&mut self) -> Option<Vec<u8>> {
         self.cert_chain.take()
@@ -694,10 +685,6 @@ impl KeyEntry {
     /// Returns the uuid of the owning KeyMint instance.
     pub fn km_uuid(&self) -> &Uuid {
         &self.km_uuid
-    }
-    /// Exposes the key parameters of this key entry.
-    pub fn key_parameters(&self) -> &Vec<KeyParameter> {
-        &self.parameters
     }
     /// Consumes this key entry and extracts the keyparameters from it.
     pub fn into_key_parameters(self) -> Vec<KeyParameter> {
@@ -711,10 +698,6 @@ impl KeyEntry {
     /// private key component.
     pub fn pure_cert(&self) -> bool {
         self.pure_cert
-    }
-    /// Consumes this key entry and extracts the keyparameters and metadata from it.
-    pub fn into_key_parameters_and_metadata(self) -> (Vec<KeyParameter>, KeyMetaData) {
-        (self.parameters, self.metadata)
     }
 }
 
@@ -1379,99 +1362,6 @@ impl KeystoreDB {
         .context(ks_err!())
     }
 
-    /// Atomically loads a key entry and associated metadata or creates it using the
-    /// callback create_new_key callback. The callback is called during a database
-    /// transaction. This means that implementers should be mindful about using
-    /// blocking operations such as IPC or grabbing mutexes.
-    pub fn get_or_create_key_with<F>(
-        &mut self,
-        domain: Domain,
-        namespace: i64,
-        alias: &str,
-        km_uuid: Uuid,
-        create_new_key: F,
-    ) -> Result<(KeyIdGuard, KeyEntry)>
-    where
-        F: Fn() -> Result<(Vec<u8>, BlobMetaData)>,
-    {
-        let _wp = wd::watch_millis("KeystoreDB::get_or_create_key_with", 500);
-
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
-            let id = {
-                let mut stmt = tx
-                    .prepare(
-                        "SELECT id FROM persistent.keyentry
-                    WHERE
-                    key_type = ?
-                    AND domain = ?
-                    AND namespace = ?
-                    AND alias = ?
-                    AND state = ?;",
-                    )
-                    .context(ks_err!("Failed to select from keyentry table."))?;
-                let mut rows = stmt
-                    .query(params![KeyType::Super, domain.0, namespace, alias, KeyLifeCycle::Live])
-                    .context(ks_err!("Failed to query from keyentry table."))?;
-
-                db_utils::with_rows_extract_one(&mut rows, |row| {
-                    Ok(match row {
-                        Some(r) => r.get(0).context("Failed to unpack id.")?,
-                        None => None,
-                    })
-                })
-                .context(ks_err!())?
-            };
-
-            let (id, entry) = match id {
-                Some(id) => (
-                    id,
-                    Self::load_key_components(tx, KeyEntryLoadBits::KM, id).context(ks_err!())?,
-                ),
-
-                None => {
-                    let id = Self::insert_with_retry(|id| {
-                        tx.execute(
-                            "INSERT into persistent.keyentry
-                        (id, key_type, domain, namespace, alias, state, km_uuid)
-                        VALUES(?, ?, ?, ?, ?, ?, ?);",
-                            params![
-                                id,
-                                KeyType::Super,
-                                domain.0,
-                                namespace,
-                                alias,
-                                KeyLifeCycle::Live,
-                                km_uuid,
-                            ],
-                        )
-                    })
-                    .context(ks_err!())?;
-
-                    let (blob, metadata) = create_new_key().context(ks_err!())?;
-                    Self::set_blob_internal(
-                        tx,
-                        id,
-                        SubComponentType::KEY_BLOB,
-                        Some(&blob),
-                        Some(&metadata),
-                    )
-                    .context(ks_err!())?;
-                    (
-                        id,
-                        KeyEntry {
-                            id,
-                            key_blob_info: Some((blob, metadata)),
-                            pure_cert: false,
-                            ..Default::default()
-                        },
-                    )
-                }
-            };
-            Ok((KEY_ID_LOCK.get(id), entry)).no_gc()
-        })
-        .context(ks_err!())
-    }
-
     /// Creates a transaction with the given behavior and executes f with the new transaction.
     /// The transaction is committed only if f returns Ok and retried if DatabaseBusy
     /// or DatabaseLocked is encountered.
@@ -1530,27 +1420,6 @@ impl KeystoreDB {
             Some(rusqlite::ffi::Error { code: rusqlite::ErrorCode::DatabaseBusy, .. })
                 | Some(rusqlite::ffi::Error { code: rusqlite::ErrorCode::DatabaseLocked, .. })
         )
-    }
-
-    /// Creates a new key entry and allocates a new randomized id for the new key.
-    /// The key id gets associated with a domain and namespace but not with an alias.
-    /// To complete key generation `rebind_alias` should be called after all of the
-    /// key artifacts, i.e., blobs and parameters have been associated with the new
-    /// key id. Finalizing with `rebind_alias` makes the creation of a new key entry
-    /// atomic even if key generation is not.
-    pub fn create_key_entry(
-        &mut self,
-        domain: &Domain,
-        namespace: &i64,
-        key_type: KeyType,
-        km_uuid: &Uuid,
-    ) -> Result<KeyIdGuard> {
-        let _wp = wd::watch_millis("KeystoreDB::create_key_entry", 500);
-
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
-            Self::create_key_entry_internal(tx, domain, namespace, key_type, km_uuid).no_gc()
-        })
-        .context(ks_err!())
     }
 
     fn create_key_entry_internal(
@@ -3161,12 +3030,24 @@ pub mod tests {
         db.perboot.get_all_auth_token_entries()
     }
 
+    fn create_key_entry(
+        db: &mut KeystoreDB,
+        domain: &Domain,
+        namespace: &i64,
+        key_type: KeyType,
+        km_uuid: &Uuid,
+    ) -> Result<KeyIdGuard> {
+        db.with_transaction(TransactionBehavior::Immediate, |tx| {
+            KeystoreDB::create_key_entry_internal(tx, domain, namespace, key_type, km_uuid).no_gc()
+        })
+    }
+
     #[test]
     fn test_persistence_for_files() -> Result<()> {
         let temp_dir = TempDir::new("persistent_db_test")?;
         let mut db = KeystoreDB::new(temp_dir.path(), None)?;
 
-        db.create_key_entry(&Domain::APP, &100, KeyType::Client, &KEYSTORE_UUID)?;
+        create_key_entry(&mut db, &Domain::APP, &100, KeyType::Client, &KEYSTORE_UUID)?;
         let entries = get_keyentry(&db)?;
         assert_eq!(entries.len(), 1);
 
@@ -3185,8 +3066,8 @@ pub mod tests {
 
         let mut db = new_test_db()?;
 
-        db.create_key_entry(&Domain::APP, &100, KeyType::Client, &KEYSTORE_UUID)?;
-        db.create_key_entry(&Domain::SELINUX, &101, KeyType::Client, &KEYSTORE_UUID)?;
+        create_key_entry(&mut db, &Domain::APP, &100, KeyType::Client, &KEYSTORE_UUID)?;
+        create_key_entry(&mut db, &Domain::SELINUX, &101, KeyType::Client, &KEYSTORE_UUID)?;
 
         let entries = get_keyentry(&db)?;
         assert_eq!(entries.len(), 2);
@@ -3195,15 +3076,15 @@ pub mod tests {
 
         // Test that we must pass in a valid Domain.
         check_result_is_error_containing_string(
-            db.create_key_entry(&Domain::GRANT, &102, KeyType::Client, &KEYSTORE_UUID),
+            create_key_entry(&mut db, &Domain::GRANT, &102, KeyType::Client, &KEYSTORE_UUID),
             &format!("Domain {:?} must be either App or SELinux.", Domain::GRANT),
         );
         check_result_is_error_containing_string(
-            db.create_key_entry(&Domain::BLOB, &103, KeyType::Client, &KEYSTORE_UUID),
+            create_key_entry(&mut db, &Domain::BLOB, &103, KeyType::Client, &KEYSTORE_UUID),
             &format!("Domain {:?} must be either App or SELinux.", Domain::BLOB),
         );
         check_result_is_error_containing_string(
-            db.create_key_entry(&Domain::KEY_ID, &104, KeyType::Client, &KEYSTORE_UUID),
+            create_key_entry(&mut db, &Domain::KEY_ID, &104, KeyType::Client, &KEYSTORE_UUID),
             &format!("Domain {:?} must be either App or SELinux.", Domain::KEY_ID),
         );
 
@@ -3219,8 +3100,8 @@ pub mod tests {
         }
 
         let mut db = new_test_db()?;
-        db.create_key_entry(&Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
-        db.create_key_entry(&Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
+        create_key_entry(&mut db, &Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
+        create_key_entry(&mut db, &Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
         let entries = get_keyentry(&db)?;
         assert_eq!(entries.len(), 2);
         assert_eq!(
@@ -4837,7 +4718,7 @@ pub mod tests {
         max_usage_count: Option<i32>,
         sids: &[i64],
     ) -> Result<KeyIdGuard> {
-        let key_id = db.create_key_entry(&domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
+        let key_id = create_key_entry(db, &domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
         let mut blob_metadata = BlobMetaData::new();
         blob_metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::Password));
         blob_metadata.add(BlobMetaEntry::Salt(vec![1, 2, 3]));
@@ -4896,7 +4777,7 @@ pub mod tests {
         alias: &str,
         logical_only: bool,
     ) -> Result<KeyIdGuard> {
-        let key_id = db.create_key_entry(&domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
+        let key_id = create_key_entry(db, &domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
         let mut blob_metadata = BlobMetaData::new();
         if !logical_only {
             blob_metadata.add(BlobMetaEntry::MaxBootLevel(3));
@@ -4936,7 +4817,7 @@ pub mod tests {
         super_key_id: i64,
     ) -> Result<KeyIdGuard> {
         let domain = Domain::APP;
-        let key_id = db.create_key_entry(&domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
+        let key_id = create_key_entry(db, &domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
 
         let mut blob_metadata = BlobMetaData::new();
         blob_metadata.add(BlobMetaEntry::KmUuid(KEYSTORE_UUID));
@@ -5362,7 +5243,7 @@ pub mod tests {
         let mut db = new_test_db()?;
         let mut working_stats = get_storage_stats_map(&mut db);
 
-        let key_id = db.create_key_entry(&Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
+        let key_id = create_key_entry(&mut db, &Domain::APP, &42, KeyType::Client, &KEYSTORE_UUID)?;
         assert_storage_increased(
             &mut db,
             vec![
