@@ -323,6 +323,18 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Add app-data.
+    pub fn app_data(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter { tag: Tag::APPLICATION_DATA, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add app-id.
+    pub fn app_id(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter { tag: Tag::APPLICATION_ID, value: KeyParameterValue::Blob(b) });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
