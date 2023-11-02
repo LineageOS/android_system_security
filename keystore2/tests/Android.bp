@@ -35,6 +35,9 @@ rust_test {
     test_config: "AndroidTest.xml",
 
     rustlibs: [
+        "android.hardware.security.secureclock-V1-rust",
+        "android.security.authorization-rust",
+        "libaconfig_android_hardware_biometrics_rust",
         "libbinder_rs",
         "libkeystore2_test_utils",
         "libnix",

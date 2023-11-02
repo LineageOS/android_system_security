@@ -14,27 +14,30 @@
 
 //! This module implements IKeystoreAuthorization AIDL interface.
 
-use crate::ks_err;
-use crate::error::Error as KeystoreError;
 use crate::error::anyhow_error_to_cstring;
-use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_IMPORTER};
+use crate::error::Error as KeystoreError;
+use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
+use crate::ks_err;
 use crate::permission::KeystorePerm;
 use crate::utils::{check_keystore_permission, watchdog as wd};
+use aconfig_android_hardware_biometrics_rust;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    HardwareAuthToken::HardwareAuthToken,
+    HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
 };
-use android_security_authorization::binder::{BinderFeatures, ExceptionCode, Interface, Result as BinderResult,
-    Strong, Status as BinderStatus};
 use android_security_authorization::aidl::android::security::authorization::{
-    IKeystoreAuthorization::BnKeystoreAuthorization, IKeystoreAuthorization::IKeystoreAuthorization,
-    LockScreenEvent::LockScreenEvent, AuthorizationTokens::AuthorizationTokens,
+    AuthorizationTokens::AuthorizationTokens, IKeystoreAuthorization::BnKeystoreAuthorization,
+    IKeystoreAuthorization::IKeystoreAuthorization, LockScreenEvent::LockScreenEvent,
     ResponseCode::ResponseCode,
 };
-use android_system_keystore2::aidl::android::system::keystore2::{
-    ResponseCode::ResponseCode as KsResponseCode};
+use android_security_authorization::binder::{
+    BinderFeatures, ExceptionCode, Interface, Result as BinderResult, Status as BinderStatus,
+    Strong,
+};
+use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode as KsResponseCode;
 use anyhow::{Context, Result};
 use keystore2_crypto::Password;
 use keystore2_selinux as selinux;
+use std::ffi::CString;
 
 /// This is the Authorization error type, it wraps binder exceptions and the
 /// Authorization ResponseCode
@@ -226,6 +229,31 @@ impl AuthorizationManager {
             ENFORCEMENTS.get_auth_tokens(challenge, secure_user_id, auth_token_max_age_millis)?;
         Ok(AuthorizationTokens { authToken: auth_token, timestampToken: ts_token })
     }
+
+    fn get_last_auth_time(
+        &self,
+        secure_user_id: i64,
+        auth_types: &[HardwareAuthenticatorType],
+    ) -> Result<i64> {
+        // Check keystore permission.
+        check_keystore_permission(KeystorePerm::GetLastAuthTime).context(ks_err!())?;
+
+        let mut max_time: i64 = -1;
+        for auth_type in auth_types.iter() {
+            if let Some(time) = ENFORCEMENTS.get_last_auth_time(secure_user_id, *auth_type) {
+                if time.milliseconds() > max_time {
+                    max_time = time.milliseconds();
+                }
+            }
+        }
+
+        if max_time >= 0 {
+            Ok(max_time)
+        } else {
+            Err(Error::Rc(ResponseCode::NO_AUTH_TOKEN_FOUND))
+                .context(ks_err!("No auth token found"))
+        }
+    }
 }
 
 impl Interface for AuthorizationManager {}
@@ -273,5 +301,20 @@ impl IKeystoreAuthorization for AuthorizationManager {
             ),
             Ok,
         )
+    }
+
+    fn getLastAuthTime(
+        &self,
+        secure_user_id: i64,
+        auth_types: &[HardwareAuthenticatorType],
+    ) -> binder::Result<i64> {
+        if aconfig_android_hardware_biometrics_rust::last_authentication_time() {
+            map_or_log_err(self.get_last_auth_time(secure_user_id, auth_types), Ok)
+        } else {
+            Err(BinderStatus::new_service_specific_error(
+                ResponseCode::PERMISSION_DENIED.0,
+                Some(CString::new("Feature is not enabled.").unwrap().as_c_str()),
+            ))
+        }
     }
 }
