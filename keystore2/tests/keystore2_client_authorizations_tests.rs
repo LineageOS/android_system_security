@@ -25,8 +25,16 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     KeyMetadata::KeyMetadata, ResponseCode::ResponseCode,
 };
 
+use aconfig_android_hardware_biometrics_rust;
+use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+    HardwareAuthToken::HardwareAuthToken,
+    HardwareAuthenticatorType::HardwareAuthenticatorType
+};
+use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::Timestamp::Timestamp;
+
 use keystore2_test_utils::{
-    authorizations, get_keystore_service, key_generations, key_generations::Error,
+    authorizations, get_keystore_auth_service, get_keystore_service, key_generations,
+    key_generations::Error,
 };
 
 use crate::keystore2_client_test_utils::{
@@ -901,4 +909,58 @@ fn keystore2_gen_attestation_key_with_auth_app_id_app_data_test_fail() {
     assert!(result.is_err());
     assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
     delete_app_key(&keystore2, attest_alias).unwrap();
+}
+
+fn add_hardware_token(auth_type: HardwareAuthenticatorType) {
+    let keystore_auth = get_keystore_auth_service();
+
+    let token = HardwareAuthToken {
+        challenge: 0,
+        userId: 0,
+        authenticatorId: 0,
+        authenticatorType: auth_type,
+        timestamp: Timestamp { milliSeconds: 500 },
+        mac: vec![],
+    };
+    keystore_auth.addAuthToken(&token).unwrap();
+}
+
+#[test]
+fn keystore2_flagged_off_get_last_auth_password_permission_denied() {
+    if aconfig_android_hardware_biometrics_rust::last_authentication_time() {
+        return;
+    }
+
+    let keystore_auth = get_keystore_auth_service();
+
+    let result = keystore_auth.getLastAuthTime(0, &[HardwareAuthenticatorType::PASSWORD]);
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().service_specific_error(), ResponseCode::PERMISSION_DENIED.0);
+}
+
+#[test]
+fn keystore2_flagged_on_get_last_auth_password_success() {
+    if !aconfig_android_hardware_biometrics_rust::last_authentication_time() {
+        return;
+    }
+
+    let keystore_auth = get_keystore_auth_service();
+
+    add_hardware_token(HardwareAuthenticatorType::PASSWORD);
+    assert!(keystore_auth.getLastAuthTime(0, &[HardwareAuthenticatorType::PASSWORD]).unwrap() > 0);
+}
+
+#[test]
+fn keystore2_flagged_on_get_last_auth_fingerprint_success() {
+    if !aconfig_android_hardware_biometrics_rust::last_authentication_time() {
+        return;
+    }
+
+    let keystore_auth = get_keystore_auth_service();
+
+    add_hardware_token(HardwareAuthenticatorType::FINGERPRINT);
+    assert!(
+        keystore_auth.getLastAuthTime(0, &[HardwareAuthenticatorType::FINGERPRINT]).unwrap() > 0
+    );
 }
