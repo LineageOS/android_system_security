@@ -15,6 +15,7 @@
 package android.security.authorization;
 
 import android.hardware.security.keymint.HardwareAuthToken;
+import android.hardware.security.keymint.HardwareAuthenticatorType;
 import android.security.authorization.LockScreenEvent;
 import android.security.authorization.AuthorizationTokens;
 
@@ -108,4 +109,13 @@ interface IKeystoreAuthorization {
      */
     AuthorizationTokens getAuthTokensForCredStore(in long challenge, in long secureUserId,
      in long authTokenMaxAgeMillis);
+
+    /**
+     * Returns the last successful authentication time since boot for the given user with any of the
+     * given authenticator types. This is determined by inspecting the cached auth tokens.
+     *
+     * ## Error conditions:
+     * `ResponseCode::NO_AUTH_TOKEN_FOUND` - if there is no matching authentication token found
+     */
+    long getLastAuthTime(in long secureUserId, in HardwareAuthenticatorType[] authTypes);
 }
