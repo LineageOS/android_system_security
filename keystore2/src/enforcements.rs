@@ -845,6 +845,24 @@ impl Enforcements {
             get_timestamp_token(challenge).context(ks_err!("Error in getting timestamp token."))?;
         Ok((auth_token, tst))
     }
+
+    /// Finds the most recent received time for an auth token that matches the given secure user id and authenticator
+    pub fn get_last_auth_time(
+        &self,
+        secure_user_id: i64,
+        auth_type: HardwareAuthenticatorType,
+    ) -> Option<MonotonicRawTime> {
+        let sids: Vec<i64> = vec![secure_user_id];
+
+        let result =
+            Self::find_auth_token(|entry: &AuthTokenEntry| entry.satisfies(&sids, auth_type));
+
+        if let Some((auth_token_entry, _)) = result {
+            Some(auth_token_entry.time_received())
+        } else {
+            None
+        }
+    }
 }
 
 // TODO: Add tests to enforcement module (b/175578618).
