@@ -164,7 +164,7 @@ where
     }
 }
 
-impl<T> binder::Interface for BacklevelKeyMintWrapper<T> where T: EmulationDetector {}
+impl<T> binder::Interface for BacklevelKeyMintWrapper<T> where T: EmulationDetector + 'static {}
 
 impl<T> IKeyMintDevice for BacklevelKeyMintWrapper<T>
 where
