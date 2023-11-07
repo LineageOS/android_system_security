@@ -15,10 +15,8 @@
 //! Helper wrapper around RKPD interface.
 
 use crate::error::{map_binder_status_code, Error, ResponseCode};
-use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::watchdog_helper::watchdog as wd;
-use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode,
     IGetKeyCallback::IGetKeyCallback, IGetRegistrationCallback::BnGetRegistrationCallback,
@@ -109,21 +107,16 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
 }
 
 /// Make a new connection to a IRegistration service.
-async fn get_rkpd_registration(
-    security_level: &SecurityLevel,
-) -> Result<binder::Strong<dyn IRegistration>> {
+async fn get_rkpd_registration(rpc_name: &str) -> Result<binder::Strong<dyn IRegistration>> {
     let remote_provisioning: Strong<dyn IRemoteProvisioning> =
         map_binder_status_code(binder::get_interface("remote_provisioning"))
             .context(ks_err!("Trying to connect to IRemoteProvisioning service."))?;
-
-    let rpc_name = get_remotely_provisioned_component_name(security_level)
-        .context(ks_err!("Trying to get IRPC name."))?;
 
     let (tx, rx) = oneshot::channel();
     let cb = GetRegistrationCallback::new_native_binder(tx);
 
     remote_provisioning
-        .getRegistration(&rpc_name, &cb)
+        .getRegistration(rpc_name, &cb)
         .context(ks_err!("Trying to get registration."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
@@ -218,10 +211,10 @@ async fn get_rkpd_attestation_key_from_registration_async(
 }
 
 async fn get_rkpd_attestation_key_async(
-    security_level: &SecurityLevel,
+    rpc_name: &str,
     caller_uid: u32,
 ) -> Result<RemotelyProvisionedKey> {
-    let registration = get_rkpd_registration(security_level)
+    let registration = get_rkpd_registration(rpc_name)
         .await
         .context(ks_err!("Trying to get to IRegistration service."))?;
     get_rkpd_attestation_key_from_registration_async(&registration, caller_uid).await
@@ -280,50 +273,42 @@ async fn store_rkpd_attestation_key_with_registration_async(
 }
 
 async fn store_rkpd_attestation_key_async(
-    security_level: &SecurityLevel,
+    rpc_name: &str,
     key_blob: &[u8],
     upgraded_blob: &[u8],
 ) -> Result<()> {
-    let registration = get_rkpd_registration(security_level)
+    let registration = get_rkpd_registration(rpc_name)
         .await
         .context(ks_err!("Trying to get to IRegistration service."))?;
     store_rkpd_attestation_key_with_registration_async(&registration, key_blob, upgraded_blob).await
 }
 
 /// Get attestation key from RKPD.
-pub fn get_rkpd_attestation_key(
-    security_level: &SecurityLevel,
-    caller_uid: u32,
-) -> Result<RemotelyProvisionedKey> {
+pub fn get_rkpd_attestation_key(rpc_name: &str, caller_uid: u32) -> Result<RemotelyProvisionedKey> {
     let _wp = wd::watch_millis("Calling get_rkpd_attestation_key()", 500);
-    tokio_rt().block_on(get_rkpd_attestation_key_async(security_level, caller_uid))
+    tokio_rt().block_on(get_rkpd_attestation_key_async(rpc_name, caller_uid))
 }
 
 /// Store attestation key in RKPD.
 pub fn store_rkpd_attestation_key(
-    security_level: &SecurityLevel,
+    rpc_name: &str,
     key_blob: &[u8],
     upgraded_blob: &[u8],
 ) -> Result<()> {
     let _wp = wd::watch_millis("Calling store_rkpd_attestation_key()", 500);
-    tokio_rt().block_on(store_rkpd_attestation_key_async(security_level, key_blob, upgraded_blob))
+    tokio_rt().block_on(store_rkpd_attestation_key_async(rpc_name, key_blob, upgraded_blob))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::map_km_error;
-    use crate::globals::get_keymint_device;
-    use crate::utils::upgrade_keyblob_if_required_with;
-    use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-        Algorithm::Algorithm, AttestationKey::AttestationKey, KeyParameter::KeyParameter,
-        KeyParameterValue::KeyParameterValue, Tag::Tag,
-    };
     use android_security_rkp_aidl::aidl::android::security::rkp::IRegistration::BnRegistration;
-    use keystore2_crypto::parse_subject_from_certificate;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
+
+    const DEFAULT_RPC_SERVICE_NAME: &str =
+        "android.hardware.security.keymint.IRemotelyProvisionedComponent/default";
 
     struct MockRegistrationValues {
         key: RemotelyProvisionedKey,
@@ -597,7 +582,7 @@ mod tests {
     fn test_get_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
         let key_id = get_next_key_id();
-        let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        let key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
         assert!(!key.keyBlob.is_empty());
         assert!(!key.encodedCertChain.is_empty());
     }
@@ -605,12 +590,11 @@ mod tests {
     #[test]
     fn test_get_rkpd_attestation_key_same_caller() {
         binder::ProcessState::start_thread_pool();
-        let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let key_id = get_next_key_id();
 
         // Multiple calls should return the same key.
-        let first_key = get_rkpd_attestation_key(&sec_level, key_id).unwrap();
-        let second_key = get_rkpd_attestation_key(&sec_level, key_id).unwrap();
+        let first_key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
+        let second_key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
 
         assert_eq!(first_key.keyBlob, second_key.keyBlob);
         assert_eq!(first_key.encodedCertChain, second_key.encodedCertChain);
@@ -619,13 +603,12 @@ mod tests {
     #[test]
     fn test_get_rkpd_attestation_key_different_caller() {
         binder::ProcessState::start_thread_pool();
-        let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let first_key_id = get_next_key_id();
         let second_key_id = get_next_key_id();
 
         // Different callers should be getting different keys.
-        let first_key = get_rkpd_attestation_key(&sec_level, first_key_id).unwrap();
-        let second_key = get_rkpd_attestation_key(&sec_level, second_key_id).unwrap();
+        let first_key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, first_key_id).unwrap();
+        let second_key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, second_key_id).unwrap();
 
         assert_ne!(first_key.keyBlob, second_key.keyBlob);
         assert_ne!(first_key.encodedCertChain, second_key.encodedCertChain);
@@ -639,83 +622,21 @@ mod tests {
     //    test case.
     fn test_store_rkpd_attestation_key() {
         binder::ProcessState::start_thread_pool();
-        let sec_level = SecurityLevel::TRUSTED_ENVIRONMENT;
         let key_id = get_next_key_id();
-        let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        let key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
         let new_blob: [u8; 8] = rand::random();
 
-        assert!(store_rkpd_attestation_key(&sec_level, &key.keyBlob, &new_blob).is_ok());
+        assert!(
+            store_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, &key.keyBlob, &new_blob).is_ok()
+        );
 
-        let new_key =
-            get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id).unwrap();
+        let new_key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
 
         // Restore original key so that we don't leave RKPD with invalid blobs.
-        assert!(store_rkpd_attestation_key(&sec_level, &new_blob, &key.keyBlob).is_ok());
+        assert!(
+            store_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, &new_blob, &key.keyBlob).is_ok()
+        );
         assert_eq!(new_key.keyBlob, new_blob);
-    }
-
-    #[test]
-    // This is a helper for a manual test. We want to check that after a system upgrade RKPD
-    // attestation keys can also be upgraded and stored again with RKPD. The steps are:
-    // 1. Run this test and check in stdout that no key upgrade happened.
-    // 2. Perform a system upgrade.
-    // 3. Run this test and check in stdout that key upgrade did happen.
-    //
-    // Note that this test must be run with that same UID every time. Running as root, i.e. UID 0,
-    // should do the trick. Also, use "--nocapture" flag to get stdout.
-    fn test_rkpd_attestation_key_upgrade() {
-        binder::ProcessState::start_thread_pool();
-        let security_level = SecurityLevel::TRUSTED_ENVIRONMENT;
-        let (keymint, info, _) = get_keymint_device(&security_level).unwrap();
-        let key_id = get_next_key_id();
-        let mut key_upgraded = false;
-
-        let key = get_rkpd_attestation_key(&security_level, key_id).unwrap();
-        assert!(!key.keyBlob.is_empty());
-        assert!(!key.encodedCertChain.is_empty());
-
-        upgrade_keyblob_if_required_with(
-            &*keymint,
-            info.versionNumber,
-            &key.keyBlob,
-            /*upgrade_params=*/ &[],
-            /*km_op=*/
-            |blob| {
-                let params = vec![
-                    KeyParameter {
-                        tag: Tag::ALGORITHM,
-                        value: KeyParameterValue::Algorithm(Algorithm::AES),
-                    },
-                    KeyParameter {
-                        tag: Tag::ATTESTATION_CHALLENGE,
-                        value: KeyParameterValue::Blob(vec![0; 16]),
-                    },
-                    KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) },
-                ];
-                let attestation_key = AttestationKey {
-                    keyBlob: blob.to_vec(),
-                    attestKeyParams: vec![],
-                    issuerSubjectName: parse_subject_from_certificate(&key.encodedCertChain)
-                        .unwrap(),
-                };
-
-                map_km_error(keymint.generateKey(&params, Some(&attestation_key)))
-            },
-            /*new_blob_handler=*/
-            |new_blob| {
-                // This handler is only executed if a key upgrade was performed.
-                key_upgraded = true;
-                store_rkpd_attestation_key(&security_level, &key.keyBlob, new_blob).unwrap();
-                Ok(())
-            },
-        )
-        .unwrap();
-
-        if key_upgraded {
-            println!("RKPD key was upgraded and stored with RKPD.");
-        } else {
-            println!("RKPD key was NOT upgraded.");
-        }
     }
 
     #[test]
@@ -729,8 +650,7 @@ mod tests {
         for _ in 0..NTHREADS {
             threads.push(std::thread::spawn(move || {
                 for _ in 0..NCALLS {
-                    let key = get_rkpd_attestation_key(&SecurityLevel::TRUSTED_ENVIRONMENT, key_id)
-                        .unwrap();
+                    let key = get_rkpd_attestation_key(DEFAULT_RPC_SERVICE_NAME, key_id).unwrap();
                     assert!(!key.keyBlob.is_empty());
                     assert!(!key.encodedCertChain.is_empty());
                 }
