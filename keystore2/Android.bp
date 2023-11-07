@@ -61,6 +61,7 @@ rust_defaults {
         "libserde_cbor",
         "libthiserror",
         "libtokio",
+        "libwatchdog_rs",
     ],
     shared_libs: [
         "libcutils",
