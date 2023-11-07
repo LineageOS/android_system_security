@@ -5049,7 +5049,6 @@ pub mod tests {
         for storage in increased_storage_types {
             // Verify the expected storage increased.
             let new = db.get_storage_stat(storage).unwrap();
-            let storage = storage;
             let old = &baseline[&storage.0];
             assert!(new.size >= old.size, "{}: {} >= {}", storage.0, new.size, old.size);
             assert!(
