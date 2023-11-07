@@ -17,7 +17,7 @@
 use crate::error::{map_binder_status_code, Error, ResponseCode};
 use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
-use crate::utils::watchdog as wd;
+use crate::watchdog_helper::watchdog as wd;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode,

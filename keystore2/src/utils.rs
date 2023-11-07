@@ -20,6 +20,7 @@ use crate::key_parameter::KeyParameter;
 use crate::ks_err;
 use crate::permission;
 use crate::permission::{KeyPerm, KeyPermSet, KeystorePerm};
+pub use crate::watchdog_helper::watchdog;
 use crate::{
     database::{KeyType, KeystoreDB},
     globals::LEGACY_IMPORTER,
@@ -421,36 +422,6 @@ pub fn count_key_entries(db: &mut KeystoreDB, domain: Domain, namespace: i64) ->
     Ok((legacy_keys.len() + num_keys_in_db) as i32)
 }
 
-/// This module provides helpers for simplified use of the watchdog module.
-#[cfg(feature = "watchdog")]
-pub mod watchdog {
-    pub use crate::watchdog::WatchPoint;
-    use crate::watchdog::Watchdog;
-    use lazy_static::lazy_static;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    lazy_static! {
-        /// A Watchdog thread, that can be used to create watch points.
-        static ref WD: Arc<Watchdog> = Watchdog::new(Duration::from_secs(10));
-    }
-
-    /// Sets a watch point with `id` and a timeout of `millis` milliseconds.
-    pub fn watch_millis(id: &'static str, millis: u64) -> Option<WatchPoint> {
-        Watchdog::watch(&WD, id, Duration::from_millis(millis))
-    }
-
-    /// Like `watch_millis` but with a callback that is called every time a report
-    /// is printed about this watch point.
-    pub fn watch_millis_with(
-        id: &'static str,
-        millis: u64,
-        callback: impl Fn() -> String + Send + 'static,
-    ) -> Option<WatchPoint> {
-        Watchdog::watch_with(&WD, id, Duration::from_millis(millis), callback)
-    }
-}
-
 /// Trait implemented by objects that can be used to decrypt cipher text using AES-GCM.
 pub trait AesGcm {
     /// Deciphers `data` using the initialization vector `iv` and AEAD tag `tag`
@@ -477,25 +448,6 @@ impl<T: AesGcmKey> AesGcm for T {
 
     fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
         aes_gcm_encrypt(plaintext, self.key()).context(ks_err!("Encryption failed."))
-    }
-}
-
-/// This module provides empty/noop implementations of the watch dog utility functions.
-#[cfg(not(feature = "watchdog"))]
-pub mod watchdog {
-    /// Noop watch point.
-    pub struct WatchPoint();
-    /// Sets a Noop watch point.
-    fn watch_millis(_: &'static str, _: u64) -> Option<WatchPoint> {
-        None
-    }
-
-    pub fn watch_millis_with(
-        _: &'static str,
-        _: u64,
-        _: impl Fn() -> String + Send + 'static,
-    ) -> Option<WatchPoint> {
-        None
     }
 }
 
