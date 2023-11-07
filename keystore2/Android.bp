@@ -55,6 +55,7 @@ rust_defaults {
         "liblibc",
         "liblog_event_list",
         "liblog_rust",
+        "libmessage_macro",
         "librand",
         "librustutils",
         "libserde",
