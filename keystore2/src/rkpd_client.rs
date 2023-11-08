@@ -15,7 +15,6 @@
 //! Helper wrapper around RKPD interface.
 
 use crate::error::{map_binder_status_code, Error, ResponseCode};
-use crate::watchdog_helper::watchdog as wd;
 use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode,
     IGetKeyCallback::IGetKeyCallback, IGetRegistrationCallback::BnGetRegistrationCallback,
@@ -82,12 +81,10 @@ impl Interface for GetRegistrationCallback {}
 
 impl IGetRegistrationCallback for GetRegistrationCallback {
     fn onSuccess(&self, registration: &Strong<dyn IRegistration>) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetRegistrationCallback::onSuccess", 500);
         self.registration_tx.send(Ok(registration.clone()));
         Ok(())
     }
     fn onCancel(&self) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetRegistrationCallback::onCancel", 500);
         log::warn!("IGetRegistrationCallback cancelled");
         self.registration_tx.send(
             Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
@@ -96,7 +93,6 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
         Ok(())
     }
     fn onError(&self, description: &str) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
         log::error!("IGetRegistrationCallback failed: '{description}'");
         self.registration_tx
             .send(Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)).context(
@@ -143,7 +139,6 @@ impl Interface for GetKeyCallback {}
 
 impl IGetKeyCallback for GetKeyCallback {
     fn onSuccess(&self, key: &RemotelyProvisionedKey) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetKeyCallback::onSuccess", 500);
         self.key_tx.send(Ok(RemotelyProvisionedKey {
             keyBlob: key.keyBlob.clone(),
             encodedCertChain: key.encodedCertChain.clone(),
@@ -151,7 +146,6 @@ impl IGetKeyCallback for GetKeyCallback {
         Ok(())
     }
     fn onCancel(&self) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetKeyCallback::onCancel", 500);
         log::warn!("IGetKeyCallback cancelled");
         self.key_tx.send(
             Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
@@ -160,7 +154,6 @@ impl IGetKeyCallback for GetKeyCallback {
         Ok(())
     }
     fn onError(&self, error: GetKeyErrorCode, description: &str) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetKeyCallback::onError", 500);
         log::error!("IGetKeyCallback failed: {description}");
         let rc = match error {
             GetKeyErrorCode::ERROR_UNKNOWN => ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR,
@@ -236,13 +229,11 @@ impl Interface for StoreUpgradedKeyCallback {}
 
 impl IStoreUpgradedKeyCallback for StoreUpgradedKeyCallback {
     fn onSuccess(&self) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetRegistrationCallback::onSuccess", 500);
         self.completer.send(Ok(()));
         Ok(())
     }
 
     fn onError(&self, error: &str) -> binder::Result<()> {
-        let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
         log::error!("IGetRegistrationCallback failed: {error}");
         self.completer.send(
             Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
@@ -284,7 +275,6 @@ async fn store_rkpd_attestation_key_async(
 
 /// Get attestation key from RKPD.
 pub fn get_rkpd_attestation_key(rpc_name: &str, caller_uid: u32) -> Result<RemotelyProvisionedKey> {
-    let _wp = wd::watch_millis("Calling get_rkpd_attestation_key()", 500);
     tokio_rt().block_on(get_rkpd_attestation_key_async(rpc_name, caller_uid))
 }
 
@@ -294,7 +284,6 @@ pub fn store_rkpd_attestation_key(
     key_blob: &[u8],
     upgraded_blob: &[u8],
 ) -> Result<()> {
-    let _wp = wd::watch_millis("Calling store_rkpd_attestation_key()", 500);
     tokio_rt().block_on(store_rkpd_attestation_key_async(rpc_name, key_blob, upgraded_blob))
 }
 
