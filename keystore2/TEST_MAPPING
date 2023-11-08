@@ -33,6 +33,9 @@
     },
     {
       "name": "keystore2_client_tests"
+    },
+    {
+      "name": "libwatchdog_rs.test"
     }
   ]
 }

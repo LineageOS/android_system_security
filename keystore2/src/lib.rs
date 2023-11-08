@@ -50,6 +50,4 @@ mod gc;
 mod km_compat;
 mod super_key;
 mod sw_keyblob;
-
-#[cfg(feature = "watchdog")]
-mod watchdog;
+mod watchdog_helper;
