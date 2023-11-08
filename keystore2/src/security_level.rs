@@ -899,6 +899,7 @@ impl KeystoreSecurityLevel {
             params,
             f,
             |upgraded_blob| {
+                let _wp = wd::watch_millis("Calling store_rkpd_attestation_key()", 500);
                 store_rkpd_attestation_key(&rpc_name, key_blob, upgraded_blob)
                     .context(ks_err!("Failed store_rkpd_attestation_key()."))
             },
@@ -1127,6 +1128,7 @@ mod tests {
             |new_blob| {
                 // This handler is only executed if a key upgrade was performed.
                 key_upgraded = true;
+                let _wp = wd::watch_millis("Calling store_rkpd_attestation_key()", 500);
                 store_rkpd_attestation_key(&rpc_name, &key.keyBlob, new_blob).unwrap();
                 Ok(())
             },
