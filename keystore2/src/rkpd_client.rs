@@ -15,7 +15,6 @@
 //! Helper wrapper around RKPD interface.
 
 use crate::error::{map_binder_status_code, Error, ResponseCode};
-use crate::ks_err;
 use crate::watchdog_helper::watchdog as wd;
 use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode,
@@ -28,6 +27,7 @@ use android_security_rkp_aidl::aidl::android::security::rkp::{
 };
 use android_security_rkp_aidl::binder::{BinderFeatures, Interface, Strong};
 use anyhow::{Context, Result};
+use message_macro::source_location_msg;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -91,17 +91,17 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
         log::warn!("IGetRegistrationCallback cancelled");
         self.registration_tx.send(
             Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
-                .context(ks_err!("GetRegistrationCallback cancelled.")),
+                .context(source_location_msg!("GetRegistrationCallback cancelled.")),
         );
         Ok(())
     }
     fn onError(&self, description: &str) -> binder::Result<()> {
         let _wp = wd::watch_millis("IGetRegistrationCallback::onError", 500);
         log::error!("IGetRegistrationCallback failed: '{description}'");
-        self.registration_tx.send(
-            Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
-                .context(ks_err!("GetRegistrationCallback failed: {:?}", description)),
-        );
+        self.registration_tx
+            .send(Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)).context(
+                source_location_msg!("GetRegistrationCallback failed: {:?}", description),
+            ));
         Ok(())
     }
 }
@@ -110,19 +110,18 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
 async fn get_rkpd_registration(rpc_name: &str) -> Result<binder::Strong<dyn IRegistration>> {
     let remote_provisioning: Strong<dyn IRemoteProvisioning> =
         map_binder_status_code(binder::get_interface("remote_provisioning"))
-            .context(ks_err!("Trying to connect to IRemoteProvisioning service."))?;
+            .context(source_location_msg!("Trying to connect to IRemoteProvisioning service."))?;
 
     let (tx, rx) = oneshot::channel();
     let cb = GetRegistrationCallback::new_native_binder(tx);
 
     remote_provisioning
         .getRegistration(rpc_name, &cb)
-        .context(ks_err!("Trying to get registration."))?;
+        .context(source_location_msg!("Trying to get registration."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
-        Err(e) => {
-            Err(Error::Rc(ResponseCode::SYSTEM_ERROR)).context(ks_err!("Waiting for RKPD: {:?}", e))
-        }
+        Err(e) => Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
+            .context(source_location_msg!("Waiting for RKPD: {:?}", e)),
         Ok(v) => v.unwrap(),
     }
 }
@@ -156,7 +155,7 @@ impl IGetKeyCallback for GetKeyCallback {
         log::warn!("IGetKeyCallback cancelled");
         self.key_tx.send(
             Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
-                .context(ks_err!("GetKeyCallback cancelled.")),
+                .context(source_location_msg!("GetKeyCallback cancelled.")),
         );
         Ok(())
     }
@@ -177,7 +176,7 @@ impl IGetKeyCallback for GetKeyCallback {
                 ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR
             }
         };
-        self.key_tx.send(Err(Error::Rc(rc)).context(ks_err!(
+        self.key_tx.send(Err(Error::Rc(rc)).context(source_location_msg!(
             "GetKeyCallback failed: {:?} {:?}",
             error,
             description
@@ -195,7 +194,7 @@ async fn get_rkpd_attestation_key_from_registration_async(
 
     registration
         .getKey(caller_uid.try_into().unwrap(), &cb)
-        .context(ks_err!("Trying to get key."))?;
+        .context(source_location_msg!("Trying to get key."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
         Err(e) => {
@@ -204,7 +203,7 @@ async fn get_rkpd_attestation_key_from_registration_async(
                 log::error!("IRegistration::cancelGetKey failed: {:?}", e);
             }
             Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
-                .context(ks_err!("Waiting for RKPD key timed out: {:?}", e))
+                .context(source_location_msg!("Waiting for RKPD key timed out: {:?}", e))
         }
         Ok(v) => v.unwrap(),
     }
@@ -216,7 +215,7 @@ async fn get_rkpd_attestation_key_async(
 ) -> Result<RemotelyProvisionedKey> {
     let registration = get_rkpd_registration(rpc_name)
         .await
-        .context(ks_err!("Trying to get to IRegistration service."))?;
+        .context(source_location_msg!("Trying to get to IRegistration service."))?;
     get_rkpd_attestation_key_from_registration_async(&registration, caller_uid).await
 }
 
@@ -247,7 +246,7 @@ impl IStoreUpgradedKeyCallback for StoreUpgradedKeyCallback {
         log::error!("IGetRegistrationCallback failed: {error}");
         self.completer.send(
             Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
-                .context(ks_err!("Failed to store upgraded key: {:?}", error)),
+                .context(source_location_msg!("Failed to store upgraded key: {:?}", error)),
         );
         Ok(())
     }
@@ -263,11 +262,11 @@ async fn store_rkpd_attestation_key_with_registration_async(
 
     registration
         .storeUpgradedKeyAsync(key_blob, upgraded_blob, &cb)
-        .context(ks_err!("Failed to store upgraded blob with RKPD."))?;
+        .context(source_location_msg!("Failed to store upgraded blob with RKPD."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
         Err(e) => Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
-            .context(ks_err!("Waiting for RKPD to complete storing key: {:?}", e)),
+            .context(source_location_msg!("Waiting for RKPD to complete storing key: {:?}", e)),
         Ok(v) => v.unwrap(),
     }
 }
@@ -279,7 +278,7 @@ async fn store_rkpd_attestation_key_async(
 ) -> Result<()> {
     let registration = get_rkpd_registration(rpc_name)
         .await
-        .context(ks_err!("Trying to get to IRegistration service."))?;
+        .context(source_location_msg!("Trying to get to IRegistration service."))?;
     store_rkpd_attestation_key_with_registration_async(&registration, key_blob, upgraded_blob).await
 }
 
