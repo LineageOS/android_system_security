@@ -20,7 +20,9 @@ use crate::audit_log::{
 };
 use crate::database::{BlobInfo, CertificateInfo, KeyIdGuard};
 use crate::error::{self, map_km_error, map_or_log_err, Error, ErrorCode};
-use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
+use crate::globals::{
+    get_remotely_provisioned_component_name, DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY,
+};
 use crate::key_parameter::KeyParameter as KsKeyParam;
 use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
 use crate::ks_err;
@@ -888,6 +890,8 @@ impl KeystoreSecurityLevel {
     where
         F: Fn(&[u8]) -> Result<T, Error>,
     {
+        let rpc_name = get_remotely_provisioned_component_name(&self.security_level)
+            .context(ks_err!("Trying to get IRPC name."))?;
         crate::utils::upgrade_keyblob_if_required_with(
             &*self.keymint,
             self.hw_info.versionNumber,
@@ -895,7 +899,7 @@ impl KeystoreSecurityLevel {
             params,
             f,
             |upgraded_blob| {
-                store_rkpd_attestation_key(&self.security_level, key_blob, upgraded_blob)
+                store_rkpd_attestation_key(&rpc_name, key_blob, upgraded_blob)
                     .context(ks_err!("Failed store_rkpd_attestation_key()."))
             },
         )
@@ -1055,5 +1059,84 @@ impl IKeystoreSecurityLevel for KeystoreSecurityLevel {
         let result = self.delete_key(key);
         log_key_deleted(key, ThreadState::get_calling_uid(), result.is_ok());
         map_or_log_err(result, Ok)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::map_km_error;
+    use crate::globals::get_keymint_device;
+    use crate::rkpd_client::{get_rkpd_attestation_key, store_rkpd_attestation_key};
+    use crate::utils::upgrade_keyblob_if_required_with;
+    use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
+        Algorithm::Algorithm, AttestationKey::AttestationKey, KeyParameter::KeyParameter,
+        KeyParameterValue::KeyParameterValue, Tag::Tag,
+    };
+    use keystore2_crypto::parse_subject_from_certificate;
+
+    #[test]
+    // This is a helper for a manual test. We want to check that after a system upgrade RKPD
+    // attestation keys can also be upgraded and stored again with RKPD. The steps are:
+    // 1. Run this test and check in stdout that no key upgrade happened.
+    // 2. Perform a system upgrade.
+    // 3. Run this test and check in stdout that key upgrade did happen.
+    //
+    // Note that this test must be run with that same UID every time. Running as root, i.e. UID 0,
+    // should do the trick. Also, use "--nocapture" flag to get stdout.
+    fn test_rkpd_attestation_key_upgrade() {
+        binder::ProcessState::start_thread_pool();
+        let security_level = SecurityLevel::TRUSTED_ENVIRONMENT;
+        let (keymint, info, _) = get_keymint_device(&security_level).unwrap();
+        let key_id = 0;
+        let mut key_upgraded = false;
+
+        let rpc_name = get_remotely_provisioned_component_name(&security_level).unwrap();
+        let key = get_rkpd_attestation_key(&rpc_name, key_id).unwrap();
+        assert!(!key.keyBlob.is_empty());
+        assert!(!key.encodedCertChain.is_empty());
+
+        upgrade_keyblob_if_required_with(
+            &*keymint,
+            info.versionNumber,
+            &key.keyBlob,
+            /*upgrade_params=*/ &[],
+            /*km_op=*/
+            |blob| {
+                let params = vec![
+                    KeyParameter {
+                        tag: Tag::ALGORITHM,
+                        value: KeyParameterValue::Algorithm(Algorithm::AES),
+                    },
+                    KeyParameter {
+                        tag: Tag::ATTESTATION_CHALLENGE,
+                        value: KeyParameterValue::Blob(vec![0; 16]),
+                    },
+                    KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) },
+                ];
+                let attestation_key = AttestationKey {
+                    keyBlob: blob.to_vec(),
+                    attestKeyParams: vec![],
+                    issuerSubjectName: parse_subject_from_certificate(&key.encodedCertChain)
+                        .unwrap(),
+                };
+
+                map_km_error(keymint.generateKey(&params, Some(&attestation_key)))
+            },
+            /*new_blob_handler=*/
+            |new_blob| {
+                // This handler is only executed if a key upgrade was performed.
+                key_upgraded = true;
+                store_rkpd_attestation_key(&rpc_name, &key.keyBlob, new_blob).unwrap();
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        if key_upgraded {
+            println!("RKPD key was upgraded and stored with RKPD.");
+        } else {
+            println!("RKPD key was NOT upgraded.");
+        }
     }
 }
