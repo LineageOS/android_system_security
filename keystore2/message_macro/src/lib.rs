@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A ks_err macro that expands error messages to include the file and line number
+//! A macro that generates a message containing the current source file name
+//! and line number.
 
+/// Generates a message containing the current source file name and line number.
 ///
 /// # Examples
 ///
 /// ```
-/// use crate::ks_err;
-///
-/// ks_err!("Key is expired.");
+/// source_location_msg!("Key is expired.");
 /// Result:
 /// "src/lib.rs:7 Key is expired."
 /// ```
 #[macro_export]
-macro_rules! ks_err {
+macro_rules! source_location_msg {
     { $($arg:tt)+ } => {
         format!("{}:{}: {}", file!(), line!(), format_args!($($arg)+))
     };
