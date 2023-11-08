@@ -31,6 +31,7 @@ use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
 
 use crate::database::Uuid;
+use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
 use crate::rkpd_client::get_rkpd_attestation_key;
@@ -93,7 +94,9 @@ impl RemProvState {
         if !self.is_asymmetric_key(params) || key.domain != Domain::APP {
             Ok(None)
         } else {
-            match get_rkpd_attestation_key(&self.security_level, caller_uid) {
+            let rpc_name = get_remotely_provisioned_component_name(&self.security_level)
+                .context(ks_err!("Trying to get IRPC name."))?;
+            match get_rkpd_attestation_key(&rpc_name, caller_uid) {
                 Err(e) => {
                     if self.is_rkp_only() {
                         log::error!("Error occurred: {:?}", e);
