@@ -367,7 +367,9 @@ where
                     km_op,
                     new_blob_handler,
                 )
-            } else if key_blob.starts_with(km_compat::KEYMASTER_BLOB_SW_PREFIX) {
+            } else if keystore2_flags::import_previously_emulated_keys()
+                && key_blob.starts_with(km_compat::KEYMASTER_BLOB_SW_PREFIX)
+            {
                 // 2) The keyblob was created in software by the km_compat C++ code because a prior
                 //    Keymaster implementation did not support ECDH (which was only added in KeyMint).
                 //
@@ -386,9 +388,10 @@ where
                     km_op,
                     new_blob_handler,
                 )
-            } else if let km_compat::KeyBlob::Wrapped(inner_keyblob) =
-                km_compat::unwrap_keyblob(key_blob)
-            {
+            } else if let (true, km_compat::KeyBlob::Wrapped(inner_keyblob)) = (
+                keystore2_flags::import_previously_emulated_keys(),
+                km_compat::unwrap_keyblob(key_blob),
+            ) {
                 // 3) The keyblob was created in software by km_compat.rs because a prior KeyMint
                 //    implementation did not support a feature present in the current KeyMint spec.
                 //    (For example, a curve 25519 key created when the device only supported KeyMint
