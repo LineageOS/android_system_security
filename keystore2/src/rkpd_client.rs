@@ -14,6 +14,7 @@
 
 //! Helper wrapper around RKPD interface.
 
+use crate::error::{map_binder_status_code, Error, ResponseCode};
 use android_security_rkp_aidl::aidl::android::security::rkp::{
     IGetKeyCallback::BnGetKeyCallback, IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode,
     IGetKeyCallback::IGetKeyCallback, IGetRegistrationCallback::BnGetRegistrationCallback,
@@ -23,8 +24,8 @@ use android_security_rkp_aidl::aidl::android::security::rkp::{
     IStoreUpgradedKeyCallback::IStoreUpgradedKeyCallback,
     RemotelyProvisionedKey::RemotelyProvisionedKey,
 };
+use android_security_rkp_aidl::binder::{BinderFeatures, Interface, Strong};
 use anyhow::{Context, Result};
-use binder::{BinderFeatures, Interface, StatusCode, Strong};
 use message_macro::source_location_msg;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -38,40 +39,6 @@ static RKPD_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn tokio_rt() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
-}
-
-/// Errors occurred during the interaction with RKPD.
-#[derive(Debug, Clone, Copy, thiserror::Error, PartialEq, Eq)]
-pub enum Error {
-    /// An RKPD request gets cancelled.
-    #[error("An RKPD request gets cancelled")]
-    RequestCancelled,
-
-    /// Failed to get registration.
-    #[error("Failed to get registration")]
-    GetRegistrationFailed,
-
-    /// Failed to get key.
-    #[error("Failed to get key: {0:?}")]
-    GetKeyFailed(GetKeyErrorCode),
-
-    /// Failed to store upgraded key.
-    #[error("Failed to store upgraded key")]
-    StoreUpgradedKeyFailed,
-
-    /// Timeout when waiting for a callback.
-    #[error("Timeout when waiting for a callback")]
-    Timeout,
-
-    /// Wraps a Binder status code.
-    #[error("Binder transaction error {0:?}")]
-    BinderTransaction(StatusCode),
-}
-
-impl From<StatusCode> for Error {
-    fn from(s: StatusCode) -> Self {
-        Self::BinderTransaction(s)
-    }
 }
 
 /// Thread-safe channel for sending a value once and only once. If a value has
@@ -120,17 +87,17 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
     fn onCancel(&self) -> binder::Result<()> {
         log::warn!("IGetRegistrationCallback cancelled");
         self.registration_tx.send(
-            Err(Error::RequestCancelled)
+            Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
                 .context(source_location_msg!("GetRegistrationCallback cancelled.")),
         );
         Ok(())
     }
     fn onError(&self, description: &str) -> binder::Result<()> {
         log::error!("IGetRegistrationCallback failed: '{description}'");
-        self.registration_tx.send(
-            Err(Error::GetRegistrationFailed)
-                .context(source_location_msg!("GetRegistrationCallback failed: {:?}", description)),
-        );
+        self.registration_tx
+            .send(Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)).context(
+                source_location_msg!("GetRegistrationCallback failed: {:?}", description),
+            ));
         Ok(())
     }
 }
@@ -138,8 +105,7 @@ impl IGetRegistrationCallback for GetRegistrationCallback {
 /// Make a new connection to a IRegistration service.
 async fn get_rkpd_registration(rpc_name: &str) -> Result<binder::Strong<dyn IRegistration>> {
     let remote_provisioning: Strong<dyn IRemoteProvisioning> =
-        binder::get_interface("remote_provisioning")
-            .map_err(Error::from)
+        map_binder_status_code(binder::get_interface("remote_provisioning"))
             .context(source_location_msg!("Trying to connect to IRemoteProvisioning service."))?;
 
     let (tx, rx) = oneshot::channel();
@@ -150,7 +116,8 @@ async fn get_rkpd_registration(rpc_name: &str) -> Result<binder::Strong<dyn IReg
         .context(source_location_msg!("Trying to get registration."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
-        Err(e) => Err(Error::Timeout).context(source_location_msg!("Waiting for RKPD: {:?}", e)),
+        Err(e) => Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
+            .context(source_location_msg!("Waiting for RKPD: {:?}", e)),
         Ok(v) => v.unwrap(),
     }
 }
@@ -181,13 +148,28 @@ impl IGetKeyCallback for GetKeyCallback {
     fn onCancel(&self) -> binder::Result<()> {
         log::warn!("IGetKeyCallback cancelled");
         self.key_tx.send(
-            Err(Error::RequestCancelled).context(source_location_msg!("GetKeyCallback cancelled.")),
+            Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
+                .context(source_location_msg!("GetKeyCallback cancelled.")),
         );
         Ok(())
     }
     fn onError(&self, error: GetKeyErrorCode, description: &str) -> binder::Result<()> {
         log::error!("IGetKeyCallback failed: {description}");
-        self.key_tx.send(Err(Error::GetKeyFailed(error)).context(source_location_msg!(
+        let rc = match error {
+            GetKeyErrorCode::ERROR_UNKNOWN => ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR,
+            GetKeyErrorCode::ERROR_PERMANENT => ResponseCode::OUT_OF_KEYS_PERMANENT_ERROR,
+            GetKeyErrorCode::ERROR_PENDING_INTERNET_CONNECTIVITY => {
+                ResponseCode::OUT_OF_KEYS_PENDING_INTERNET_CONNECTIVITY
+            }
+            GetKeyErrorCode::ERROR_REQUIRES_SECURITY_PATCH => {
+                ResponseCode::OUT_OF_KEYS_REQUIRES_SYSTEM_UPGRADE
+            }
+            _ => {
+                log::error!("Unexpected error from rkpd: {error:?}");
+                ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR
+            }
+        };
+        self.key_tx.send(Err(Error::Rc(rc)).context(source_location_msg!(
             "GetKeyCallback failed: {:?} {:?}",
             error,
             description
@@ -213,7 +195,7 @@ async fn get_rkpd_attestation_key_from_registration_async(
             if let Err(e) = registration.cancelGetKey(&cb) {
                 log::error!("IRegistration::cancelGetKey failed: {:?}", e);
             }
-            Err(Error::Timeout)
+            Err(Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR))
                 .context(source_location_msg!("Waiting for RKPD key timed out: {:?}", e))
         }
         Ok(v) => v.unwrap(),
@@ -252,9 +234,9 @@ impl IStoreUpgradedKeyCallback for StoreUpgradedKeyCallback {
     }
 
     fn onError(&self, error: &str) -> binder::Result<()> {
-        log::error!("IStoreUpgradedKeyCallback failed: {error}");
+        log::error!("IGetRegistrationCallback failed: {error}");
         self.completer.send(
-            Err(Error::StoreUpgradedKeyFailed)
+            Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
                 .context(source_location_msg!("Failed to store upgraded key: {:?}", error)),
         );
         Ok(())
@@ -274,7 +256,7 @@ async fn store_rkpd_attestation_key_with_registration_async(
         .context(source_location_msg!("Failed to store upgraded blob with RKPD."))?;
 
     match timeout(RKPD_TIMEOUT, rx).await {
-        Err(e) => Err(Error::Timeout)
+        Err(e) => Err(Error::Rc(ResponseCode::SYSTEM_ERROR))
             .context(source_location_msg!("Waiting for RKPD to complete storing key: {:?}", e)),
         Ok(v) => v.unwrap(),
     }
@@ -309,6 +291,7 @@ pub fn store_rkpd_attestation_key(
 mod tests {
     use super::*;
     use android_security_rkp_aidl::aidl::android::security::rkp::IRegistration::BnRegistration;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -432,7 +415,10 @@ mod tests {
         assert!(cb.onCancel().is_ok());
 
         let result = tokio_rt().block_on(rx).unwrap();
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::RequestCancelled);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
+        );
     }
 
     #[test]
@@ -442,7 +428,10 @@ mod tests {
         assert!(cb.onError("error").is_ok());
 
         let result = tokio_rt().block_on(rx).unwrap();
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::GetRegistrationFailed);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
+        );
     }
 
     #[test]
@@ -464,11 +453,29 @@ mod tests {
         assert!(cb.onCancel().is_ok());
 
         let result = tokio_rt().block_on(rx).unwrap();
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::RequestCancelled);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
+        );
     }
 
     #[test]
     fn test_get_key_cb_error() {
+        let error_mapping = HashMap::from([
+            (GetKeyErrorCode::ERROR_UNKNOWN, ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR),
+            (GetKeyErrorCode::ERROR_PERMANENT, ResponseCode::OUT_OF_KEYS_PERMANENT_ERROR),
+            (
+                GetKeyErrorCode::ERROR_PENDING_INTERNET_CONNECTIVITY,
+                ResponseCode::OUT_OF_KEYS_PENDING_INTERNET_CONNECTIVITY,
+            ),
+            (
+                GetKeyErrorCode::ERROR_REQUIRES_SECURITY_PATCH,
+                ResponseCode::OUT_OF_KEYS_REQUIRES_SYSTEM_UPGRADE,
+            ),
+        ]);
+
+        // Loop over the generated list of enum values to better ensure this test stays in
+        // sync with the AIDL.
         for get_key_error in GetKeyErrorCode::enum_values() {
             let (tx, rx) = oneshot::channel();
             let cb = GetKeyCallback::new_native_binder(tx);
@@ -477,7 +484,7 @@ mod tests {
             let result = tokio_rt().block_on(rx).unwrap();
             assert_eq!(
                 result.unwrap_err().downcast::<Error>().unwrap(),
-                Error::GetKeyFailed(get_key_error),
+                Error::Rc(error_mapping[&get_key_error]),
             );
         }
     }
@@ -498,7 +505,10 @@ mod tests {
         assert!(cb.onError("oh no! it failed").is_ok());
 
         let result = tokio_rt().block_on(rx).unwrap();
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::StoreUpgradedKeyFailed);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::SYSTEM_ERROR)
+        );
     }
 
     #[test]
@@ -522,7 +532,10 @@ mod tests {
 
         let result =
             tokio_rt().block_on(get_rkpd_attestation_key_from_registration_async(&registration, 0));
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::Timeout);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
+        );
     }
 
     #[test]
@@ -547,7 +560,10 @@ mod tests {
             &[],
             &[],
         ));
-        assert_eq!(result.unwrap_err().downcast::<Error>().unwrap(), Error::Timeout);
+        assert_eq!(
+            result.unwrap_err().downcast::<Error>().unwrap(),
+            Error::Rc(ResponseCode::SYSTEM_ERROR)
+        );
     }
 
     #[test]
