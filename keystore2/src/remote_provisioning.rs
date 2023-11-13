@@ -31,6 +31,7 @@ use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
 
 use crate::database::Uuid;
+use crate::error::wrapped_rkpd_error_to_ks_error;
 use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
@@ -102,7 +103,7 @@ impl RemProvState {
                 Err(e) => {
                     if self.is_rkp_only() {
                         log::error!("Error occurred: {:?}", e);
-                        return Err(e);
+                        return Err(wrapped_rkpd_error_to_ks_error(&e)).context(format!("{e:?}"));
                     }
                     log::warn!("Error occurred: {:?}", e);
                     log_rkp_error_stats(

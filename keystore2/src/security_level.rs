@@ -19,7 +19,9 @@ use crate::audit_log::{
     log_key_deleted, log_key_generated, log_key_imported, log_key_integrity_violation,
 };
 use crate::database::{BlobInfo, CertificateInfo, KeyIdGuard};
-use crate::error::{self, map_km_error, map_or_log_err, Error, ErrorCode};
+use crate::error::{
+    self, map_km_error, map_or_log_err, wrapped_rkpd_error_to_ks_error, Error, ErrorCode,
+};
 use crate::globals::{
     get_remotely_provisioned_component_name, DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY,
 };
@@ -900,8 +902,11 @@ impl KeystoreSecurityLevel {
             f,
             |upgraded_blob| {
                 let _wp = wd::watch_millis("Calling store_rkpd_attestation_key()", 500);
-                store_rkpd_attestation_key(&rpc_name, key_blob, upgraded_blob)
-                    .context(ks_err!("Failed store_rkpd_attestation_key()."))
+                if let Err(e) = store_rkpd_attestation_key(&rpc_name, key_blob, upgraded_blob) {
+                    Err(wrapped_rkpd_error_to_ks_error(&e)).context(format!("{e:?}"))
+                } else {
+                    Ok(())
+                }
             },
         )
         .context(ks_err!())
