@@ -9,9 +9,9 @@ flag {
 }
 
 flag {
-  name: "deprecate_legacy_keystore"
+  name: "disable_legacy_keystore_put"
   namespace: "hardware_backed_security"
-  description: "This flag rolls out legacy keystore deprecation and makes it so that the put command returns a deprecation error"
+  description: "This flag disables legacy keystore put and makes it so that command returns an error"
   bug: "307460850"
   is_fixed_read_only: true
 }
