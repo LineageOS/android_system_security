@@ -27,7 +27,6 @@
 //! Keystore functions should use `anyhow::Result` to return error conditions, and context should
 //! be added every time an error is forwarded.
 
-use crate::rkpd_client::Error as RkpdError;
 pub use android_hardware_security_keymint::aidl::android::hardware::security::keymint::ErrorCode::ErrorCode;
 use android_security_rkp_aidl::aidl::android::security::rkp::IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode;
 pub use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
@@ -35,6 +34,7 @@ use android_system_keystore2::binder::{
     ExceptionCode, Result as BinderResult, Status as BinderStatus, StatusCode,
 };
 use keystore2_selinux as selinux;
+use rkpd_client::Error as RkpdError;
 use std::cmp::PartialEq;
 use std::ffi::CString;
 
