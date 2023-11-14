@@ -17,6 +17,7 @@ pub mod keystore2_client_aes_key_tests;
 pub mod keystore2_client_attest_key_tests;
 pub mod keystore2_client_authorizations_tests;
 pub mod keystore2_client_delete_key_tests;
+pub mod keystore2_client_device_unique_attestation_tests;
 pub mod keystore2_client_ec_key_tests;
 pub mod keystore2_client_grant_key_tests;
 pub mod keystore2_client_hmac_key_tests;
