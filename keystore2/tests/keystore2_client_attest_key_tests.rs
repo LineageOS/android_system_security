@@ -488,12 +488,12 @@ fn keystore2_attest_symmetric_key_fail_sys_error() {
 
 fn get_attestation_ids(keystore2: &binder::Strong<dyn IKeystoreService>) -> Vec<(Tag, Vec<u8>)> {
     let attest_ids = vec![
-        (Tag::ATTESTATION_ID_BRAND, "ro.product.brand_for_attestation"),
-        (Tag::ATTESTATION_ID_DEVICE, "ro.product.device"),
-        (Tag::ATTESTATION_ID_PRODUCT, "ro.product.name_for_attestation"),
-        (Tag::ATTESTATION_ID_SERIAL, "ro.serialno"),
-        (Tag::ATTESTATION_ID_MANUFACTURER, "ro.product.manufacturer"),
-        (Tag::ATTESTATION_ID_MODEL, "ro.product.model_for_attestation"),
+        (Tag::ATTESTATION_ID_BRAND, "brand"),
+        (Tag::ATTESTATION_ID_DEVICE, "device"),
+        (Tag::ATTESTATION_ID_PRODUCT, "name"),
+        (Tag::ATTESTATION_ID_SERIAL, "serialno"),
+        (Tag::ATTESTATION_ID_MANUFACTURER, "manufacturer"),
+        (Tag::ATTESTATION_ID_MODEL, "model"),
         (Tag::ATTESTATION_ID_IMEI, ""), //Get this value from Telephony service.
         (Tag::ATTESTATION_ID_SECOND_IMEI, ""), //Get this value from Telephony service.
     ];

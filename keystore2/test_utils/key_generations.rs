@@ -40,7 +40,7 @@ use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
 
 use crate::ffi_test_utils::{
     get_os_patchlevel, get_os_version, get_value_from_attest_record, get_vendor_patchlevel,
-    validate_certchain,
+    validate_certchain_with_strict_issuer_check,
 };
 
 /// Shell namespace.
@@ -1426,7 +1426,10 @@ pub fn generate_key(
             let mut cert_chain: Vec<u8> = Vec::new();
             cert_chain.extend(key_metadata.certificate.as_ref().unwrap());
             cert_chain.extend(key_metadata.certificateChain.as_ref().unwrap());
-            validate_certchain(&cert_chain).expect("Error while validating cert chain");
+            let strict_issuer_check =
+                !(gen_params.iter().any(|kp| kp.tag == Tag::DEVICE_UNIQUE_ATTESTATION));
+            validate_certchain_with_strict_issuer_check(&cert_chain, strict_issuer_check)
+                .expect("Error while validating cert chain");
         }
 
         if let Some(challenge_param) =

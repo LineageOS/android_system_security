@@ -50,7 +50,19 @@ mod ffi {
 
 /// Validate given certificate chain.
 pub fn validate_certchain(cert_buf: &[u8]) -> Result<bool, Error> {
-    if ffi::validateCertChain(cert_buf.to_vec(), cert_buf.len().try_into().unwrap(), true) {
+    validate_certchain_with_strict_issuer_check(cert_buf, true)
+}
+
+/// Validate given certificate chain with an option to validate the issuer.
+pub fn validate_certchain_with_strict_issuer_check(
+    cert_buf: &[u8],
+    strict_issuer_check: bool,
+) -> Result<bool, Error> {
+    if ffi::validateCertChain(
+        cert_buf.to_vec(),
+        cert_buf.len().try_into().unwrap(),
+        strict_issuer_check,
+    ) {
         return Ok(true);
     }
 
