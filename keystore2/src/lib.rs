@@ -37,7 +37,6 @@ pub mod operation;
 pub mod permission;
 pub mod raw_device;
 pub mod remote_provisioning;
-pub mod rkpd_client;
 pub mod security_level;
 pub mod service;
 pub mod shared_secret_negotiation;
