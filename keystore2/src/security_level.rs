@@ -30,7 +30,6 @@ use crate::key_parameter::KeyParameterValue as KsKeyParamValue;
 use crate::ks_err;
 use crate::metrics_store::log_key_creation_event_stats;
 use crate::remote_provisioning::RemProvState;
-use crate::rkpd_client::store_rkpd_attestation_key;
 use crate::super_key::{KeyBlob, SuperKeyManager};
 use crate::utils::{
     check_device_attestation_permissions, check_key_permission,
@@ -64,6 +63,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     KeyMetadata::KeyMetadata, KeyParameters::KeyParameters, ResponseCode::ResponseCode,
 };
 use anyhow::{anyhow, Context, Result};
+use rkpd_client::store_rkpd_attestation_key;
 use std::convert::TryInto;
 use std::time::SystemTime;
 
@@ -1073,13 +1073,13 @@ mod tests {
     use super::*;
     use crate::error::map_km_error;
     use crate::globals::get_keymint_device;
-    use crate::rkpd_client::{get_rkpd_attestation_key, store_rkpd_attestation_key};
     use crate::utils::upgrade_keyblob_if_required_with;
     use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
         Algorithm::Algorithm, AttestationKey::AttestationKey, KeyParameter::KeyParameter,
         KeyParameterValue::KeyParameterValue, Tag::Tag,
     };
     use keystore2_crypto::parse_subject_from_certificate;
+    use rkpd_client::get_rkpd_attestation_key;
 
     #[test]
     // This is a helper for a manual test. We want to check that after a system upgrade RKPD

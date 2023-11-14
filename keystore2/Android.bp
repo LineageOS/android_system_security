@@ -58,6 +58,7 @@ rust_defaults {
         "liblog_rust",
         "libmessage_macro",
         "librand",
+        "librkpd_client",
         "librustutils",
         "libserde",
         "libserde_cbor",

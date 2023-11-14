@@ -35,9 +35,9 @@ use crate::error::wrapped_rkpd_error_to_ks_error;
 use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
-use crate::rkpd_client::get_rkpd_attestation_key;
 use crate::watchdog_helper::watchdog as wd;
 use android_security_metrics::aidl::android::security::metrics::RkpError::RkpError as MetricsRkpError;
+use rkpd_client::get_rkpd_attestation_key;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
 /// to assign and retrieve attestation keys and certificate chains.
