@@ -248,11 +248,12 @@ struct BiometricUnlock {
 
 #[derive(Default)]
 struct UserSuperKeys {
-    /// The AfterFirstUnlock super key is used for LSKF binding of authentication bound keys. There
-    /// is one key per android user. The key is stored on flash encrypted with a key derived from a
-    /// secret, that is itself derived from the user's lock screen knowledge factor (LSKF). When the
-    /// user unlocks the device for the first time, this key is unlocked, i.e., decrypted, and stays
-    /// memory resident until the device reboots.
+    /// The AfterFirstUnlock super key is used for synthetic password binding of authentication
+    /// bound keys. There is one key per android user. The key is stored on flash encrypted with a
+    /// key derived from a secret, that is itself derived from the user's synthetic password. (In
+    /// most cases, the user's synthetic password can, in turn, only be decrypted using the user's
+    /// Lock Screen Knowledge Factor or LSKF.) When the user unlocks the device for the first time,
+    /// this key is unlocked, i.e., decrypted, and stays memory resident until the device reboots.
     after_first_unlock: Option<Arc<SuperKey>>,
     /// The UnlockedDeviceRequired symmetric super key works like the AfterFirstUnlock super key
     /// with the distinction that it is cleared from memory when the device is locked.
@@ -474,7 +475,7 @@ impl SuperKeyManager {
         }
     }
 
-    /// Checks if user has setup LSKF, even when super key cache is empty for the user.
+    /// Checks if the user's AfterFirstUnlock super key exists in the database (or legacy database).
     /// The reference to self is unused but it is required to prevent calling this function
     /// concurrently with skm state database changes.
     fn super_key_exists_in_db_for_user(
@@ -662,7 +663,8 @@ impl SuperKeyManager {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
             SuperEncryptionType::AfterFirstUnlock => {
                 // Encrypt the given key blob with the user's AfterFirstUnlock super key. If the
-                // user has not unlocked the device since boot or has no LSKF, an error is returned.
+                // user has not unlocked the device since boot or the super keys were never
+                // initialized for the user for some reason, an error is returned.
                 match self
                     .get_user_state(db, legacy_importer, user_id)
                     .context(ks_err!("Failed to get user state for user {user_id}"))?
@@ -676,7 +678,7 @@ impl SuperKeyManager {
                         Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
                     }
                     UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
-                        .context(ks_err!("LSKF is not setup for user {user_id}")),
+                        .context(ks_err!("User {user_id} does not have super keys")),
                 }
             }
             SuperEncryptionType::UnlockedDeviceRequired => {
@@ -1131,6 +1133,37 @@ impl SuperKeyManager {
         }
     }
 
+    /// Initializes the given user by creating their super keys, both AfterFirstUnlock and
+    /// UnlockedDeviceRequired. If allow_existing is true, then the user already being initialized
+    /// is not considered an error.
+    pub fn initialize_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+        password: &Password,
+        allow_existing: bool,
+    ) -> Result<()> {
+        // Create the AfterFirstUnlock super key.
+        if self.super_key_exists_in_db_for_user(db, legacy_importer, user_id)? {
+            log::info!("AfterFirstUnlock super key already exists");
+            if !allow_existing {
+                return Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"));
+            }
+        } else {
+            let super_key = self
+                .create_super_key(db, user_id, &USER_AFTER_FIRST_UNLOCK_SUPER_KEY, password, None)
+                .context(ks_err!("Failed to create AfterFirstUnlock super key"))?;
+
+            self.install_after_first_unlock_key_for_user(user_id, super_key)
+                .context(ks_err!("Failed to install AfterFirstUnlock super key for user"))?;
+        }
+
+        // Create the UnlockedDeviceRequired super keys.
+        self.unlock_unlocked_device_required_keys(db, user_id, password)
+            .context(ks_err!("Failed to create UnlockedDeviceRequired super keys"))
+    }
+
     /// Unlocks the given user with the given password.
     ///
     /// If the user state is BeforeFirstUnlock:
@@ -1186,15 +1219,15 @@ impl SuperKeyManager {
 /// This enum represents different states of the user's life cycle in the device.
 /// For now, only three states are defined. More states may be added later.
 pub enum UserState {
-    // The user has registered LSKF and has unlocked the device by entering PIN/Password,
-    // and hence the AfterFirstUnlock super key is available in the cache.
+    // The user's super keys exist, and the user has unlocked the device at least once since boot.
+    // Hence, the AfterFirstUnlock super key is available in the cache.
     AfterFirstUnlock(Arc<SuperKey>),
-    // The user has registered LSKF, but has not unlocked the device using password, after reboot.
-    // Hence the AfterFirstUnlock and UnlockedDeviceRequired super keys are not available in the
-    // cache. However, they exist in the database in encrypted form.
+    // The user's super keys exist, but the user hasn't unlocked the device at least once since
+    // boot. Hence, the AfterFirstUnlock and UnlockedDeviceRequired super keys are not available in
+    // the cache. However, they exist in the database in encrypted form.
     BeforeFirstUnlock,
-    // There's no user in the device for the given user id, or the user with the user id has not
-    // setup LSKF.
+    // The user's super keys don't exist. I.e., there's no user with the given user ID, or the user
+    // is in the process of being created or destroyed.
     Uninitialized,
 }
 
