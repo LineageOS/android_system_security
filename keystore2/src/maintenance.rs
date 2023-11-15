@@ -120,6 +120,41 @@ impl Maintenance {
             .context(ks_err!("While invoking the delete listener."))
     }
 
+    fn init_user_super_keys(
+        &self,
+        user_id: i32,
+        password: Password,
+        allow_existing: bool,
+    ) -> Result<()> {
+        // Permission check. Must return on error. Do not touch the '?'.
+        check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
+
+        let mut skm = SUPER_KEY.write().unwrap();
+        DB.with(|db| {
+            skm.initialize_user(
+                &mut db.borrow_mut(),
+                &LEGACY_IMPORTER,
+                user_id as u32,
+                &password,
+                allow_existing,
+            )
+        })
+        .context(ks_err!("Failed to initialize user super keys"))
+    }
+
+    // Deletes all auth-bound keys when the user's LSKF is removed.
+    fn on_user_lskf_removed(user_id: i32) -> Result<()> {
+        // Permission check. Must return on error. Do not touch the '?'.
+        check_keystore_permission(KeystorePerm::ChangePassword).context(ks_err!())?;
+
+        LEGACY_IMPORTER
+            .bulk_delete_user(user_id as u32, true)
+            .context(ks_err!("Failed to delete legacy keys."))?;
+
+        DB.with(|db| db.borrow_mut().unbind_auth_bound_keys_for_user(user_id as u32))
+            .context(ks_err!("Failed to delete auth-bound keys."))
+    }
+
     fn clear_namespace(&self, domain: Domain, nspace: i64) -> Result<()> {
         // Permission check. Must return on error. Do not touch the '?'.
         check_keystore_permission(KeystorePerm::ClearUID).context("In clear_namespace.")?;
@@ -272,10 +307,27 @@ impl IKeystoreMaintenance for Maintenance {
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
+    fn initUserSuperKeys(
+        &self,
+        user_id: i32,
+        password: &[u8],
+        allow_existing: bool,
+    ) -> BinderResult<()> {
+        log::info!("initUserSuperKeys(user={user_id}, allow_existing={allow_existing})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::initUserSuperKeys", 500);
+        map_or_log_err(self.init_user_super_keys(user_id, password.into(), allow_existing), Ok)
+    }
+
     fn onUserRemoved(&self, user_id: i32) -> BinderResult<()> {
         log::info!("onUserRemoved(user={user_id})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserRemoved", 500);
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
+    }
+
+    fn onUserLskfRemoved(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserLskfRemoved(user={user_id})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserLskfRemoved", 500);
+        map_or_log_err(Self::on_user_lskf_removed(user_id), Ok)
     }
 
     fn clearNamespace(&self, domain: Domain, nspace: i64) -> BinderResult<()> {
