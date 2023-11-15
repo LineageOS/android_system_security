@@ -31,12 +31,13 @@ use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
 
 use crate::database::Uuid;
+use crate::error::wrapped_rkpd_error_to_ks_error;
 use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
-use crate::rkpd_client::get_rkpd_attestation_key;
 use crate::watchdog_helper::watchdog as wd;
 use android_security_metrics::aidl::android::security::metrics::RkpError::RkpError as MetricsRkpError;
+use rkpd_client::get_rkpd_attestation_key;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
 /// to assign and retrieve attestation keys and certificate chains.
@@ -102,7 +103,7 @@ impl RemProvState {
                 Err(e) => {
                     if self.is_rkp_only() {
                         log::error!("Error occurred: {:?}", e);
-                        return Err(e);
+                        return Err(wrapped_rkpd_error_to_ks_error(&e)).context(format!("{e:?}"));
                     }
                     log::warn!("Error occurred: {:?}", e);
                     log_rkp_error_stats(

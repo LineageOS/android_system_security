@@ -28,11 +28,13 @@
 //! be added every time an error is forwarded.
 
 pub use android_hardware_security_keymint::aidl::android::hardware::security::keymint::ErrorCode::ErrorCode;
+use android_security_rkp_aidl::aidl::android::security::rkp::IGetKeyCallback::ErrorCode::ErrorCode as GetKeyErrorCode;
 pub use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
 use android_system_keystore2::binder::{
     ExceptionCode, Result as BinderResult, Status as BinderStatus, StatusCode,
 };
 use keystore2_selinux as selinux;
+use rkpd_client::Error as RkpdError;
 use std::cmp::PartialEq;
 use std::ffi::CString;
 
@@ -63,6 +65,49 @@ impl Error {
     /// Short hand for `Error::Rc(ResponseCode::PERMISSION_DENIED)`
     pub fn perm() -> Self {
         Error::Rc(ResponseCode::PERMISSION_DENIED)
+    }
+}
+
+impl From<RkpdError> for Error {
+    fn from(e: RkpdError) -> Self {
+        match e {
+            RkpdError::RequestCancelled | RkpdError::GetRegistrationFailed => {
+                Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR)
+            }
+            RkpdError::GetKeyFailed(e) => {
+                let response_code = match e {
+                    GetKeyErrorCode::ERROR_UNKNOWN => ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR,
+                    GetKeyErrorCode::ERROR_PERMANENT => ResponseCode::OUT_OF_KEYS_PERMANENT_ERROR,
+                    GetKeyErrorCode::ERROR_PENDING_INTERNET_CONNECTIVITY => {
+                        ResponseCode::OUT_OF_KEYS_PENDING_INTERNET_CONNECTIVITY
+                    }
+                    GetKeyErrorCode::ERROR_REQUIRES_SECURITY_PATCH => {
+                        ResponseCode::OUT_OF_KEYS_REQUIRES_SYSTEM_UPGRADE
+                    }
+                    _ => {
+                        log::error!("Unexpected get key error from rkpd: {e:?}");
+                        ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR
+                    }
+                };
+                Error::Rc(response_code)
+            }
+            RkpdError::RetryableTimeout => Error::Rc(ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR),
+            RkpdError::StoreUpgradedKeyFailed | RkpdError::Timeout => {
+                Error::Rc(ResponseCode::SYSTEM_ERROR)
+            }
+            RkpdError::BinderTransaction(s) => Error::BinderTransaction(s),
+        }
+    }
+}
+
+/// Maps an `rkpd_client::Error` that is wrapped with an `anyhow::Error` to a keystore2 `Error`.
+pub fn wrapped_rkpd_error_to_ks_error(e: &anyhow::Error) -> Error {
+    match e.downcast_ref::<RkpdError>() {
+        Some(e) => Error::from(*e),
+        None => {
+            log::error!("Failed to downcast the anyhow::Error to rkpd_client::Error: {e:?}");
+            Error::Rc(ResponseCode::SYSTEM_ERROR)
+        }
     }
 }
 
@@ -408,5 +453,36 @@ pub mod tests {
             error_str,
             expected_error_string
         );
+    }
+
+    #[test]
+    fn rkpd_error_is_in_sync_with_response_code() {
+        let error_mapping = [
+            (RkpdError::RequestCancelled, ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR),
+            (RkpdError::GetRegistrationFailed, ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR),
+            (
+                RkpdError::GetKeyFailed(GetKeyErrorCode::ERROR_UNKNOWN),
+                ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR,
+            ),
+            (
+                RkpdError::GetKeyFailed(GetKeyErrorCode::ERROR_PERMANENT),
+                ResponseCode::OUT_OF_KEYS_PERMANENT_ERROR,
+            ),
+            (
+                RkpdError::GetKeyFailed(GetKeyErrorCode::ERROR_PENDING_INTERNET_CONNECTIVITY),
+                ResponseCode::OUT_OF_KEYS_PENDING_INTERNET_CONNECTIVITY,
+            ),
+            (
+                RkpdError::GetKeyFailed(GetKeyErrorCode::ERROR_REQUIRES_SECURITY_PATCH),
+                ResponseCode::OUT_OF_KEYS_REQUIRES_SYSTEM_UPGRADE,
+            ),
+            (RkpdError::StoreUpgradedKeyFailed, ResponseCode::SYSTEM_ERROR),
+            (RkpdError::RetryableTimeout, ResponseCode::OUT_OF_KEYS_TRANSIENT_ERROR),
+            (RkpdError::Timeout, ResponseCode::SYSTEM_ERROR),
+        ];
+        for (rkpd_error, expected_response_code) in error_mapping {
+            let e: Error = rkpd_error.into();
+            assert_eq!(e, Error::Rc(expected_response_code));
+        }
     }
 } // mod tests
