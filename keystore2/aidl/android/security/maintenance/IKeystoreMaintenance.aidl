@@ -39,6 +39,20 @@ interface IKeystoreMaintenance {
     void onUserAdded(in int userId);
 
     /**
+     * Allows LockSettingsService to tell Keystore to create a user's superencryption keys and store
+     * them encrypted by the given secret.  Requires 'ChangeUser' permission.
+     *
+     * ## Error conditions:
+     * `ResponseCode::PERMISSION_DENIED` - if caller does not have the 'ChangeUser' permission
+     * `ResponseCode::SYSTEM_ERROR` - if failed to initialize the user's super keys
+     *
+     * @param userId - Android user id
+     * @param password - a secret derived from the synthetic password of the user
+     * @param allowExisting - if true, then the keys already existing is not considered an error
+     */
+    void initUserSuperKeys(in int userId, in byte[] password, in boolean allowExisting);
+
+    /**
      * Allows LockSettingsService to inform keystore about removing a user.
      * Callers require 'ChangeUser' permission.
      *
@@ -49,6 +63,18 @@ interface IKeystoreMaintenance {
      * @param userId - Android user id
      */
     void onUserRemoved(in int userId);
+
+    /**
+     * Allows LockSettingsService to tell Keystore that a user's LSKF is being removed, ie the
+     * user's lock screen is changing to Swipe or None.  Requires 'ChangePassword' permission.
+     *
+     * ## Error conditions:
+     * `ResponseCode::PERMISSION_DENIED` - if caller does not have the 'ChangePassword' permission
+     * `ResponseCode::SYSTEM_ERROR` - if failed to delete the user's auth-bound keys
+     *
+     * @param userId - Android user id
+     */
+    void onUserLskfRemoved(in int userId);
 
     /**
      * Allows LockSettingsService to inform keystore about password change of a user.
