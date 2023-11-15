@@ -344,6 +344,22 @@ impl AuthSetBuilder {
         });
         self
     }
+
+    /// Add certificate serial number.
+    pub fn cert_serial(mut self, b: Vec<u8>) -> Self {
+        self.0
+            .push(KeyParameter { tag: Tag::CERTIFICATE_SERIAL, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add certificate subject name.
+    pub fn cert_subject_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CERTIFICATE_SUBJECT,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {

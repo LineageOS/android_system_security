@@ -14,6 +14,9 @@
 
 use std::time::SystemTime;
 
+use openssl::bn::{BigNum, MsbOption};
+use openssl::x509::X509NameBuilder;
+
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
@@ -39,7 +42,8 @@ use keystore2_test_utils::{
 
 use crate::keystore2_client_test_utils::{
     delete_app_key, perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
-    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
+    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op,
+    verify_certificate_serial_num, verify_certificate_subject_name, SAMPLE_PLAIN_TEXT,
 };
 
 use keystore2_test_utils::ffi_test_utils::get_value_from_attest_record;
@@ -963,4 +967,40 @@ fn keystore2_flagged_on_get_last_auth_fingerprint_success() {
     assert!(
         keystore_auth.getLastAuthTime(0, &[HardwareAuthenticatorType::FINGERPRINT]).unwrap() > 0
     );
+}
+
+/// Generate a key with specifying `CERTIFICATE_SUBJECT and CERTIFICATE_SERIAL`. Test should
+/// generate a key successfully and verify the specified key parameters.
+#[test]
+fn keystore2_gen_key_auth_serial_number_subject_test_success() {
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let cert_subject = "test cert subject";
+    let mut x509_name = X509NameBuilder::new().unwrap();
+    x509_name.append_entry_by_text("CN", cert_subject).unwrap();
+    let x509_name = x509_name.build().to_der().unwrap();
+
+    let mut serial = BigNum::new().unwrap();
+    serial.rand(159, MsbOption::MAYBE_ZERO, false).unwrap();
+
+    let gen_params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"foo".to_vec())
+        .cert_subject_name(x509_name)
+        .cert_serial(serial.to_vec());
+
+    let alias = "ks_test_auth_tags_test";
+    let key_metadata = key_generations::generate_key(&sec_level, &gen_params, alias).unwrap();
+    verify_certificate_subject_name(
+        key_metadata.certificate.as_ref().unwrap(),
+        cert_subject.as_bytes(),
+    );
+    verify_certificate_serial_num(key_metadata.certificate.as_ref().unwrap(), &serial);
+    delete_app_key(&keystore2, alias).unwrap();
 }
