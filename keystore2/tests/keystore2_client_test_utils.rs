@@ -17,9 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use std::process::{Command, Output};
 
+use openssl::bn::BigNum;
 use openssl::encrypt::Encrypter;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
+use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use openssl::pkey::Public;
 use openssl::rsa::Padding;
@@ -533,4 +535,17 @@ pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
             }
         }
     }
+}
+
+pub fn verify_certificate_subject_name(cert_bytes: &[u8], expected_subject: &[u8]) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let subject = cert.subject_name();
+    let cn = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
+    assert_eq!(cn.data().as_slice(), expected_subject);
+}
+
+pub fn verify_certificate_serial_num(cert_bytes: &[u8], expected_serial_num: &BigNum) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let serial_num = cert.serial_number();
+    assert_eq!(serial_num.to_bn().as_ref().unwrap(), expected_serial_num);
 }
