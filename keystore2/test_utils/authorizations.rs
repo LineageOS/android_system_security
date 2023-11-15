@@ -335,6 +335,15 @@ impl AuthSetBuilder {
         self.0.push(KeyParameter { tag: Tag::APPLICATION_ID, value: KeyParameterValue::Blob(b) });
         self
     }
+
+    /// Set device-unique-attestation.
+    pub fn device_unique_attestation(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::DEVICE_UNIQUE_ATTESTATION,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {
