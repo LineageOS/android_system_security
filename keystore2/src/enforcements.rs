@@ -603,6 +603,44 @@ impl Enforcements {
             }
         }
 
+        if android_security_flags::fix_unlocked_device_required_keys() {
+            let (hat, state) = if user_secure_ids.is_empty() {
+                (None, DeferredAuthState::NoAuthRequired)
+            } else if let Some(key_time_out) = key_time_out {
+                let (hat, last_off_body) =
+                    Self::find_auth_token(|hat: &AuthTokenEntry| match user_auth_type {
+                        Some(auth_type) => hat.satisfies(&user_secure_ids, auth_type),
+                        None => false, // not reachable due to earlier check
+                    })
+                    .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                    .context(ks_err!("No suitable auth token found."))?;
+                let now = MonotonicRawTime::now();
+                let token_age = now
+                    .checked_sub(&hat.time_received())
+                    .ok_or_else(Error::sys)
+                    .context(ks_err!(
+                        "Overflow while computing Auth token validity. \
+                    Validity cannot be established."
+                    ))?;
+
+                let on_body_extended = allow_while_on_body && last_off_body < hat.time_received();
+
+                if token_age.seconds() > key_time_out && !on_body_extended {
+                    return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                        .context(ks_err!("matching auth token is expired."));
+                }
+                let state = if requires_timestamp {
+                    DeferredAuthState::TimeStampRequired(hat.auth_token().clone())
+                } else {
+                    DeferredAuthState::NoAuthRequired
+                };
+                (Some(hat.take_auth_token()), state)
+            } else {
+                (None, DeferredAuthState::OpAuthRequired)
+            };
+            return Ok((hat, AuthInfo { state, key_usage_limited, confirmation_token_receiver }));
+        }
+
         if !unlocked_device_required && no_auth_required {
             return Ok((
                 None,
