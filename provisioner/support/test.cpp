@@ -34,6 +34,10 @@ class RkpdClientTest : public testing::TestWithParam<std::string> {
   public:
     virtual void SetUp() override {
         auto rpcName = String16(GetParam().c_str());
+        String16 avfName = String16(IRemotelyProvisionedComponent::descriptor) + String16("/avf");
+        if (avfName == rpcName) {
+            GTEST_SKIP() << "Skipping test for avf";
+        }
         rpc_ = android::waitForService<IRemotelyProvisionedComponent>(rpcName);
         ASSERT_NE(rpc_, nullptr);
     }
