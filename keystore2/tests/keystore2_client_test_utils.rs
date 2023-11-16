@@ -17,9 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use std::process::{Command, Output};
 
+use openssl::bn::BigNum;
 use openssl::encrypt::Encrypter;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
+use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use openssl::pkey::Public;
 use openssl::rsa::Padding;
@@ -517,30 +519,33 @@ pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
     match attest_id {
         Tag::ATTESTATION_ID_IMEI => get_imei(0),
         Tag::ATTESTATION_ID_SECOND_IMEI => get_imei(1),
-        Tag::ATTESTATION_ID_BRAND => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.brand"))
-            } else {
+        Tag::ATTESTATION_ID_SERIAL => Some(get_system_prop(format!("ro.{}", prop_name).as_str())),
+        _ => {
+            let prop_val =
+                get_system_prop(format!("ro.product.{}_for_attestation", prop_name).as_str());
+            if !prop_val.is_empty() {
                 Some(prop_val)
+            } else {
+                let prop_val = get_system_prop(format!("ro.product.vendor.{}", prop_name).as_str());
+                if !prop_val.is_empty() {
+                    Some(prop_val)
+                } else {
+                    Some(get_system_prop(format!("ro.product.{}", prop_name).as_str()))
+                }
             }
         }
-        Tag::ATTESTATION_ID_PRODUCT => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.name"))
-            } else {
-                Some(prop_val)
-            }
-        }
-        Tag::ATTESTATION_ID_MODEL => {
-            let prop_val = get_system_prop(prop_name);
-            if prop_val.is_empty() {
-                Some(get_system_prop("ro.product.model"))
-            } else {
-                Some(prop_val)
-            }
-        }
-        _ => Some(get_system_prop(prop_name)),
     }
+}
+
+pub fn verify_certificate_subject_name(cert_bytes: &[u8], expected_subject: &[u8]) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let subject = cert.subject_name();
+    let cn = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
+    assert_eq!(cn.data().as_slice(), expected_subject);
+}
+
+pub fn verify_certificate_serial_num(cert_bytes: &[u8], expected_serial_num: &BigNum) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let serial_num = cert.serial_number();
+    assert_eq!(serial_num.to_bn().as_ref().unwrap(), expected_serial_num);
 }

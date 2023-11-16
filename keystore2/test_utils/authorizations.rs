@@ -335,6 +335,31 @@ impl AuthSetBuilder {
         self.0.push(KeyParameter { tag: Tag::APPLICATION_ID, value: KeyParameterValue::Blob(b) });
         self
     }
+
+    /// Set device-unique-attestation.
+    pub fn device_unique_attestation(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::DEVICE_UNIQUE_ATTESTATION,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Add certificate serial number.
+    pub fn cert_serial(mut self, b: Vec<u8>) -> Self {
+        self.0
+            .push(KeyParameter { tag: Tag::CERTIFICATE_SERIAL, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add certificate subject name.
+    pub fn cert_subject_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CERTIFICATE_SUBJECT,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {

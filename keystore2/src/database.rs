@@ -47,7 +47,7 @@ mod versioning;
 
 use crate::gc::Gc;
 use crate::impl_metadata; // This is in db_utils.rs
-use crate::key_parameter::{KeyParameter, Tag};
+use crate::key_parameter::{KeyParameter, KeyParameterValue, Tag};
 use crate::ks_err;
 use crate::permission::KeyPermSet;
 use crate::utils::{get_current_time_in_milliseconds, watchdog as wd, AID_USER_OFFSET};
@@ -2544,6 +2544,70 @@ impl KeystoreDB {
         .context(ks_err!())
     }
 
+    /// Deletes all auth-bound keys, i.e. keys that require user authentication, for the given user.
+    /// This runs when the user's lock screen is being changed to Swipe or None.
+    ///
+    /// This intentionally does *not* delete keys that require that the device be unlocked, unless
+    /// such keys also require user authentication.  Keystore's concept of user authentication is
+    /// fairly strong, and it requires that keys that require authentication be deleted as soon as
+    /// authentication is no longer possible.  In contrast, keys that just require that the device
+    /// be unlocked should remain usable when the lock screen is set to Swipe or None, as the device
+    /// is always considered "unlocked" in that case.
+    pub fn unbind_auth_bound_keys_for_user(&mut self, user_id: u32) -> Result<()> {
+        let _wp = wd::watch_millis("KeystoreDB::unbind_auth_bound_keys_for_user", 500);
+
+        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+            let mut stmt = tx
+                .prepare(&format!(
+                    "SELECT id from persistent.keyentry
+                     WHERE key_type = ?
+                     AND domain = ?
+                     AND cast ( (namespace/{aid_user_offset}) as int) = ?
+                     AND state = ?;",
+                    aid_user_offset = AID_USER_OFFSET
+                ))
+                .context(concat!(
+                    "In unbind_auth_bound_keys_for_user. ",
+                    "Failed to prepare the query to find the keys created by apps."
+                ))?;
+
+            let mut rows = stmt
+                .query(params![KeyType::Client, Domain::APP.0 as u32, user_id, KeyLifeCycle::Live,])
+                .context(ks_err!("Failed to query the keys created by apps."))?;
+
+            let mut key_ids: Vec<i64> = Vec::new();
+            db_utils::with_rows_extract_all(&mut rows, |row| {
+                key_ids
+                    .push(row.get(0).context("Failed to read key id of a key created by an app.")?);
+                Ok(())
+            })
+            .context(ks_err!())?;
+
+            let mut notify_gc = false;
+            let mut num_unbound = 0;
+            for key_id in key_ids {
+                // Load the key parameters and filter out non-auth-bound keys.  To identify
+                // auth-bound keys, use the presence of UserSecureID.  The absence of NoAuthRequired
+                // could also be used, but UserSecureID is what Keystore treats as authoritative
+                // when actually enforcing the key parameters (it might not matter, though).
+                let params = Self::load_key_parameters(key_id, tx)
+                    .context("Failed to load key parameters.")?;
+                let is_auth_bound_key = params.iter().any(|kp| {
+                    matches!(kp.key_parameter_value(), KeyParameterValue::UserSecureID(_))
+                });
+                if is_auth_bound_key {
+                    notify_gc = Self::mark_unreferenced(tx, key_id)
+                        .context("In unbind_auth_bound_keys_for_user.")?
+                        || notify_gc;
+                    num_unbound += 1;
+                }
+            }
+            log::info!("Deleting {num_unbound} auth-bound keys for user {user_id}");
+            Ok(()).do_gc(notify_gc)
+        })
+        .context(ks_err!())
+    }
+
     fn load_key_components(
         tx: &Transaction,
         load_bits: KeyEntryLoadBits,
@@ -4752,6 +4816,53 @@ pub mod tests {
         Ok(key_id)
     }
 
+    // Creates an app key that is marked as being superencrypted by the given
+    // super key ID and that has the given authentication and unlocked device
+    // parameters. This does not actually superencrypt the key blob.
+    fn make_superencrypted_key_entry(
+        db: &mut KeystoreDB,
+        namespace: i64,
+        alias: &str,
+        requires_authentication: bool,
+        requires_unlocked_device: bool,
+        super_key_id: i64,
+    ) -> Result<KeyIdGuard> {
+        let domain = Domain::APP;
+        let key_id = db.create_key_entry(&domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
+
+        let mut blob_metadata = BlobMetaData::new();
+        blob_metadata.add(BlobMetaEntry::KmUuid(KEYSTORE_UUID));
+        blob_metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::KeyId(super_key_id)));
+        db.set_blob(
+            &key_id,
+            SubComponentType::KEY_BLOB,
+            Some(TEST_KEY_BLOB),
+            Some(&blob_metadata),
+        )?;
+
+        let mut params = vec![];
+        if requires_unlocked_device {
+            params.push(KeyParameter::new(
+                KeyParameterValue::UnlockedDeviceRequired,
+                SecurityLevel::TRUSTED_ENVIRONMENT,
+            ));
+        }
+        if requires_authentication {
+            params.push(KeyParameter::new(
+                KeyParameterValue::UserSecureID(42),
+                SecurityLevel::TRUSTED_ENVIRONMENT,
+            ));
+        }
+        db.insert_keyparameter(&key_id, &params)?;
+
+        let mut metadata = KeyMetaData::new();
+        metadata.add(KeyMetaEntry::CreationDate(DateTime::from_millis_epoch(123456789)));
+        db.insert_key_metadata(&key_id, &metadata)?;
+
+        rebind_alias(db, &key_id, alias, domain, namespace)?;
+        Ok(key_id)
+    }
+
     fn make_bootlevel_test_key_entry_test_vector(key_id: i64, logical_only: bool) -> KeyEntry {
         let mut params = make_test_params(None);
         params.push(KeyParameter::new(KeyParameterValue::MaxBootLevel(3), SecurityLevel::KEYSTORE));
@@ -4951,6 +5062,71 @@ pub mod tests {
         // Check that the second pair of keys was untouched.
         assert!(db.load_super_key(&key_name_enc, 2)?.is_some());
         assert!(db.load_super_key(&key_name_nonenc, 2)?.is_some());
+
+        Ok(())
+    }
+
+    fn app_key_exists(db: &mut KeystoreDB, nspace: i64, alias: &str) -> Result<bool> {
+        db.key_exists(Domain::APP, nspace, alias, KeyType::Client)
+    }
+
+    // Tests the unbind_auth_bound_keys_for_user() function.
+    #[test]
+    fn test_unbind_auth_bound_keys_for_user() -> Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = 1;
+        let nspace: i64 = (user_id * AID_USER_OFFSET).into();
+        let other_user_id = 2;
+        let other_user_nspace: i64 = (other_user_id * AID_USER_OFFSET).into();
+        let super_key_type = &USER_AFTER_FIRST_UNLOCK_SUPER_KEY;
+
+        // Create a superencryption key.
+        let super_key = keystore2_crypto::generate_aes256_key()?;
+        let pw: keystore2_crypto::Password = (&b"xyzabc"[..]).into();
+        let (encrypted_super_key, blob_metadata) =
+            SuperKeyManager::encrypt_with_password(&super_key, &pw)?;
+        db.store_super_key(
+            user_id,
+            super_key_type,
+            &encrypted_super_key,
+            &blob_metadata,
+            &KeyMetaData::new(),
+        )?;
+        let super_key_id = db.load_super_key(super_key_type, user_id)?.unwrap().0 .0;
+
+        // Store 4 superencrypted app keys, one for each possible combination of
+        // (authentication required, unlocked device required).
+        make_superencrypted_key_entry(&mut db, nspace, "noauth_noud", false, false, super_key_id)?;
+        make_superencrypted_key_entry(&mut db, nspace, "noauth_ud", false, true, super_key_id)?;
+        make_superencrypted_key_entry(&mut db, nspace, "auth_noud", true, false, super_key_id)?;
+        make_superencrypted_key_entry(&mut db, nspace, "auth_ud", true, true, super_key_id)?;
+        assert!(app_key_exists(&mut db, nspace, "noauth_noud")?);
+        assert!(app_key_exists(&mut db, nspace, "noauth_ud")?);
+        assert!(app_key_exists(&mut db, nspace, "auth_noud")?);
+        assert!(app_key_exists(&mut db, nspace, "auth_ud")?);
+
+        // Also store a key for a different user that requires authentication.
+        make_superencrypted_key_entry(
+            &mut db,
+            other_user_nspace,
+            "auth_ud",
+            true,
+            true,
+            super_key_id,
+        )?;
+
+        db.unbind_auth_bound_keys_for_user(user_id)?;
+
+        // Verify that only the user's app keys that require authentication were
+        // deleted. Keys that require an unlocked device but not authentication
+        // should *not* have been deleted, nor should the super key have been
+        // deleted, nor should other users' keys have been deleted.
+        assert!(db.load_super_key(super_key_type, user_id)?.is_some());
+        assert!(app_key_exists(&mut db, nspace, "noauth_noud")?);
+        assert!(app_key_exists(&mut db, nspace, "noauth_ud")?);
+        assert!(!app_key_exists(&mut db, nspace, "auth_noud")?);
+        assert!(!app_key_exists(&mut db, nspace, "auth_ud")?);
+        assert!(app_key_exists(&mut db, other_user_nspace, "auth_ud")?);
 
         Ok(())
     }
