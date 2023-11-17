@@ -39,6 +39,10 @@ rust_defaults {
 rust_library {
     name: "librkpd_client",
     defaults: ["librkpd_client_defaults"],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
 }
 
 rust_test {
