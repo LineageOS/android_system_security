@@ -28,8 +28,8 @@ use crate::{
     raw_device::KeyMintDevice,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    IKeyMintDevice::IKeyMintDevice, KeyCharacteristics::KeyCharacteristics,
-    KeyParameter::KeyParameter as KmKeyParameter, Tag::Tag,
+    Algorithm::Algorithm, IKeyMintDevice::IKeyMintDevice, KeyCharacteristics::KeyCharacteristics,
+    KeyParameter::KeyParameter as KmKeyParameter, KeyParameterValue::KeyParameterValue, Tag::Tag,
 };
 use android_os_permissions_aidl::aidl::android::os::IPermissionController;
 use android_security_apc::aidl::android::security::apc::{
@@ -48,6 +48,10 @@ use keystore2_apc_compat::{
 };
 use keystore2_crypto::{aes_gcm_decrypt, aes_gcm_encrypt, ZVec};
 use std::iter::IntoIterator;
+
+/// Per RFC 5280 4.1.2.5, an undefined expiration (not-after) field should be set to GeneralizedTime
+/// 999912312359559, which is 253402300799000 ms from Jan 1, 1970.
+pub const UNDEFINED_NOT_AFTER: i64 = 253402300799000i64;
 
 /// This function uses its namesake in the permission module and in
 /// combination with with_calling_sid from the binder crate to check
@@ -166,6 +170,119 @@ pub fn key_characteristics_to_internal(
         .collect()
 }
 
+/// Import a keyblob that is of the format used by the software C++ KeyMint implementation.  After
+/// successful import, invoke both the `new_blob_handler` and `km_op` closures. On success a tuple
+/// of the `km_op`s result and the optional upgraded blob is returned.
+fn import_keyblob_and_perform_op<T, KmOp, NewBlobHandler>(
+    km_dev: &dyn IKeyMintDevice,
+    inner_keyblob: &[u8],
+    upgrade_params: &[KmKeyParameter],
+    km_op: KmOp,
+    new_blob_handler: NewBlobHandler,
+) -> Result<(T, Option<Vec<u8>>)>
+where
+    KmOp: Fn(&[u8]) -> Result<T, Error>,
+    NewBlobHandler: FnOnce(&[u8]) -> Result<()>,
+{
+    let (format, key_material, mut chars) =
+        crate::sw_keyblob::export_key(inner_keyblob, upgrade_params)?;
+    log::debug!(
+        "importing {:?} key material (len={}) with original chars={:?}",
+        format,
+        key_material.len(),
+        chars
+    );
+    let asymmetric = chars.iter().any(|kp| {
+        kp.tag == Tag::ALGORITHM
+            && (kp.value == KeyParameterValue::Algorithm(Algorithm::RSA)
+                || (kp.value == KeyParameterValue::Algorithm(Algorithm::EC)))
+    });
+
+    // Combine the characteristics of the previous keyblob with the upgrade parameters (which might
+    // include special things like APPLICATION_ID / APPLICATION_DATA).
+    chars.extend_from_slice(upgrade_params);
+
+    // Now filter out values from the existing keyblob that shouldn't be set on import, either
+    // because they are per-operation parameter or because they are auto-added by KeyMint itself.
+    let mut import_params: Vec<KmKeyParameter> = chars
+        .into_iter()
+        .filter(|kp| {
+            !matches!(
+                kp.tag,
+                Tag::ORIGIN
+                    | Tag::ROOT_OF_TRUST
+                    | Tag::OS_VERSION
+                    | Tag::OS_PATCHLEVEL
+                    | Tag::UNIQUE_ID
+                    | Tag::ATTESTATION_CHALLENGE
+                    | Tag::ATTESTATION_APPLICATION_ID
+                    | Tag::ATTESTATION_ID_BRAND
+                    | Tag::ATTESTATION_ID_DEVICE
+                    | Tag::ATTESTATION_ID_PRODUCT
+                    | Tag::ATTESTATION_ID_SERIAL
+                    | Tag::ATTESTATION_ID_IMEI
+                    | Tag::ATTESTATION_ID_MEID
+                    | Tag::ATTESTATION_ID_MANUFACTURER
+                    | Tag::ATTESTATION_ID_MODEL
+                    | Tag::VENDOR_PATCHLEVEL
+                    | Tag::BOOT_PATCHLEVEL
+                    | Tag::DEVICE_UNIQUE_ATTESTATION
+                    | Tag::ATTESTATION_ID_SECOND_IMEI
+                    | Tag::NONCE
+                    | Tag::MAC_LENGTH
+                    | Tag::CERTIFICATE_SERIAL
+                    | Tag::CERTIFICATE_SUBJECT
+                    | Tag::CERTIFICATE_NOT_BEFORE
+                    | Tag::CERTIFICATE_NOT_AFTER
+            )
+        })
+        .collect();
+
+    // Now that any previous values have been removed, add any additional parameters that needed for
+    // import. In particular, if we are generating/importing an asymmetric key, we need to make sure
+    // that NOT_BEFORE and NOT_AFTER are present.
+    if asymmetric {
+        import_params.push(KmKeyParameter {
+            tag: Tag::CERTIFICATE_NOT_BEFORE,
+            value: KeyParameterValue::DateTime(0),
+        });
+        import_params.push(KmKeyParameter {
+            tag: Tag::CERTIFICATE_NOT_AFTER,
+            value: KeyParameterValue::DateTime(UNDEFINED_NOT_AFTER),
+        });
+    }
+    log::debug!("import parameters={import_params:?}");
+
+    let creation_result = {
+        let _wp = watchdog::watch_millis(
+            "In utils::import_keyblob_and_perform_op: calling importKey.",
+            500,
+        );
+        map_km_error(km_dev.importKey(&import_params, format, &key_material, None))
+    }
+    .context(ks_err!("Upgrade failed."))?;
+
+    // Note that the importKey operation will produce key characteristics that may be different
+    // than are already stored in Keystore's SQL database.  In particular, the KeyMint
+    // implementation will now mark the key as `Origin::IMPORTED` not `Origin::GENERATED`, and
+    // the security level for characteristics will now be `TRUSTED_ENVIRONMENT` not `SOFTWARE`.
+    //
+    // However, the DB metadata still accurately reflects the original origin of the key, and
+    // so we leave the values as-is (and so any `KeyInfo` retrieved in the Java layer will get the
+    // same results before and after import).
+    //
+    // Note that this also applies to the `USAGE_COUNT_LIMIT` parameter -- if the key has already
+    // been used, then the DB version of the parameter will be (and will continue to be) lower
+    // than the original count bound to the keyblob. This means that Keystore's policing of
+    // usage counts will continue where it left off.
+
+    new_blob_handler(&creation_result.keyBlob).context(ks_err!("calling new_blob_handler."))?;
+
+    km_op(&creation_result.keyBlob)
+        .map(|v| (v, Some(creation_result.keyBlob)))
+        .context(ks_err!("Calling km_op after upgrade."))
+}
+
 /// Upgrade a keyblob then invoke both the `new_blob_handler` and the `km_op` closures.  On success
 /// a tuple of the `km_op`s result and the optional upgraded blob is returned.
 fn upgrade_keyblob_and_perform_op<T, KmOp, NewBlobHandler>(
@@ -221,33 +338,84 @@ where
             km_op,
             new_blob_handler,
         ),
-        // Some devices have been known to upgrade their Keymaster device to be a KeyMint
-        // device with a new release of Android.  If this is the case, then any pre-upgrade
-        // keyblobs will have the km_compat prefix attached to them.
-        //
-        // This prefix gets stripped by the km_compat layer when used pre-upgrade, but after
-        // the upgrade the keyblob will be passed as-is to the KeyMint device, which probably
-        // won't expect to see the km_compat prefix.
-        //
-        // So if a keyblob:
-        //   a) gets rejected with INVALID_KEY_BLOB
-        //   b) when sent to a KeyMint (not km_compat) device
-        //   c) and has the km_compat magic prefix
-        //   d) and was not a software-emulated key pre-upgrade
-        // then strip the prefix and attempt a key upgrade.
         Err(Error::Km(ErrorCode::INVALID_KEY_BLOB))
-            if km_dev_version >= KeyMintDevice::KEY_MINT_V1
-                && key_blob.starts_with(km_compat::KEYMASTER_BLOB_HW_PREFIX) =>
+            if km_dev_version >= KeyMintDevice::KEY_MINT_V1 =>
         {
-            log::info!("found apparent km_compat(Keymaster) blob, attempt strip-and-upgrade");
-            let inner_keyblob = &key_blob[km_compat::KEYMASTER_BLOB_HW_PREFIX.len()..];
-            upgrade_keyblob_and_perform_op(
-                km_dev,
-                inner_keyblob,
-                upgrade_params,
-                km_op,
-                new_blob_handler,
-            )
+            // A KeyMint (not Keymaster via km_compat) device says that this is an invalid keyblob.
+            //
+            // This may be because the keyblob was created before an Android upgrade, and as part of
+            // the device upgrade the underlying Keymaster/KeyMint implementation has been upgraded.
+            //
+            // If that's the case, there are three possible scenarios:
+            if key_blob.starts_with(km_compat::KEYMASTER_BLOB_HW_PREFIX) {
+                // 1) The keyblob was created in hardware by the km_compat C++ code, using a prior
+                //    Keymaster implementation, and wrapped.
+                //
+                //    In this case, the keyblob will have the km_compat magic prefix, including the
+                //    marker that indicates that this was a hardware-backed key.
+                //
+                //    The inner keyblob should still be recognized by the hardware implementation, so
+                //    strip the prefix and attempt a key upgrade.
+                log::info!(
+                    "found apparent km_compat(Keymaster) HW blob, attempt strip-and-upgrade"
+                );
+                let inner_keyblob = &key_blob[km_compat::KEYMASTER_BLOB_HW_PREFIX.len()..];
+                upgrade_keyblob_and_perform_op(
+                    km_dev,
+                    inner_keyblob,
+                    upgrade_params,
+                    km_op,
+                    new_blob_handler,
+                )
+            } else if keystore2_flags::import_previously_emulated_keys()
+                && key_blob.starts_with(km_compat::KEYMASTER_BLOB_SW_PREFIX)
+            {
+                // 2) The keyblob was created in software by the km_compat C++ code because a prior
+                //    Keymaster implementation did not support ECDH (which was only added in KeyMint).
+                //
+                //    In this case, the keyblob with have the km_compat magic prefix, but with the
+                //    marker that indicates that this was a software-emulated key.
+                //
+                //    The inner keyblob should be in the format produced by the C++ reference
+                //    implementation of KeyMint.  Extract the key material and import it into the
+                //    current KeyMint device.
+                log::info!("found apparent km_compat(Keymaster) SW blob, attempt strip-and-import");
+                let inner_keyblob = &key_blob[km_compat::KEYMASTER_BLOB_SW_PREFIX.len()..];
+                import_keyblob_and_perform_op(
+                    km_dev,
+                    inner_keyblob,
+                    upgrade_params,
+                    km_op,
+                    new_blob_handler,
+                )
+            } else if let (true, km_compat::KeyBlob::Wrapped(inner_keyblob)) = (
+                keystore2_flags::import_previously_emulated_keys(),
+                km_compat::unwrap_keyblob(key_blob),
+            ) {
+                // 3) The keyblob was created in software by km_compat.rs because a prior KeyMint
+                //    implementation did not support a feature present in the current KeyMint spec.
+                //    (For example, a curve 25519 key created when the device only supported KeyMint
+                //    v1).
+                //
+                //    In this case, the keyblob with have the km_compat.rs wrapper around it to
+                //    indicate that this was a software-emulated key.
+                //
+                //    The inner keyblob should be in the format produced by the C++ reference
+                //    implementation of KeyMint.  Extract the key material and import it into the
+                //    current KeyMint device.
+                log::info!(
+                    "found apparent km_compat.rs(KeyMint) SW blob, attempt strip-and-import"
+                );
+                import_keyblob_and_perform_op(
+                    km_dev,
+                    inner_keyblob,
+                    upgrade_params,
+                    km_op,
+                    new_blob_handler,
+                )
+            } else {
+                Err(Error::Km(ErrorCode::INVALID_KEY_BLOB)).context(ks_err!("Calling km_op"))
+            }
         }
         r => r.map(|v| (v, None)).context(ks_err!("Calling km_op.")),
     }

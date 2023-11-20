@@ -37,6 +37,11 @@ use keystore2_crypto::{hmac_sha256, HMAC_SHA256_LEN};
 /// final zero byte indicates that the blob is not software emulated.)
 pub const KEYMASTER_BLOB_HW_PREFIX: &[u8] = b"pKMblob\x00";
 
+/// Magic prefix used by the km_compat C++ code to mark a key that is owned by an
+/// software emulation device that has been wrapped by km_compat. (The final one
+/// byte indicates that the blob is software emulated.)
+pub const KEYMASTER_BLOB_SW_PREFIX: &[u8] = b"pKMblob\x01";
+
 /// Key data associated with key generation/import.
 #[derive(Debug, PartialEq, Eq)]
 pub enum KeyImportData<'a> {
@@ -94,7 +99,7 @@ fn wrap_keyblob(keyblob: &[u8]) -> anyhow::Result<Vec<u8>> {
 
 /// Return an unwrapped version of the provided `keyblob`, which may or may
 /// not be associated with the software emulation.
-fn unwrap_keyblob(keyblob: &[u8]) -> KeyBlob {
+pub fn unwrap_keyblob(keyblob: &[u8]) -> KeyBlob {
     if !keyblob.starts_with(KEYBLOB_PREFIX) {
         return KeyBlob::Raw(keyblob);
     }
