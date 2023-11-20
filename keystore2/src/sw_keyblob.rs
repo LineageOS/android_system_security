@@ -15,8 +15,6 @@
 //! Code for parsing software-backed keyblobs, as emitted by the C++ reference implementation of
 //! KeyMint.
 
-#![allow(dead_code)]
-
 use crate::error::Error;
 use crate::ks_err;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
@@ -73,7 +71,133 @@ pub fn export_key(
         | KeyParameterValue::Algorithm(Algorithm::EC) => KeyFormat::PKCS8,
         _ => return Err(bloberr!("Unexpected algorithm {:?}", algo_val)),
     };
+
+    let key_material = match (format, algo_val) {
+        (KeyFormat::PKCS8, KeyParameterValue::Algorithm(Algorithm::EC)) => {
+            // Key material format depends on the curve.
+            let curve = get_tag_value(&combined, Tag::EC_CURVE)
+                .ok_or_else(|| bloberr!("Failed to determine curve for EC key!"))?;
+            match curve {
+                KeyParameterValue::EcCurve(EcCurve::CURVE_25519) => key_material,
+                KeyParameterValue::EcCurve(EcCurve::P_224) => {
+                    pkcs8_wrap_nist_key(&key_material, EcCurve::P_224)?
+                }
+                KeyParameterValue::EcCurve(EcCurve::P_256) => {
+                    pkcs8_wrap_nist_key(&key_material, EcCurve::P_256)?
+                }
+                KeyParameterValue::EcCurve(EcCurve::P_384) => {
+                    pkcs8_wrap_nist_key(&key_material, EcCurve::P_384)?
+                }
+                KeyParameterValue::EcCurve(EcCurve::P_521) => {
+                    pkcs8_wrap_nist_key(&key_material, EcCurve::P_521)?
+                }
+                _ => {
+                    return Err(bloberr!("Unexpected EC curve {curve:?}"));
+                }
+            }
+        }
+        (KeyFormat::RAW, _) => key_material,
+        (format, algo) => {
+            return Err(bloberr!(
+                "Unsupported combination of {format:?} format for {algo:?} algorithm"
+            ));
+        }
+    };
     Ok((format, key_material, combined))
+}
+
+/// DER-encoded `AlgorithmIdentifier` for a P-224 key.
+const DER_ALGORITHM_ID_P224: &[u8] = &[
+    0x30, 0x10, // SEQUENCE (AlgorithmIdentifier) {
+    0x06, 0x07, // OBJECT IDENTIFIER (algorithm)
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // 1.2.840.10045.2.1 (ecPublicKey)
+    0x06, 0x05, // OBJECT IDENTIFIER (param)
+    0x2b, 0x81, 0x04, 0x00, 0x21, //  1.3.132.0.33 (secp224r1) }
+];
+
+/// DER-encoded `AlgorithmIdentifier` for a P-256 key.
+const DER_ALGORITHM_ID_P256: &[u8] = &[
+    0x30, 0x13, // SEQUENCE (AlgorithmIdentifier) {
+    0x06, 0x07, // OBJECT IDENTIFIER (algorithm)
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // 1.2.840.10045.2.1 (ecPublicKey)
+    0x06, 0x08, // OBJECT IDENTIFIER (param)
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, //  1.2.840.10045.3.1.7 (secp256r1) }
+];
+
+/// DER-encoded `AlgorithmIdentifier` for a P-384 key.
+const DER_ALGORITHM_ID_P384: &[u8] = &[
+    0x30, 0x10, // SEQUENCE (AlgorithmIdentifier) {
+    0x06, 0x07, // OBJECT IDENTIFIER (algorithm)
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // 1.2.840.10045.2.1 (ecPublicKey)
+    0x06, 0x05, // OBJECT IDENTIFIER (param)
+    0x2b, 0x81, 0x04, 0x00, 0x22, //  1.3.132.0.34 (secp384r1) }
+];
+
+/// DER-encoded `AlgorithmIdentifier` for a P-384 key.
+const DER_ALGORITHM_ID_P521: &[u8] = &[
+    0x30, 0x10, // SEQUENCE (AlgorithmIdentifier) {
+    0x06, 0x07, // OBJECT IDENTIFIER (algorithm)
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // 1.2.840.10045.2.1 (ecPublicKey)
+    0x06, 0x05, // OBJECT IDENTIFIER (param)
+    0x2b, 0x81, 0x04, 0x00, 0x23, //  1.3.132.0.35 (secp521r1) }
+];
+
+/// DER-encoded integer value zero.
+const DER_VERSION_0: &[u8] = &[
+    0x02, // INTEGER
+    0x01, // len
+    0x00, // value 0
+];
+
+/// Given a NIST curve EC key in the form of a DER-encoded `ECPrivateKey`
+/// (RFC 5915 s3), wrap it in a DER-encoded PKCS#8 format (RFC 5208 s5).
+fn pkcs8_wrap_nist_key(nist_key: &[u8], curve: EcCurve) -> Result<Vec<u8>> {
+    let der_alg_id = match curve {
+        EcCurve::P_224 => DER_ALGORITHM_ID_P224,
+        EcCurve::P_256 => DER_ALGORITHM_ID_P256,
+        EcCurve::P_384 => DER_ALGORITHM_ID_P384,
+        EcCurve::P_521 => DER_ALGORITHM_ID_P521,
+        _ => return Err(bloberr!("unknown curve {curve:?}")),
+    };
+
+    // Output format is:
+    //
+    //    PrivateKeyInfo ::= SEQUENCE {
+    //        version                   INTEGER,
+    //        privateKeyAlgorithm       AlgorithmIdentifier,
+    //        privateKey                OCTET STRING,
+    //    }
+    //
+    // Start by building the OCTET STRING so we know its length.
+    let mut nist_key_octet_string = Vec::new();
+    nist_key_octet_string.push(0x04); // OCTET STRING
+    add_der_len(&mut nist_key_octet_string, nist_key.len())?;
+    nist_key_octet_string.extend_from_slice(nist_key);
+
+    let mut buf = Vec::new();
+    buf.push(0x30); // SEQUENCE
+    add_der_len(&mut buf, DER_VERSION_0.len() + der_alg_id.len() + nist_key_octet_string.len())?;
+    buf.extend_from_slice(DER_VERSION_0);
+    buf.extend_from_slice(der_alg_id);
+    buf.extend_from_slice(&nist_key_octet_string);
+    Ok(buf)
+}
+
+/// Append a DER-encoded length value to the given buffer.
+fn add_der_len(buf: &mut Vec<u8>, len: usize) -> Result<()> {
+    if len <= 0x7f {
+        buf.push(len as u8)
+    } else if len <= 0xff {
+        buf.push(0x81); // One length octet to come
+        buf.push(len as u8);
+    } else if len <= 0xffff {
+        buf.push(0x82); // Two length octets to come
+        buf.push((len >> 8) as u8);
+        buf.push((len & 0xff) as u8);
+    } else {
+        return Err(bloberr!("Unsupported DER length {len}"));
+    }
+    Ok(())
 }
 
 /// Plaintext key blob, with key characteristics.
@@ -808,5 +932,105 @@ mod tests {
                 assert_eq!(params, got.sw_enforced);
             }
         }
+    }
+
+    #[test]
+    fn test_add_der_len() {
+        let tests = [
+            (0, "00"),
+            (1, "01"),
+            (126, "7e"),
+            (127, "7f"),
+            (128, "8180"),
+            (129, "8181"),
+            (255, "81ff"),
+            (256, "820100"),
+            (257, "820101"),
+            (65535, "82ffff"),
+        ];
+        for (input, want) in tests {
+            let mut got = Vec::new();
+            add_der_len(&mut got, input).unwrap();
+            assert_eq!(hex::encode(got), want, " for input length {input}");
+        }
+    }
+
+    #[test]
+    fn test_pkcs8_wrap_key_p256() {
+        // Key material taken from `ec_256_key` in
+        // hardware/interfaces/security/keymint/aidl/vts/function/KeyMintTest.cpp
+        let input = hex::decode(concat!(
+            "3025",   // SEQUENCE (ECPrivateKey)
+            "020101", // INTEGER length 1 value 1 (version)
+            "0420",   // OCTET STRING (privateKey)
+            "737c2ecd7b8d1940bf2930aa9b4ed3ff",
+            "941eed09366bc03299986481f3a4d859",
+        ))
+        .unwrap();
+        let want = hex::decode(concat!(
+            // RFC 5208 s5
+            "3041",             // SEQUENCE (PrivateKeyInfo) {
+            "020100",           // INTEGER length 1 value 0 (version)
+            "3013",             // SEQUENCE length 0x13 (AlgorithmIdentifier) {
+            "0607",             // OBJECT IDENTIFIER length 7 (algorithm)
+            "2a8648ce3d0201",   // 1.2.840.10045.2.1 (ecPublicKey)
+            "0608",             // OBJECT IDENTIFIER length 8 (param)
+            "2a8648ce3d030107", //  1.2.840.10045.3.1.7 (secp256r1)
+            // } end SEQUENCE (AlgorithmIdentifier)
+            "0427",   // OCTET STRING (privateKey) holding...
+            "3025",   // SEQUENCE (ECPrivateKey)
+            "020101", // INTEGER length 1 value 1 (version)
+            "0420",   // OCTET STRING length 0x20 (privateKey)
+            "737c2ecd7b8d1940bf2930aa9b4ed3ff",
+            "941eed09366bc03299986481f3a4d859",
+            // } end SEQUENCE (ECPrivateKey)
+            // } end SEQUENCE (PrivateKeyInfo)
+        ))
+        .unwrap();
+        let got = pkcs8_wrap_nist_key(&input, EcCurve::P_256).unwrap();
+        assert_eq!(hex::encode(got), hex::encode(want), " for input {}", hex::encode(input));
+    }
+
+    #[test]
+    fn test_pkcs8_wrap_key_p521() {
+        // Key material taken from `ec_521_key` in
+        // hardware/interfaces/security/keymint/aidl/vts/function/KeyMintTest.cpp
+        let input = hex::decode(concat!(
+            "3047",   // SEQUENCE length 0xd3 (ECPrivateKey)
+            "020101", // INTEGER length 1 value 1 (version)
+            "0442",   // OCTET STRING length 0x42 (privateKey)
+            "0011458c586db5daa92afab03f4fe46a",
+            "a9d9c3ce9a9b7a006a8384bec4c78e8e",
+            "9d18d7d08b5bcfa0e53c75b064ad51c4",
+            "49bae0258d54b94b1e885ded08ed4fb2",
+            "5ce9",
+            // } end SEQUENCE (ECPrivateKey)
+        ))
+        .unwrap();
+        let want = hex::decode(concat!(
+            // RFC 5208 s5
+            "3060",           // SEQUENCE (PrivateKeyInfo) {
+            "020100",         // INTEGER length 1 value 0 (version)
+            "3010",           // SEQUENCE length 0x10 (AlgorithmIdentifier) {
+            "0607",           // OBJECT IDENTIFIER length 7 (algorithm)
+            "2a8648ce3d0201", // 1.2.840.10045.2.1 (ecPublicKey)
+            "0605",           // OBJECT IDENTIFIER length 5 (param)
+            "2b81040023",     //  1.3.132.0.35 (secp521r1)
+            // } end SEQUENCE (AlgorithmIdentifier)
+            "0449",   // OCTET STRING (privateKey) holding...
+            "3047",   // SEQUENCE (ECPrivateKey)
+            "020101", // INTEGER length 1 value 1 (version)
+            "0442",   // OCTET STRING length 0x42 (privateKey)
+            "0011458c586db5daa92afab03f4fe46a",
+            "a9d9c3ce9a9b7a006a8384bec4c78e8e",
+            "9d18d7d08b5bcfa0e53c75b064ad51c4",
+            "49bae0258d54b94b1e885ded08ed4fb2",
+            "5ce9",
+            // } end SEQUENCE (ECPrivateKey)
+            // } end SEQUENCE (PrivateKeyInfo)
+        ))
+        .unwrap();
+        let got = pkcs8_wrap_nist_key(&input, EcCurve::P_521).unwrap();
+        assert_eq!(hex::encode(got), hex::encode(want), " for input {}", hex::encode(input));
     }
 }

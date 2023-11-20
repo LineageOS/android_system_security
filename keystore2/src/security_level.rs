@@ -34,7 +34,7 @@ use crate::super_key::{KeyBlob, SuperKeyManager};
 use crate::utils::{
     check_device_attestation_permissions, check_key_permission,
     check_unique_id_attestation_permissions, is_device_id_attestation_tag,
-    key_characteristics_to_internal, uid_to_android_user, watchdog as wd,
+    key_characteristics_to_internal, uid_to_android_user, watchdog as wd, UNDEFINED_NOT_AFTER,
 };
 use crate::{
     database::{
@@ -80,10 +80,6 @@ pub struct KeystoreSecurityLevel {
 
 // Blob of 32 zeroes used as empty masking key.
 static ZERO_BLOB_32: &[u8] = &[0; 32];
-
-// Per RFC 5280 4.1.2.5, an undefined expiration (not-after) field should be set to GeneralizedTime
-// 999912312359559, which is 253402300799000 ms from Jan 1, 1970.
-const UNDEFINED_NOT_AFTER: i64 = 253402300799000i64;
 
 impl KeystoreSecurityLevel {
     /// Creates a new security level instance wrapped in a
