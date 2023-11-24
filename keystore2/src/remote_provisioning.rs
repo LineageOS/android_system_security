@@ -130,8 +130,10 @@ fn get_rkpd_attestation_key(
     security_level: &SecurityLevel,
     caller_uid: u32,
 ) -> Result<RemotelyProvisionedKey> {
-    // The RPC name lookup logic should be encapsulated within this function
-    // to allow for fallback in case of an error.
+    // Depending on the Android release, RKP may not have been mandatory for the
+    // TEE or StrongBox KM instances. In such cases, lookup failure for the IRPC
+    // HAL service is WAI and should not cause a failure. The error should be caught
+    // by the calling function and allow for natural fallback to the factory key.
     let rpc_name = get_remotely_provisioned_component_name(security_level)
         .context(ks_err!("Trying to get IRPC name."))?;
     let _wd = wd::watch_millis("Calling get_rkpd_attestation_key()", 500);
