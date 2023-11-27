@@ -1036,7 +1036,7 @@ impl KeystoreDB {
             break;
         }
 
-        if keystore2_flags::wal_db_journalmode() {
+        if keystore2_flags::wal_db_journalmode_v2() {
             // Update journal mode to WAL
             conn.pragma_update(None, "journal_mode", "WAL")
                 .context("Failed to connect in WAL mode for persistent db")?;
