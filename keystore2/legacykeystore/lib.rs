@@ -127,6 +127,12 @@ impl DB {
     }
 
     fn put(&mut self, caller_uid: u32, alias: &str, entry: &[u8]) -> Result<()> {
+        if keystore2_flags::disable_legacy_keystore_put_v2() {
+            return Err(Error::deprecated()).context(concat!(
+                "Storing into Keystore's legacy database is ",
+                "no longer supported, store in an app-specific database instead"
+            ));
+        }
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO profiles (owner, alias, profile) values (?, ?, ?)",
@@ -206,6 +212,11 @@ impl Error {
     /// Short hand for `Error::Error(ERROR_PERMISSION_DENIED)`
     pub fn perm() -> Self {
         Error::Error(ERROR_PERMISSION_DENIED)
+    }
+
+    /// Short hand for `Error::Error(ERROR_SYSTEM_ERROR)`
+    pub fn deprecated() -> Self {
+        Error::Error(ERROR_SYSTEM_ERROR)
     }
 }
 
@@ -338,6 +349,12 @@ impl LegacyKeystore {
     }
 
     fn put(&self, alias: &str, uid: i32, entry: &[u8]) -> Result<()> {
+        if keystore2_flags::disable_legacy_keystore_put_v2() {
+            return Err(Error::deprecated()).context(concat!(
+                "Storing into Keystore's legacy database is ",
+                "no longer supported, store in an app-specific database instead"
+            ));
+        }
         let uid = Self::get_effective_uid(uid).context("In put.")?;
         let mut db = self.open_db().context("In put.")?;
         db.put(uid, alias, entry).context("In put: Trying to insert entry into DB.")?;
