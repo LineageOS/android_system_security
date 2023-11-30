@@ -127,12 +127,7 @@ impl DB {
     }
 
     fn put(&mut self, caller_uid: u32, alias: &str, entry: &[u8]) -> Result<()> {
-        if keystore2_flags::disable_legacy_keystore_put_v2() {
-            return Err(Error::deprecated()).context(concat!(
-                "Storing into Keystore's legacy database is ",
-                "no longer supported, store in an app-specific database instead"
-            ));
-        }
+        ensure_keystore_put_is_enabled()?;
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO profiles (owner, alias, profile) values (?, ?, ?)",
@@ -257,6 +252,17 @@ where
     )
 }
 
+fn ensure_keystore_put_is_enabled() -> Result<()> {
+    if keystore2_flags::disable_legacy_keystore_put_v2() {
+        Err(Error::deprecated()).context(concat!(
+            "Storing into Keystore's legacy database is ",
+            "no longer supported, store in an app-specific database instead"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 struct LegacyKeystoreDeleteListener {
     legacy_keystore: Arc<LegacyKeystore>,
 }
@@ -349,12 +355,7 @@ impl LegacyKeystore {
     }
 
     fn put(&self, alias: &str, uid: i32, entry: &[u8]) -> Result<()> {
-        if keystore2_flags::disable_legacy_keystore_put_v2() {
-            return Err(Error::deprecated()).context(concat!(
-                "Storing into Keystore's legacy database is ",
-                "no longer supported, store in an app-specific database instead"
-            ));
-        }
+        ensure_keystore_put_is_enabled()?;
         let uid = Self::get_effective_uid(uid).context("In put.")?;
         let mut db = self.open_db().context("In put.")?;
         db.put(uid, alias, entry).context("In put: Trying to insert entry into DB.")?;
