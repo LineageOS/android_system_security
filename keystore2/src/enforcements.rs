@@ -603,7 +603,7 @@ impl Enforcements {
             }
         }
 
-        if android_security_flags::fix_unlocked_device_required_keys() {
+        if android_security_flags::fix_unlocked_device_required_keys_v2() {
             let (hat, state) = if user_secure_ids.is_empty() {
                 (None, DeferredAuthState::NoAuthRequired)
             } else if let Some(key_time_out) = key_time_out {
