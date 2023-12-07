@@ -26,8 +26,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 };
 use android_security_authorization::aidl::android::security::authorization::{
     AuthorizationTokens::AuthorizationTokens, IKeystoreAuthorization::BnKeystoreAuthorization,
-    IKeystoreAuthorization::IKeystoreAuthorization, LockScreenEvent::LockScreenEvent,
-    ResponseCode::ResponseCode,
+    IKeystoreAuthorization::IKeystoreAuthorization, ResponseCode::ResponseCode,
 };
 use android_security_authorization::binder::{
     BinderFeatures, ExceptionCode, Interface, Result as BinderResult, Status as BinderStatus,
@@ -144,69 +143,41 @@ impl AuthorizationManager {
         Ok(())
     }
 
-    fn on_lock_screen_event(
-        &self,
-        lock_screen_event: LockScreenEvent,
-        user_id: i32,
-        password: Option<Password>,
-        unlocking_sids: Option<&[i64]>,
-    ) -> Result<()> {
+    fn on_device_unlocked(&self, user_id: i32, password: Option<Password>) -> Result<()> {
         log::info!(
-            "on_lock_screen_event({:?}, user_id={:?}, password.is_some()={}, unlocking_sids={:?})",
-            lock_screen_event,
+            "on_device_unlocked(user_id={}, password.is_some()={})",
             user_id,
             password.is_some(),
-            unlocking_sids
         );
-        match (lock_screen_event, password) {
-            (LockScreenEvent::UNLOCK, Some(password)) => {
-                // This corresponds to the unlock() method in legacy keystore API.
-                // check permission
-                check_keystore_permission(KeystorePerm::Unlock)
-                    .context(ks_err!("Unlock with password."))?;
-                ENFORCEMENTS.set_device_locked(user_id, false);
+        check_keystore_permission(KeystorePerm::Unlock).context(ks_err!("Unlock."))?;
+        ENFORCEMENTS.set_device_locked(user_id, false);
 
-                let mut skm = SUPER_KEY.write().unwrap();
-
-                DB.with(|db| {
-                    skm.unlock_user(
-                        &mut db.borrow_mut(),
-                        &LEGACY_IMPORTER,
-                        user_id as u32,
-                        &password,
-                    )
-                })
-                .context(ks_err!("Unlock with password."))?;
-                Ok(())
-            }
-            (LockScreenEvent::UNLOCK, None) => {
-                check_keystore_permission(KeystorePerm::Unlock).context(ks_err!("Unlock."))?;
-                ENFORCEMENTS.set_device_locked(user_id, false);
-                let mut skm = SUPER_KEY.write().unwrap();
-                DB.with(|db| {
-                    skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32)
-                })
-                .context(ks_err!("try_unlock_user_with_biometric failed"))?;
-                Ok(())
-            }
-            (LockScreenEvent::LOCK, None) => {
-                check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
-                ENFORCEMENTS.set_device_locked(user_id, true);
-                let mut skm = SUPER_KEY.write().unwrap();
-                DB.with(|db| {
-                    skm.lock_unlocked_device_required_keys(
-                        &mut db.borrow_mut(),
-                        user_id as u32,
-                        unlocking_sids.unwrap_or(&[]),
-                    );
-                });
-                Ok(())
-            }
-            _ => {
-                // Any other combination is not supported.
-                Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!("Unknown event."))
-            }
+        let mut skm = SUPER_KEY.write().unwrap();
+        if let Some(password) = password {
+            DB.with(|db| {
+                skm.unlock_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32, &password)
+            })
+            .context(ks_err!("Unlock with password."))
+        } else {
+            DB.with(|db| skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32))
+                .context(ks_err!("try_unlock_user_with_biometric failed"))
         }
+    }
+
+    fn on_device_locked(&self, user_id: i32, unlocking_sids: &[i64]) -> Result<()> {
+        log::info!("on_device_locked(user_id={}, unlocking_sids={:?})", user_id, unlocking_sids);
+
+        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        ENFORCEMENTS.set_device_locked(user_id, true);
+        let mut skm = SUPER_KEY.write().unwrap();
+        DB.with(|db| {
+            skm.lock_unlocked_device_required_keys(
+                &mut db.borrow_mut(),
+                user_id as u32,
+                unlocking_sids,
+            );
+        });
+        Ok(())
     }
 
     fn get_auth_tokens_for_credstore(
@@ -264,26 +235,14 @@ impl IKeystoreAuthorization for AuthorizationManager {
         map_or_log_err(self.add_auth_token(auth_token), Ok)
     }
 
-    fn onLockScreenEvent(
-        &self,
-        lock_screen_event: LockScreenEvent,
-        user_id: i32,
-        password: Option<&[u8]>,
-        unlocking_sids: Option<&[i64]>,
-    ) -> BinderResult<()> {
-        let _wp =
-            wd::watch_millis_with("IKeystoreAuthorization::onLockScreenEvent", 500, move || {
-                format!("lock event: {}", lock_screen_event.0)
-            });
-        map_or_log_err(
-            self.on_lock_screen_event(
-                lock_screen_event,
-                user_id,
-                password.map(|pw| pw.into()),
-                unlocking_sids,
-            ),
-            Ok,
-        )
+    fn onDeviceUnlocked(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceUnlocked", 500);
+        map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())), Ok)
+    }
+
+    fn onDeviceLocked(&self, user_id: i32, unlocking_sids: &[i64]) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceLocked", 500);
+        map_or_log_err(self.on_device_locked(user_id, unlocking_sids), Ok)
     }
 
     fn getAuthTokensForCredStore(
