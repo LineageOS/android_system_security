@@ -28,7 +28,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 use android_security_maintenance::aidl::android::security::maintenance::IKeystoreMaintenance::IKeystoreMaintenance;
 
 use android_security_authorization::aidl::android::security::authorization::{
-    IKeystoreAuthorization::IKeystoreAuthorization, LockScreenEvent::LockScreenEvent,
+    IKeystoreAuthorization::IKeystoreAuthorization,
 };
 
 use keystore2::key_parameter::KeyParameter as KsKeyparameter;
@@ -229,8 +229,7 @@ fn keystore2_encrypted_characteristics() -> anyhow::Result<()> {
             keystore2_restart_service();
 
             let auth_service = get_authorization();
-            match auth_service.onLockScreenEvent(LockScreenEvent::UNLOCK, 99, Some(PASSWORD), None)
-            {
+            match auth_service.onDeviceUnlocked(99, Some(PASSWORD)) {
                 Ok(result) => {
                     println!("Unlock Result: {:?}", result);
                 }
@@ -487,8 +486,7 @@ fn keystore2_encrypted_certificates() -> anyhow::Result<()> {
             keystore2_restart_service();
 
             let auth_service = get_authorization();
-            match auth_service.onLockScreenEvent(LockScreenEvent::UNLOCK, 98, Some(PASSWORD), None)
-            {
+            match auth_service.onDeviceUnlocked(98, Some(PASSWORD)) {
                 Ok(result) => {
                     println!("Unlock Result: {:?}", result);
                 }
