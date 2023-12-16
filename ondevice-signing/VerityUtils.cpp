@@ -19,6 +19,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <vector>
 
 #include <fcntl.h>
 #include <linux/fs.h>

@@ -1,7 +1,7 @@
 package: "android.security.keystore2"
 
 flag {
-  name: "wal_db_journalmode"
+  name: "wal_db_journalmode_v2"
   namespace: "hardware_backed_security"
   description: "This flag controls changing journalmode to wal"
   bug: "191777960"
@@ -9,7 +9,7 @@ flag {
 }
 
 flag {
-  name: "disable_legacy_keystore_put"
+  name: "disable_legacy_keystore_put_v2"
   namespace: "hardware_backed_security"
   description: "This flag disables legacy keystore put and makes it so that command returns an error"
   bug: "307460850"

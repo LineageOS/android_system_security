@@ -42,6 +42,8 @@ DEFINE_bool(self_test, true,
             "If true, this tool performs a self-test, validating the payload for correctness. "
             "This checks that the device on the factory line is producing valid output "
             "before attempting to upload the output to the device info service.");
+DEFINE_string(serialno_prop, "ro.serialno",
+              "The property of getting serial number. Defaults to 'ro.serialno'.");
 
 namespace {
 
@@ -59,7 +61,7 @@ void writeOutput(const std::string instance_name, const Array& csr) {
         auto bytes = csr.encode();
         std::copy(bytes.begin(), bytes.end(), std::ostream_iterator<char>(std::cout));
     } else if (FLAGS_output_format == kBuildPlusCsr) {
-        auto [json, error] = jsonEncodeCsrWithBuild(instance_name, csr);
+        auto [json, error] = jsonEncodeCsrWithBuild(instance_name, csr, FLAGS_serialno_prop);
         if (!error.empty()) {
             std::cerr << "Error JSON encoding the output: " << error;
             exit(1);
