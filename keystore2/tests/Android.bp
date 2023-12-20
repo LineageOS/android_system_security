@@ -23,6 +23,7 @@ package {
 
 rust_test {
     name: "keystore2_client_tests",
+    compile_multilib: "first",
     defaults: [
         "keymint_use_latest_hal_aidl_rust",
         "keystore2_use_latest_aidl_rust",
