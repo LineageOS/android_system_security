@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use anyhow::{ensure, Result};
-use bssl_ffi as bssl_sys;
 
 pub const ENTROPY_LEN: usize = bssl_sys::CTR_DRBG_ENTROPY_LEN as usize;
 

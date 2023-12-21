@@ -36,7 +36,7 @@ rust_defaults {
     edition: "2021",
     rustlibs: [
         "libanyhow",
-        "libbssl_ffi",
+        "libbssl_sys",
         "libclap",
         "libcutils_socket_bindgen",
         "liblogger",
@@ -70,7 +70,7 @@ rust_test {
     srcs: ["src/main.rs"],
     rustlibs: [
         "libanyhow",
-        "libbssl_ffi",
+        "libbssl_sys",
         "libclap",
         "libcutils_socket_bindgen",
         "liblogger",
