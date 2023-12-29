@@ -46,12 +46,6 @@ impl DB {
             conn: Connection::open(db_file).context("Failed to initialize SQLite connection.")?,
         };
 
-        if keystore2_flags::wal_db_journalmode_v2() {
-            // Update journal mode to WAL
-            db.conn
-                .pragma_update(None, "journal_mode", "WAL")
-                .context("Failed to connect in WAL mode for persistent db")?;
-        }
         db.init_tables().context("Trying to initialize legacy keystore db.")?;
         Ok(db)
     }

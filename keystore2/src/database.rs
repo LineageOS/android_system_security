@@ -1014,6 +1014,14 @@ impl KeystoreDB {
         let mut persistent_path_str = "file:".to_owned();
         persistent_path_str.push_str(&persistent_path.to_string_lossy());
 
+        // Connect to database in specific mode
+        let persistent_path_mode = if keystore2_flags::wal_db_journalmode_v3() {
+            "?journal_mode=WAL".to_owned()
+        } else {
+            "?journal_mode=DELETE".to_owned()
+        };
+        persistent_path_str.push_str(&persistent_path_mode);
+
         Ok(persistent_path_str)
     }
 
@@ -1036,11 +1044,6 @@ impl KeystoreDB {
             break;
         }
 
-        if keystore2_flags::wal_db_journalmode_v2() {
-            // Update journal mode to WAL
-            conn.pragma_update(None, "journal_mode", "WAL")
-                .context("Failed to connect in WAL mode for persistent db")?;
-        }
         // Drop the cache size from default (2M) to 0.5M
         conn.execute("PRAGMA persistent.cache_size = -500;", params![])
             .context("Failed to decrease cache size for persistent db")?;
