@@ -46,7 +46,7 @@ rust_defaults {
         "libkeystore-engine",
     ],
     shared_libs: [
-        "android.system.keystore2-V3-ndk",
+        "android.system.keystore2-V4-ndk",
         "libbase",
         "libcrypto",
         "libkeymaster_portable",
