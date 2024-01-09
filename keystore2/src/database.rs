@@ -2910,6 +2910,75 @@ impl KeystoreDB {
         })
         .context(ks_err!())
     }
+
+    /// Returns a list of app UIDs that have keys authenticated by the given secure_user_id
+    /// (for the given user_id).
+    /// This is helpful for finding out which apps will have their keys invalidated when
+    /// the user changes biometrics enrollment or removes their LSKF.
+    pub fn get_app_uids_affected_by_sid(
+        &mut self,
+        user_id: i32,
+        secure_user_id: i64,
+    ) -> Result<Vec<i64>> {
+        let _wp = wd::watch_millis("KeystoreDB::get_app_uids_affected_by_sid", 500);
+
+        let key_ids_and_app_uids = self.with_transaction(TransactionBehavior::Immediate, |tx| {
+            let mut stmt = tx
+                .prepare(&format!(
+                    "SELECT id, namespace from persistent.keyentry
+                     WHERE key_type = ?
+                     AND domain = ?
+                     AND cast ( (namespace/{AID_USER_OFFSET}) as int) = ?
+                     AND state = ?;",
+                ))
+                .context(concat!(
+                    "In get_app_uids_affected_by_sid, ",
+                    "failed to prepare the query to find the keys created by apps."
+                ))?;
+
+            let mut rows = stmt
+                .query(params![KeyType::Client, Domain::APP.0 as u32, user_id, KeyLifeCycle::Live,])
+                .context(ks_err!("Failed to query the keys created by apps."))?;
+
+            let mut key_ids_and_app_uids: HashMap<i64, i64> = Default::default();
+            db_utils::with_rows_extract_all(&mut rows, |row| {
+                key_ids_and_app_uids.insert(
+                    row.get(0).context("Failed to read key id of a key created by an app.")?,
+                    row.get(1).context("Failed to read the app uid")?,
+                );
+                Ok(())
+            })?;
+            Ok(key_ids_and_app_uids).no_gc()
+        })?;
+        let mut app_uids_affected_by_sid: HashSet<i64> = Default::default();
+        for (key_id, app_uid) in key_ids_and_app_uids {
+            // Read the key parameters for each key in its own transaction. It is OK to ignore
+            // an error to get the properties of a particular key since it might have been deleted
+            // under our feet after the previous transaction concluded. If the key was deleted
+            // then it is no longer applicable if it was auth-bound or not.
+            if let Ok(is_key_bound_to_sid) =
+                self.with_transaction(TransactionBehavior::Immediate, |tx| {
+                    let params = Self::load_key_parameters(key_id, tx)
+                        .context("Failed to load key parameters.")?;
+                    // Check if the key is bound to this secure user ID.
+                    let is_key_bound_to_sid = params.iter().any(|kp| {
+                        matches!(
+                            kp.key_parameter_value(),
+                            KeyParameterValue::UserSecureID(sid) if *sid == secure_user_id
+                        )
+                    });
+                    Ok(is_key_bound_to_sid).no_gc()
+                })
+            {
+                if is_key_bound_to_sid {
+                    app_uids_affected_by_sid.insert(app_uid);
+                }
+            }
+        }
+
+        let app_uids_vec: Vec<i64> = app_uids_affected_by_sid.into_iter().collect();
+        Ok(app_uids_vec)
+    }
 }
 
 #[cfg(test)]
@@ -4492,10 +4561,17 @@ pub mod tests {
             .collect::<Result<Vec<_>>>()
     }
 
+    fn make_test_params(max_usage_count: Option<i32>) -> Vec<KeyParameter> {
+        make_test_params_with_sids(max_usage_count, &[42])
+    }
+
     // Note: The parameters and SecurityLevel associations are nonsensical. This
     // collection is only used to check if the parameters are preserved as expected by the
     // database.
-    fn make_test_params(max_usage_count: Option<i32>) -> Vec<KeyParameter> {
+    fn make_test_params_with_sids(
+        max_usage_count: Option<i32>,
+        user_secure_ids: &[i64],
+    ) -> Vec<KeyParameter> {
         let mut params = vec![
             KeyParameter::new(KeyParameterValue::Invalid, SecurityLevel::TRUSTED_ENVIRONMENT),
             KeyParameter::new(
@@ -4594,7 +4670,6 @@ pub mod tests {
                 SecurityLevel::TRUSTED_ENVIRONMENT,
             ),
             KeyParameter::new(KeyParameterValue::UserID(1), SecurityLevel::STRONGBOX),
-            KeyParameter::new(KeyParameterValue::UserSecureID(42), SecurityLevel::STRONGBOX),
             KeyParameter::new(
                 KeyParameterValue::NoAuthRequired,
                 SecurityLevel::TRUSTED_ENVIRONMENT,
@@ -4722,6 +4797,13 @@ pub mod tests {
                 SecurityLevel::SOFTWARE,
             ));
         }
+
+        for sid in user_secure_ids.iter() {
+            params.push(KeyParameter::new(
+                KeyParameterValue::UserSecureID(*sid),
+                SecurityLevel::STRONGBOX,
+            ));
+        }
         params
     }
 
@@ -4731,6 +4813,17 @@ pub mod tests {
         namespace: i64,
         alias: &str,
         max_usage_count: Option<i32>,
+    ) -> Result<KeyIdGuard> {
+        make_test_key_entry_with_sids(db, domain, namespace, alias, max_usage_count, &[42])
+    }
+
+    pub fn make_test_key_entry_with_sids(
+        db: &mut KeystoreDB,
+        domain: Domain,
+        namespace: i64,
+        alias: &str,
+        max_usage_count: Option<i32>,
+        sids: &[i64],
     ) -> Result<KeyIdGuard> {
         let key_id = db.create_key_entry(&domain, &namespace, KeyType::Client, &KEYSTORE_UUID)?;
         let mut blob_metadata = BlobMetaData::new();
@@ -4749,7 +4842,7 @@ pub mod tests {
         db.set_blob(&key_id, SubComponentType::CERT, Some(TEST_CERT_BLOB), None)?;
         db.set_blob(&key_id, SubComponentType::CERT_CHAIN, Some(TEST_CERT_CHAIN_BLOB), None)?;
 
-        let params = make_test_params(max_usage_count);
+        let params = make_test_params_with_sids(max_usage_count, sids);
         db.insert_keyparameter(&key_id, &params)?;
 
         let mut metadata = KeyMetaData::new();
@@ -5416,6 +5509,113 @@ pub mod tests {
 
         // No such id
         assert_eq!(db.load_key_descriptor(key_id + 1)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_list_app_uids_for_sid() -> Result<()> {
+        let uid: i32 = 1;
+        let uid_offset: i64 = (uid as i64) * (AID_USER_OFFSET as i64);
+        let first_sid = 667;
+        let second_sid = 669;
+        let first_app_id: i64 = 123 + uid_offset;
+        let second_app_id: i64 = 456 + uid_offset;
+        let third_app_id: i64 = 789 + uid_offset;
+        let unrelated_app_id: i64 = 1011 + uid_offset;
+        let mut db = new_test_db()?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            first_app_id,
+            TEST_ALIAS,
+            None,
+            &[first_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            second_app_id,
+            "alias2",
+            None,
+            &[first_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            second_app_id,
+            TEST_ALIAS,
+            None,
+            &[second_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            third_app_id,
+            "alias3",
+            None,
+            &[second_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            unrelated_app_id,
+            TEST_ALIAS,
+            None,
+            &[],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+
+        let mut first_sid_apps = db.get_app_uids_affected_by_sid(uid, first_sid)?;
+        first_sid_apps.sort();
+        assert_eq!(first_sid_apps, vec![first_app_id, second_app_id]);
+        let mut second_sid_apps = db.get_app_uids_affected_by_sid(uid, second_sid)?;
+        second_sid_apps.sort();
+        assert_eq!(second_sid_apps, vec![second_app_id, third_app_id]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_list_app_uids_with_multiple_sids() -> Result<()> {
+        let uid: i32 = 1;
+        let uid_offset: i64 = (uid as i64) * (AID_USER_OFFSET as i64);
+        let first_sid = 667;
+        let second_sid = 669;
+        let third_sid = 772;
+        let first_app_id: i64 = 123 + uid_offset;
+        let second_app_id: i64 = 456 + uid_offset;
+        let mut db = new_test_db()?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            first_app_id,
+            TEST_ALIAS,
+            None,
+            &[first_sid, second_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+        make_test_key_entry_with_sids(
+            &mut db,
+            Domain::APP,
+            second_app_id,
+            "alias2",
+            None,
+            &[second_sid, third_sid],
+        )
+        .context("test_get_list_app_uids_for_sid")?;
+
+        let first_sid_apps = db.get_app_uids_affected_by_sid(uid, first_sid)?;
+        assert_eq!(first_sid_apps, vec![first_app_id]);
+
+        let mut second_sid_apps = db.get_app_uids_affected_by_sid(uid, second_sid)?;
+        second_sid_apps.sort();
+        assert_eq!(second_sid_apps, vec![first_app_id, second_app_id]);
+
+        let third_sid_apps = db.get_app_uids_affected_by_sid(uid, third_sid)?;
+        assert_eq!(third_sid_apps, vec![second_app_id]);
         Ok(())
     }
 }
