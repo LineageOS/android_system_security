@@ -172,7 +172,7 @@ pub fn aes_gcm_encrypt(plaintext: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>
     }
 }
 
-/// Represents a "password" that can be used to key the PBKDF2 algorithm.
+/// A high-entropy synthetic password from which an AES key may be derived.
 pub enum Password<'a> {
     /// Borrow an existing byte array
     Ref(&'a [u8]),
@@ -194,20 +194,23 @@ impl<'a> Password<'a> {
         }
     }
 
-    /// Generate a key from the given password and salt.
-    /// The salt must be exactly 16 bytes long.
-    /// Two key sizes are accepted: 16 and 32 bytes.
-    pub fn derive_key_pbkdf2(&self, salt: &[u8], key_length: usize) -> Result<ZVec, Error> {
+    /// Derives a key from the given password and salt, using PBKDF2 with 8192 iterations.
+    ///
+    /// The salt length must be 16 bytes, and the output key length must be 16 or 32 bytes.
+    ///
+    /// This function exists only for backwards compatibility reasons.  Keystore now receives only
+    /// high-entropy synthetic passwords, which do not require key stretching.
+    pub fn derive_key_pbkdf2(&self, salt: &[u8], out_len: usize) -> Result<ZVec, Error> {
         if salt.len() != SALT_LENGTH {
             return Err(Error::InvalidSaltLength);
         }
-        match key_length {
+        match out_len {
             AES_128_KEY_LENGTH | AES_256_KEY_LENGTH => {}
             _ => return Err(Error::InvalidKeyLength),
         }
 
         let pw = self.get_key();
-        let mut result = ZVec::new(key_length)?;
+        let mut result = ZVec::new(out_len)?;
 
         // Safety: We checked that the salt is exactly 16 bytes long. The other pointers are valid,
         // and have matching lengths.
@@ -222,6 +225,13 @@ impl<'a> Password<'a> {
         };
 
         Ok(result)
+    }
+
+    /// Derives a key from the given high-entropy synthetic password and salt, using HKDF.
+    pub fn derive_key_hkdf(&self, salt: &[u8], out_len: usize) -> Result<ZVec, Error> {
+        let prk = hkdf_extract(self.get_key(), salt)?;
+        let info = [];
+        hkdf_expand(out_len, &prk, &info)
     }
 
     /// Try to make another Password object with the same data.
