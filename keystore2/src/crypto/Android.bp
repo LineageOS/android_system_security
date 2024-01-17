@@ -74,7 +74,7 @@ rust_bindgen {
         "--allowlist-function", "AES_gcm_encrypt",
         "--allowlist-function", "AES_gcm_decrypt",
         "--allowlist-function", "CreateKeyId",
-        "--allowlist-function", "generateKeyFromPassword",
+        "--allowlist-function", "PBKDF2",
         "--allowlist-function", "HKDFExtract",
         "--allowlist-function", "HKDFExpand",
         "--allowlist-function", "ECDHComputeKey",

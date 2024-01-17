@@ -141,7 +141,8 @@ bool AES_gcm_decrypt(const uint8_t* in, uint8_t* out, size_t len, const uint8_t*
     EVP_DecryptUpdate(ctx.get(), out_pos, &out_len, in, len);
     out_pos += out_len;
     if (!EVP_DecryptFinal_ex(ctx.get(), out_pos, &out_len)) {
-        ALOGE("Failed to decrypt blob; ciphertext or tag is likely corrupted");
+        // No error log here; this is expected when trying two different keys to see which one
+        // works.  The callers handle the error appropriately.
         return false;
     }
     out_pos += out_len;
@@ -191,8 +192,7 @@ static constexpr size_t SALT_SIZE = 16;
 
 // Copied from system/security/keystore/user_state.cpp.
 
-void generateKeyFromPassword(uint8_t* key, size_t key_len, const char* pw, size_t pw_len,
-                             const uint8_t* salt) {
+void PBKDF2(uint8_t* key, size_t key_len, const char* pw, size_t pw_len, const uint8_t* salt) {
     const EVP_MD* digest = EVP_sha256();
 
     // SHA1 was used prior to increasing the key size
