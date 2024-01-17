@@ -1313,7 +1313,7 @@ impl LegacyBlobLoader {
                 Blob { flags, value: BlobValue::PwEncrypted { iv, tag, data, salt, key_size } } => {
                     if (flags & flags::ENCRYPTED) != 0 {
                         let key = pw
-                            .derive_key(&salt, key_size)
+                            .derive_key_pbkdf2(&salt, key_size)
                             .context(ks_err!("Failed to derive key from password."))?;
                         let blob = aes_gcm_decrypt(&data, &iv, &tag, &key)
                             .context(ks_err!("while trying to decrypt legacy super key blob."))?;
@@ -1953,7 +1953,7 @@ mod test {
         std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
 
         let pw: Password = PASSWORD.into();
-        let pw_key = TestKey(pw.derive_key(SUPERKEY_SALT, 32).unwrap());
+        let pw_key = TestKey(pw.derive_key_pbkdf2(SUPERKEY_SALT, 32).unwrap());
         let super_key =
             Arc::new(TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap()));
 
@@ -2040,7 +2040,7 @@ mod test {
         std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
 
         let pw: Password = PASSWORD.into();
-        let pw_key = TestKey(pw.derive_key(SUPERKEY_SALT, 32).unwrap());
+        let pw_key = TestKey(pw.derive_key_pbkdf2(SUPERKEY_SALT, 32).unwrap());
         let super_key =
             Arc::new(TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap()));
 
@@ -2128,7 +2128,7 @@ mod test {
         std::fs::create_dir(&*temp_dir.build().push("user_0")).unwrap();
 
         let pw: Password = PASSWORD.into();
-        let pw_key = TestKey(pw.derive_key(SUPERKEY_SALT, 32).unwrap());
+        let pw_key = TestKey(pw.derive_key_pbkdf2(SUPERKEY_SALT, 32).unwrap());
         let super_key =
             Arc::new(TestKey(pw_key.decrypt(SUPERKEY_PAYLOAD, SUPERKEY_IV, SUPERKEY_TAG).unwrap()));
 

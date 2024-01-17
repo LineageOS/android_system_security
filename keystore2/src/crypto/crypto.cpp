@@ -191,8 +191,7 @@ static constexpr size_t SALT_SIZE = 16;
 
 // Copied from system/security/keystore/user_state.cpp.
 
-void generateKeyFromPassword(uint8_t* key, size_t key_len, const char* pw, size_t pw_len,
-                             const uint8_t* salt) {
+void PBKDF2(uint8_t* key, size_t key_len, const char* pw, size_t pw_len, const uint8_t* salt) {
     const EVP_MD* digest = EVP_sha256();
 
     // SHA1 was used prior to increasing the key size

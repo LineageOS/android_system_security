@@ -19,10 +19,10 @@ mod error;
 pub mod zvec;
 pub use error::Error;
 use keystore2_crypto_bindgen::{
-    extractSubjectFromCertificate, generateKeyFromPassword, hmacSha256, randomBytes,
-    AES_gcm_decrypt, AES_gcm_encrypt, ECDHComputeKey, ECKEYGenerateKey, ECKEYMarshalPrivateKey,
-    ECKEYParsePrivateKey, ECPOINTOct2Point, ECPOINTPoint2Oct, EC_KEY_free, EC_KEY_get0_public_key,
-    EC_POINT_free, HKDFExpand, HKDFExtract, EC_KEY, EC_MAX_BYTES, EC_POINT, EVP_MAX_MD_SIZE,
+    extractSubjectFromCertificate, hmacSha256, randomBytes, AES_gcm_decrypt, AES_gcm_encrypt,
+    ECDHComputeKey, ECKEYGenerateKey, ECKEYMarshalPrivateKey, ECKEYParsePrivateKey,
+    ECPOINTOct2Point, ECPOINTPoint2Oct, EC_KEY_free, EC_KEY_get0_public_key, EC_POINT_free,
+    HKDFExpand, HKDFExtract, EC_KEY, EC_MAX_BYTES, EC_POINT, EVP_MAX_MD_SIZE, PBKDF2,
 };
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -197,7 +197,7 @@ impl<'a> Password<'a> {
     /// Generate a key from the given password and salt.
     /// The salt must be exactly 16 bytes long.
     /// Two key sizes are accepted: 16 and 32 bytes.
-    pub fn derive_key(&self, salt: &[u8], key_length: usize) -> Result<ZVec, Error> {
+    pub fn derive_key_pbkdf2(&self, salt: &[u8], key_length: usize) -> Result<ZVec, Error> {
         if salt.len() != SALT_LENGTH {
             return Err(Error::InvalidSaltLength);
         }
@@ -212,7 +212,7 @@ impl<'a> Password<'a> {
         // Safety: We checked that the salt is exactly 16 bytes long. The other pointers are valid,
         // and have matching lengths.
         unsafe {
-            generateKeyFromPassword(
+            PBKDF2(
                 result.as_mut_ptr(),
                 result.len(),
                 pw.as_ptr() as *const std::os::raw::c_char,
@@ -471,9 +471,7 @@ pub fn parse_subject_from_certificate(cert_buf: &[u8]) -> Result<Vec<u8>, Error>
 mod tests {
 
     use super::*;
-    use keystore2_crypto_bindgen::{
-        generateKeyFromPassword, AES_gcm_decrypt, AES_gcm_encrypt, CreateKeyId,
-    };
+    use keystore2_crypto_bindgen::{AES_gcm_decrypt, AES_gcm_encrypt, CreateKeyId, PBKDF2};
 
     #[test]
     fn test_wrapper_roundtrip() {
@@ -535,21 +533,15 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_key_from_password() {
+    fn test_pbkdf2() {
         let mut key = vec![0; 16];
         let pw = [0; 16];
         let salt = [0; 16];
         // SAFETY: The pointers are obtained from references so they are valid, the salt is the
-        // expected length, the other lengths match the lengths of the arrays, and
-        // `generateKeyFromPassword` doesn't access them after it returns.
+        // expected length, the other lengths match the lengths of the arrays, and `PBKDF2` doesn't
+        // access them after it returns.
         unsafe {
-            generateKeyFromPassword(
-                key.as_mut_ptr(),
-                key.len(),
-                pw.as_ptr(),
-                pw.len(),
-                salt.as_ptr(),
-            );
+            PBKDF2(key.as_mut_ptr(), key.len(), pw.as_ptr(), pw.len(), salt.as_ptr());
         }
         assert_ne!(key, vec![0; 16]);
     }

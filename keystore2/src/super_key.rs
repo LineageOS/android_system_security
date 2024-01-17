@@ -532,7 +532,7 @@ impl SuperKeyManager {
                 (Some(&EncryptedBy::Password), Some(salt), Some(iv), Some(tag)) => {
                     // Note that password encryption is AES no matter the value of algorithm.
                     let key = pw
-                        .derive_key(salt, AES_256_KEY_LENGTH)
+                        .derive_key_pbkdf2(salt, AES_256_KEY_LENGTH)
                         .context(ks_err!("Failed to generate key from password."))?;
 
                     aes_gcm_decrypt(blob, iv, tag, &key)
@@ -569,7 +569,7 @@ impl SuperKeyManager {
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         let salt = generate_salt().context("In encrypt_with_password: Failed to generate salt.")?;
         let derived_key = pw
-            .derive_key(&salt, AES_256_KEY_LENGTH)
+            .derive_key_pbkdf2(&salt, AES_256_KEY_LENGTH)
             .context(ks_err!("Failed to derive password."))?;
         let mut metadata = BlobMetaData::new();
         metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::Password));
