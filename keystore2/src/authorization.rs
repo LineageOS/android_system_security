@@ -164,9 +164,21 @@ impl AuthorizationManager {
         }
     }
 
-    fn on_device_locked(&self, user_id: i32, unlocking_sids: &[i64]) -> Result<()> {
-        log::info!("on_device_locked(user_id={}, unlocking_sids={:?})", user_id, unlocking_sids);
-
+    fn on_device_locked(
+        &self,
+        user_id: i32,
+        unlocking_sids: &[i64],
+        mut weak_unlock_enabled: bool,
+    ) -> Result<()> {
+        log::info!(
+            "on_device_locked(user_id={}, unlocking_sids={:?}, weak_unlock_enabled={})",
+            user_id,
+            unlocking_sids,
+            weak_unlock_enabled
+        );
+        if !android_security_flags::fix_unlocked_device_required_keys_v2() {
+            weak_unlock_enabled = false;
+        }
         check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
         ENFORCEMENTS.set_device_locked(user_id, true);
         let mut skm = SUPER_KEY.write().unwrap();
@@ -175,8 +187,29 @@ impl AuthorizationManager {
                 &mut db.borrow_mut(),
                 user_id as u32,
                 unlocking_sids,
+                weak_unlock_enabled,
             );
         });
+        Ok(())
+    }
+
+    fn on_weak_unlock_methods_expired(&self, user_id: i32) -> Result<()> {
+        log::info!("on_weak_unlock_methods_expired(user_id={})", user_id);
+        if !android_security_flags::fix_unlocked_device_required_keys_v2() {
+            return Ok(());
+        }
+        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        SUPER_KEY.write().unwrap().wipe_plaintext_unlocked_device_required_keys(user_id as u32);
+        Ok(())
+    }
+
+    fn on_non_lskf_unlock_methods_expired(&self, user_id: i32) -> Result<()> {
+        log::info!("on_non_lskf_unlock_methods_expired(user_id={})", user_id);
+        if !android_security_flags::fix_unlocked_device_required_keys_v2() {
+            return Ok(());
+        }
+        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        SUPER_KEY.write().unwrap().wipe_all_unlocked_device_required_keys(user_id as u32);
         Ok(())
     }
 
@@ -240,9 +273,24 @@ impl IKeystoreAuthorization for AuthorizationManager {
         map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())), Ok)
     }
 
-    fn onDeviceLocked(&self, user_id: i32, unlocking_sids: &[i64]) -> BinderResult<()> {
+    fn onDeviceLocked(
+        &self,
+        user_id: i32,
+        unlocking_sids: &[i64],
+        weak_unlock_enabled: bool,
+    ) -> BinderResult<()> {
         let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceLocked", 500);
-        map_or_log_err(self.on_device_locked(user_id, unlocking_sids), Ok)
+        map_or_log_err(self.on_device_locked(user_id, unlocking_sids, weak_unlock_enabled), Ok)
+    }
+
+    fn onWeakUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onWeakUnlockMethodsExpired", 500);
+        map_or_log_err(self.on_weak_unlock_methods_expired(user_id), Ok)
+    }
+
+    fn onNonLskfUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onNonLskfUnlockMethodsExpired", 500);
+        map_or_log_err(self.on_non_lskf_unlock_methods_expired(user_id), Ok)
     }
 
     fn getAuthTokensForCredStore(
