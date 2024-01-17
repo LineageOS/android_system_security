@@ -144,7 +144,8 @@ fuzz_target!(|commands: Vec<FuzzCommand>| {
                 let _res = aes_gcm_encrypt(plaintext, key_aes_encrypt);
             }
             FuzzCommand::Password { pw, salt, key_length } => {
-                let _res = Password::from(pw).derive_key(salt, key_length % MAX_SIZE_MODIFIER);
+                let _res =
+                    Password::from(pw).derive_key_pbkdf2(salt, key_length % MAX_SIZE_MODIFIER);
             }
             FuzzCommand::HkdfExtract { hkdf_secret, hkdf_salt } => {
                 let _res = hkdf_extract(hkdf_secret, hkdf_salt);
