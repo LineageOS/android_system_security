@@ -33,7 +33,7 @@ rust_library {
     ],
     shared_libs: [
         "libkm_compat_service",
-    ]
+    ],
 }
 
 rust_test {
@@ -91,9 +91,9 @@ cc_library {
         "android.security.compat-ndk",
         "libbinder_ndk",
         "libcrypto",
-        "libkm_compat",
         "libkeymaster4_1support",
         "libkeystore2_crypto",
+        "libkm_compat",
     ],
 }
 
