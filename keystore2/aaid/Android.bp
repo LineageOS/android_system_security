@@ -27,7 +27,7 @@ cc_library {
         "aaid.cpp",
     ],
     shared_libs: [
-        "libkeystore-attestation-application-id"
+        "libkeystore-attestation-application-id",
     ],
 }
 
