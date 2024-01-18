@@ -28,6 +28,7 @@ rust_defaults {
         "keystore2_use_latest_aidl_rust",
     ],
     rustlibs: [
+        "android.security.authorization-rust",
         "libanyhow",
         "libbinder_rs",
         "libcxx",
@@ -39,11 +40,10 @@ rust_defaults {
         "libserde",
         "libserde_cbor",
         "libthiserror",
-        "android.security.authorization-rust",
     ],
     static_libs: [
-        "libkeystore2_ffi_test_utils",
         "libkeystore-engine",
+        "libkeystore2_ffi_test_utils",
     ],
     shared_libs: [
         "android.system.keystore2-V4-ndk",
