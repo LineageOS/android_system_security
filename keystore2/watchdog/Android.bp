@@ -27,7 +27,7 @@ rust_defaults {
     srcs: ["src/lib.rs"],
     rustlibs: [
         "liblog_rust",
-    ]
+    ],
 }
 
 rust_library {
@@ -45,5 +45,5 @@ rust_test {
     test_suites: ["general-tests"],
     rustlibs: [
         "libandroid_logger",
-    ]
+    ],
 }
