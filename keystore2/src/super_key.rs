@@ -532,11 +532,17 @@ impl SuperKeyManager {
                 (Some(&EncryptedBy::Password), Some(salt), Some(iv), Some(tag)) => {
                     // Note that password encryption is AES no matter the value of algorithm.
                     let key = pw
-                        .derive_key(salt, AES_256_KEY_LENGTH)
-                        .context(ks_err!("Failed to generate key from password."))?;
+                        .derive_key_hkdf(salt, AES_256_KEY_LENGTH)
+                        .context(ks_err!("Failed to derive key from password."))?;
 
-                    aes_gcm_decrypt(blob, iv, tag, &key)
-                        .context(ks_err!("Failed to decrypt key blob."))?
+                    aes_gcm_decrypt(blob, iv, tag, &key).or_else(|_e| {
+                        // Handle old key stored before the switch to HKDF.
+                        let key = pw
+                            .derive_key_pbkdf2(salt, AES_256_KEY_LENGTH)
+                            .context(ks_err!("Failed to derive key from password (PBKDF2)."))?;
+                        aes_gcm_decrypt(blob, iv, tag, &key)
+                            .context(ks_err!("Failed to decrypt key blob."))
+                    })?
                 }
                 (enc_by, salt, iv, tag) => {
                     return Err(Error::Rc(ResponseCode::VALUE_CORRUPTED)).context(ks_err!(
@@ -563,14 +569,20 @@ impl SuperKeyManager {
     }
 
     /// Encrypts the super key from a key derived from the password, before storing in the database.
+    /// This does not stretch the password; i.e., it assumes that the password is a high-entropy
+    /// synthetic password, not a low-entropy user provided password.
     pub fn encrypt_with_password(
         super_key: &[u8],
         pw: &Password,
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         let salt = generate_salt().context("In encrypt_with_password: Failed to generate salt.")?;
-        let derived_key = pw
-            .derive_key(&salt, AES_256_KEY_LENGTH)
-            .context(ks_err!("Failed to derive password."))?;
+        let derived_key = if android_security_flags::fix_unlocked_device_required_keys_v2() {
+            pw.derive_key_hkdf(&salt, AES_256_KEY_LENGTH)
+                .context(ks_err!("Failed to derive key from password."))?
+        } else {
+            pw.derive_key_pbkdf2(&salt, AES_256_KEY_LENGTH)
+                .context(ks_err!("Failed to derive password."))?
+        };
         let mut metadata = BlobMetaData::new();
         metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::Password));
         metadata.add(BlobMetaEntry::Salt(salt));

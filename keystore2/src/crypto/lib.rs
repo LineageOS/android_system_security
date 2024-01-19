@@ -19,10 +19,10 @@ mod error;
 pub mod zvec;
 pub use error::Error;
 use keystore2_crypto_bindgen::{
-    extractSubjectFromCertificate, generateKeyFromPassword, hmacSha256, randomBytes,
-    AES_gcm_decrypt, AES_gcm_encrypt, ECDHComputeKey, ECKEYGenerateKey, ECKEYMarshalPrivateKey,
-    ECKEYParsePrivateKey, ECPOINTOct2Point, ECPOINTPoint2Oct, EC_KEY_free, EC_KEY_get0_public_key,
-    EC_POINT_free, HKDFExpand, HKDFExtract, EC_KEY, EC_MAX_BYTES, EC_POINT, EVP_MAX_MD_SIZE,
+    extractSubjectFromCertificate, hmacSha256, randomBytes, AES_gcm_decrypt, AES_gcm_encrypt,
+    ECDHComputeKey, ECKEYGenerateKey, ECKEYMarshalPrivateKey, ECKEYParsePrivateKey,
+    ECPOINTOct2Point, ECPOINTPoint2Oct, EC_KEY_free, EC_KEY_get0_public_key, EC_POINT_free,
+    HKDFExpand, HKDFExtract, EC_KEY, EC_MAX_BYTES, EC_POINT, EVP_MAX_MD_SIZE, PBKDF2,
 };
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -172,7 +172,7 @@ pub fn aes_gcm_encrypt(plaintext: &[u8], key: &[u8]) -> Result<(Vec<u8>, Vec<u8>
     }
 }
 
-/// Represents a "password" that can be used to key the PBKDF2 algorithm.
+/// A high-entropy synthetic password from which an AES key may be derived.
 pub enum Password<'a> {
     /// Borrow an existing byte array
     Ref(&'a [u8]),
@@ -194,25 +194,28 @@ impl<'a> Password<'a> {
         }
     }
 
-    /// Generate a key from the given password and salt.
-    /// The salt must be exactly 16 bytes long.
-    /// Two key sizes are accepted: 16 and 32 bytes.
-    pub fn derive_key(&self, salt: &[u8], key_length: usize) -> Result<ZVec, Error> {
+    /// Derives a key from the given password and salt, using PBKDF2 with 8192 iterations.
+    ///
+    /// The salt length must be 16 bytes, and the output key length must be 16 or 32 bytes.
+    ///
+    /// This function exists only for backwards compatibility reasons.  Keystore now receives only
+    /// high-entropy synthetic passwords, which do not require key stretching.
+    pub fn derive_key_pbkdf2(&self, salt: &[u8], out_len: usize) -> Result<ZVec, Error> {
         if salt.len() != SALT_LENGTH {
             return Err(Error::InvalidSaltLength);
         }
-        match key_length {
+        match out_len {
             AES_128_KEY_LENGTH | AES_256_KEY_LENGTH => {}
             _ => return Err(Error::InvalidKeyLength),
         }
 
         let pw = self.get_key();
-        let mut result = ZVec::new(key_length)?;
+        let mut result = ZVec::new(out_len)?;
 
         // Safety: We checked that the salt is exactly 16 bytes long. The other pointers are valid,
         // and have matching lengths.
         unsafe {
-            generateKeyFromPassword(
+            PBKDF2(
                 result.as_mut_ptr(),
                 result.len(),
                 pw.as_ptr() as *const std::os::raw::c_char,
@@ -222,6 +225,13 @@ impl<'a> Password<'a> {
         };
 
         Ok(result)
+    }
+
+    /// Derives a key from the given high-entropy synthetic password and salt, using HKDF.
+    pub fn derive_key_hkdf(&self, salt: &[u8], out_len: usize) -> Result<ZVec, Error> {
+        let prk = hkdf_extract(self.get_key(), salt)?;
+        let info = [];
+        hkdf_expand(out_len, &prk, &info)
     }
 
     /// Try to make another Password object with the same data.
@@ -471,9 +481,7 @@ pub fn parse_subject_from_certificate(cert_buf: &[u8]) -> Result<Vec<u8>, Error>
 mod tests {
 
     use super::*;
-    use keystore2_crypto_bindgen::{
-        generateKeyFromPassword, AES_gcm_decrypt, AES_gcm_encrypt, CreateKeyId,
-    };
+    use keystore2_crypto_bindgen::{AES_gcm_decrypt, AES_gcm_encrypt, CreateKeyId, PBKDF2};
 
     #[test]
     fn test_wrapper_roundtrip() {
@@ -535,21 +543,15 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_key_from_password() {
+    fn test_pbkdf2() {
         let mut key = vec![0; 16];
         let pw = [0; 16];
         let salt = [0; 16];
         // SAFETY: The pointers are obtained from references so they are valid, the salt is the
-        // expected length, the other lengths match the lengths of the arrays, and
-        // `generateKeyFromPassword` doesn't access them after it returns.
+        // expected length, the other lengths match the lengths of the arrays, and `PBKDF2` doesn't
+        // access them after it returns.
         unsafe {
-            generateKeyFromPassword(
-                key.as_mut_ptr(),
-                key.len(),
-                pw.as_ptr(),
-                pw.len(),
-                salt.as_ptr(),
-            );
+            PBKDF2(key.as_mut_ptr(), key.len(), pw.as_ptr(), pw.len(), salt.as_ptr());
         }
         assert_ne!(key, vec![0; 16]);
     }
