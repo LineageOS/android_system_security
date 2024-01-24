@@ -286,6 +286,17 @@ impl Maintenance {
 
         Maintenance::call_on_all_security_levels("deleteAllKeys", |dev| dev.deleteAllKeys())
     }
+
+    fn get_app_uids_affected_by_sid(
+        user_id: i32,
+        secure_user_id: i64,
+    ) -> Result<std::vec::Vec<i64>> {
+        // This method is intended to be called by Settings and discloses a list of apps
+        // associated with a user, so it requires the ChangeUser permission.
+        check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
+        DB.with(|db| db.borrow_mut().get_app_uids_affected_by_sid(user_id, secure_user_id))
+            .context(ks_err!("Failed to get app UIDs affected by SID"))
+    }
 }
 
 impl Interface for Maintenance {}
@@ -362,5 +373,15 @@ impl IKeystoreMaintenance for Maintenance {
         log::warn!("deleteAllKeys()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
         map_or_log_err(Self::delete_all_keys(), Ok)
+    }
+
+    fn getAppUidsAffectedBySid(
+        &self,
+        user_id: i32,
+        secure_user_id: i64,
+    ) -> BinderResult<std::vec::Vec<i64>> {
+        log::info!("getAppUidsAffectedBySid(secure_user_id={secure_user_id:?})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::getAppUidsAffectedBySid", 500);
+        map_or_log_err(Self::get_app_uids_affected_by_sid(user_id, secure_user_id), Ok)
     }
 }
