@@ -27,6 +27,10 @@ interface IConfirmationCallback {
     /**
      * This callback gets called by the implementing service when a pending confirmation prompt
      * gets finalized.
+     * @deprecated Android Protected Confirmation had a low adoption rate among Android device
+     *             makers and developers alike. Given the lack of devices supporting the feature,
+     *             it is deprecated. Developers can use auth-bound Keystore keys as a partial
+     *             replacement.
      *
      * @param result
      *  - ResponseCode.OK On success. In this case dataConfirmed must be non null.
