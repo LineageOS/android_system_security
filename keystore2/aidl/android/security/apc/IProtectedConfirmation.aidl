@@ -35,6 +35,10 @@ interface IProtectedConfirmation {
     /**
      * Present the confirmation prompt. The caller must implement IConfirmationCallback and pass
      * it to this function as listener.
+     * @deprecated Android Protected Confirmation had a low adoption rate among Android device
+     *             makers and developers alike. Given the lack of devices supporting the
+     *             feature, it is deprecated. Developers can use auth-bound Keystore keys
+     *             as a partial replacement.
      *
      * @param listener Must implement IConfirmationCallback. Doubles as session identifier when
      *           passed to cancelPrompt.
@@ -55,6 +59,11 @@ interface IProtectedConfirmation {
 
     /**
      * Cancel an ongoing prompt.
+     * @deprecated Android Protected Confirmation had a low adoption rate among Android device
+     *             makers and developers alike. Given the lack of devices supporting the 
+     *             feature, it is deprecated. Developers can use auth-bound Keystore keys as
+     *             a partial replacement.
+     *
      *
      * @param listener Must implement IConfirmationCallback, although in this context this binder
      *            token is only used to identify the session that is to be cancelled.
@@ -66,6 +75,10 @@ interface IProtectedConfirmation {
 
     /**
      * Returns true if the device supports Android Protected Confirmation.
+     * @deprecated Android Protected Confirmation had a low adoption rate among Android device
+     *             makers and developers alike. Given the lack of devices supporting the
+     *             feature, it is deprecated. Developers can use auth-bound Keystore keys
+     *             as a partial replacement.
      */
     boolean isSupported();
 }
