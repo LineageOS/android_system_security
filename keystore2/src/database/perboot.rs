@@ -15,7 +15,7 @@
 //! This module implements a per-boot, shared, in-memory storage of auth tokens
 //! and last-time-on-body for the main Keystore 2.0 database module.
 
-use super::{AuthTokenEntry, MonotonicRawTime};
+use super::{AuthTokenEntry, BootTime};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
 };
@@ -103,11 +103,11 @@ impl PerbootDB {
         matches.last().map(|x| x.0.clone())
     }
     /// Get the last time the device was off the user's body
-    pub fn get_last_off_body(&self) -> MonotonicRawTime {
-        MonotonicRawTime(self.last_off_body.load(Ordering::Relaxed))
+    pub fn get_last_off_body(&self) -> BootTime {
+        BootTime(self.last_off_body.load(Ordering::Relaxed))
     }
     /// Set the last time the device was off the user's body
-    pub fn set_last_off_body(&self, last_off_body: MonotonicRawTime) {
+    pub fn set_last_off_body(&self, last_off_body: BootTime) {
         self.last_off_body.store(last_off_body.0, Ordering::Relaxed)
     }
     /// Return how many auth tokens are currently tracked.
