@@ -142,6 +142,8 @@ cc_binary {
     "libfsverity",
     "liblogwrap",
     "libprotobuf-cpp-lite",
+    "libstatspull",
+    "libstatssocket",
     "libutils",
   ],
 }
