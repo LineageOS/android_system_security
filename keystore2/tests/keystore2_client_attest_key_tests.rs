@@ -31,12 +31,13 @@ use keystore2_test_utils::{
 use keystore2_test_utils::ffi_test_utils::{get_value_from_attest_record, validate_certchain};
 
 use crate::{
-    skip_test_if_no_app_attest_key_feature, skip_test_if_no_device_id_attestation_feature,
+    skip_device_id_attestation_tests, skip_test_if_no_app_attest_key_feature,
+    skip_test_if_no_device_id_attestation_feature,
 };
 
 use crate::keystore2_client_test_utils::{
     app_attest_key_feature_exists, device_id_attestation_feature_exists, get_attest_id_value,
-    is_second_imei_id_attestation_required,
+    is_second_imei_id_attestation_required, skip_device_id_attest_tests,
 };
 
 /// Generate RSA and EC attestation keys and use them for signing RSA-signing keys.
@@ -522,6 +523,8 @@ fn get_attestation_ids(keystore2: &binder::Strong<dyn IKeystoreService>) -> Vec<
 /// INVALID_TAG`
 fn generate_attested_key_with_device_attest_ids(algorithm: Algorithm) {
     skip_test_if_no_device_id_attestation_feature!();
+    skip_device_id_attestation_tests!();
+    skip_test_if_no_app_attest_key_feature!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
