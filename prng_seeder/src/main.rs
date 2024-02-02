@@ -31,7 +31,7 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
-use log::{error, info, Level};
+use log::{error, info, LevelFilter};
 use nix::sys::signal;
 use tokio::{io::AsyncWriteExt, net::UnixListener as TokioUnixListener};
 
@@ -48,7 +48,9 @@ struct Cli {
 fn configure_logging() -> Result<()> {
     ensure!(
         logger::init(
-            logger::Config::default().with_tag_on_device("prng_seeder").with_min_level(Level::Info)
+            logger::Config::default()
+                .with_tag_on_device("prng_seeder")
+                .with_max_level(LevelFilter::Info)
         ),
         "log configuration failed"
     );
