@@ -1,4 +1,5 @@
 package {
+    default_team: "trendy_team_android_hardware_backed_security",
     // See: http://go/android-license-faq
     // A large-scale-change added 'default_applicable_licenses' to import
     // all of the 'license_kinds' from "system_security_license"
@@ -17,7 +18,7 @@ cc_defaults {
         "-Wno-deprecated-declarations",
     ],
     sanitize: {
-        misc_undefined : ["integer"],
+        misc_undefined: ["integer"],
     },
 
 }
@@ -102,7 +103,7 @@ cc_library_static {
     name: "libcredstore_aidl",
     srcs: [
         ":credstore_aidl",
-        ],
+    ],
     aidl: {
         export_aidl_headers: true,
         include_dirs: [
@@ -136,6 +137,6 @@ cc_fuzz {
         cc: [
             "trong@google.com",
             "zeuthen@google.com",
-        ]
+        ],
     },
 }
