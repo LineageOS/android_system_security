@@ -158,6 +158,7 @@ rust_binary {
 aconfig_declarations {
     name: "keystore2_flags",
     package: "android.security.keystore2",
+    container: "system",
     srcs: ["aconfig/flags.aconfig"],
 }
 

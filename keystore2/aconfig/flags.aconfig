@@ -1,4 +1,5 @@
 package: "android.security.keystore2"
+container: "system"
 
 flag {
   name: "wal_db_journalmode_v3"
