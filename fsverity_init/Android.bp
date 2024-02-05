@@ -22,12 +22,17 @@ cc_binary {
         "libkeyutils",
         "liblog",
     ],
-    cflags: ["-Werror", "-Wall", "-Wextra"],
+    cflags: [
+        "-Werror",
+        "-Wall",
+        "-Wextra",
+    ],
 }
 
 aconfig_declarations {
     name: "aconfig_fsverity_init",
     package: "android.security.flag",
+    container: "system",
     srcs: ["flags.aconfig"],
 }
 

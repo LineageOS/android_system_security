@@ -1,4 +1,5 @@
 package: "android.security.flag"
+container: "system"
 
 flag {
     name: "deprecate_fsverity_init"
