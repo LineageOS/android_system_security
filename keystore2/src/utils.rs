@@ -129,6 +129,15 @@ pub fn check_unique_id_attestation_permissions() -> anyhow::Result<()> {
     check_android_permission("android.permission.REQUEST_UNIQUE_ID_ATTESTATION")
 }
 
+/// This function checks whether the calling app has the Android permissions needed to manage
+/// users. Only callers that can manage users are allowed to get a list of apps affected
+/// by a user's SID changing.
+/// It throws an error if the permissions cannot be verified or if the caller doesn't
+/// have the right permissions. Otherwise it returns silently.
+pub fn check_get_app_uids_affected_by_sid_permissions() -> anyhow::Result<()> {
+    check_android_permission("android.permission.MANAGE_USERS")
+}
+
 fn check_android_permission(permission: &str) -> anyhow::Result<()> {
     let permission_controller: Strong<dyn IPermissionController::IPermissionController> =
         binder::get_interface("permission")?;
