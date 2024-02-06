@@ -24,7 +24,8 @@ use crate::ks_err;
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::{SuperKeyManager, UserState};
 use crate::utils::{
-    check_key_permission, check_keystore_permission, uid_to_android_user, watchdog as wd,
+    check_get_app_uids_affected_by_sid_permissions, check_key_permission,
+    check_keystore_permission, uid_to_android_user, watchdog as wd,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
@@ -292,8 +293,9 @@ impl Maintenance {
         secure_user_id: i64,
     ) -> Result<std::vec::Vec<i64>> {
         // This method is intended to be called by Settings and discloses a list of apps
-        // associated with a user, so it requires the ChangeUser permission.
-        check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
+        // associated with a user, so it requires the "android.permission.MANAGE_USERS"
+        // permission (to avoid leaking list of apps to unauthorized callers).
+        check_get_app_uids_affected_by_sid_permissions().context(ks_err!())?;
         DB.with(|db| db.borrow_mut().get_app_uids_affected_by_sid(user_id, secure_user_id))
             .context(ks_err!("Failed to get app UIDs affected by SID"))
     }
