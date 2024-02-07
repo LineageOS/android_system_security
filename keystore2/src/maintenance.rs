@@ -14,7 +14,7 @@
 
 //! This module implements IKeystoreMaintenance AIDL interface.
 
-use crate::database::{KeyEntryLoadBits, KeyType, MonotonicRawTime};
+use crate::database::{BootTime, KeyEntryLoadBits, KeyType};
 use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
@@ -228,7 +228,7 @@ impl Maintenance {
         // Security critical permission check. This statement must return on fail.
         check_keystore_permission(KeystorePerm::ReportOffBody).context(ks_err!())?;
 
-        DB.with(|db| db.borrow_mut().update_last_off_body(MonotonicRawTime::now()));
+        DB.with(|db| db.borrow_mut().update_last_off_body(BootTime::now()));
         Ok(())
     }
 
