@@ -761,22 +761,22 @@ pub struct KeystoreDB {
 }
 
 /// Database representation of the monotonic time retrieved from the system call clock_gettime with
-/// CLOCK_MONOTONIC_RAW. Stores monotonic time as i64 in milliseconds.
+/// CLOCK_BOOTTIME. Stores monotonic time as i64 in milliseconds.
 #[derive(Debug, Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
-pub struct MonotonicRawTime(i64);
+pub struct BootTime(i64);
 
-impl MonotonicRawTime {
-    /// Constructs a new MonotonicRawTime
+impl BootTime {
+    /// Constructs a new BootTime
     pub fn now() -> Self {
         Self(get_current_time_in_milliseconds())
     }
 
-    /// Returns the value of MonotonicRawTime in milliseconds as i64
+    /// Returns the value of BootTime in milliseconds as i64
     pub fn milliseconds(&self) -> i64 {
         self.0
     }
 
-    /// Returns the integer value of MonotonicRawTime as i64
+    /// Returns the integer value of BootTime as i64
     pub fn seconds(&self) -> i64 {
         self.0 / 1000
     }
@@ -787,13 +787,13 @@ impl MonotonicRawTime {
     }
 }
 
-impl ToSql for MonotonicRawTime {
+impl ToSql for BootTime {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
         Ok(ToSqlOutput::Owned(Value::Integer(self.0)))
     }
 }
 
-impl FromSql for MonotonicRawTime {
+impl FromSql for BootTime {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
         Ok(Self(i64::column_result(value)?))
     }
@@ -805,11 +805,11 @@ impl FromSql for MonotonicRawTime {
 pub struct AuthTokenEntry {
     auth_token: HardwareAuthToken,
     // Time received in milliseconds
-    time_received: MonotonicRawTime,
+    time_received: BootTime,
 }
 
 impl AuthTokenEntry {
-    fn new(auth_token: HardwareAuthToken, time_received: MonotonicRawTime) -> Self {
+    fn new(auth_token: HardwareAuthToken, time_received: BootTime) -> Self {
         AuthTokenEntry { auth_token, time_received }
     }
 
@@ -832,7 +832,7 @@ impl AuthTokenEntry {
     }
 
     /// Returns the time that this auth token was received.
-    pub fn time_received(&self) -> MonotonicRawTime {
+    pub fn time_received(&self) -> BootTime {
         self.time_received
     }
 
@@ -2858,14 +2858,12 @@ impl KeystoreDB {
 
     /// Insert or replace the auth token based on (user_id, auth_id, auth_type)
     pub fn insert_auth_token(&mut self, auth_token: &HardwareAuthToken) {
-        self.perboot.insert_auth_token_entry(AuthTokenEntry::new(
-            auth_token.clone(),
-            MonotonicRawTime::now(),
-        ))
+        self.perboot
+            .insert_auth_token_entry(AuthTokenEntry::new(auth_token.clone(), BootTime::now()))
     }
 
     /// Find the newest auth token matching the given predicate.
-    pub fn find_auth_token_entry<F>(&self, p: F) -> Option<(AuthTokenEntry, MonotonicRawTime)>
+    pub fn find_auth_token_entry<F>(&self, p: F) -> Option<(AuthTokenEntry, BootTime)>
     where
         F: Fn(&AuthTokenEntry) -> bool,
     {
@@ -2873,17 +2871,17 @@ impl KeystoreDB {
     }
 
     /// Insert last_off_body into the metadata table at the initialization of auth token table
-    pub fn insert_last_off_body(&self, last_off_body: MonotonicRawTime) {
+    pub fn insert_last_off_body(&self, last_off_body: BootTime) {
         self.perboot.set_last_off_body(last_off_body)
     }
 
     /// Update last_off_body when on_device_off_body is called
-    pub fn update_last_off_body(&self, last_off_body: MonotonicRawTime) {
+    pub fn update_last_off_body(&self, last_off_body: BootTime) {
         self.perboot.set_last_off_body(last_off_body)
     }
 
     /// Get last_off_body time when finding auth tokens
-    fn get_last_off_body(&self) -> MonotonicRawTime {
+    fn get_last_off_body(&self) -> BootTime {
         self.perboot.get_last_off_body()
     }
 
@@ -5054,13 +5052,13 @@ pub mod tests {
     #[test]
     fn test_last_off_body() -> Result<()> {
         let mut db = new_test_db()?;
-        db.insert_last_off_body(MonotonicRawTime::now());
+        db.insert_last_off_body(BootTime::now());
         let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.commit()?;
         let last_off_body_1 = db.get_last_off_body();
         let one_second = Duration::from_secs(1);
         thread::sleep(one_second);
-        db.update_last_off_body(MonotonicRawTime::now());
+        db.update_last_off_body(BootTime::now());
         let tx2 = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx2.commit()?;
         let last_off_body_2 = db.get_last_off_body();

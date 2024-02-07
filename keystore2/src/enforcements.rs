@@ -20,7 +20,7 @@ use crate::globals::{get_timestamp_service, ASYNC_TASK, DB, ENFORCEMENTS};
 use crate::key_parameter::{KeyParameter, KeyParameterValue};
 use crate::{authorization::Error as AuthzError, super_key::SuperEncryptionType};
 use crate::{
-    database::{AuthTokenEntry, MonotonicRawTime},
+    database::{AuthTokenEntry, BootTime},
     globals::SUPER_KEY,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
@@ -614,7 +614,7 @@ impl Enforcements {
                     })
                     .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
                     .context(ks_err!("No suitable auth token found."))?;
-                let now = MonotonicRawTime::now();
+                let now = BootTime::now();
                 let token_age = now
                     .checked_sub(&hat.time_received())
                     .ok_or_else(Error::sys)
@@ -680,7 +680,7 @@ impl Enforcements {
         // Now check the validity of the auth token if the key is timeout bound.
         let hat = match (hat_and_last_off_body, key_time_out) {
             (Some((hat, last_off_body)), Some(key_time_out)) => {
-                let now = MonotonicRawTime::now();
+                let now = BootTime::now();
                 let token_age = now
                     .checked_sub(&hat.time_received())
                     .ok_or_else(Error::sys)
@@ -728,7 +728,7 @@ impl Enforcements {
         })
     }
 
-    fn find_auth_token<F>(p: F) -> Option<(AuthTokenEntry, MonotonicRawTime)>
+    fn find_auth_token<F>(p: F) -> Option<(AuthTokenEntry, BootTime)>
     where
         F: Fn(&AuthTokenEntry) -> bool,
     {
@@ -853,7 +853,7 @@ impl Enforcements {
         } else {
             // Filter the matching auth tokens by age.
             if auth_token_max_age_millis != 0 {
-                let now_in_millis = MonotonicRawTime::now();
+                let now_in_millis = BootTime::now();
                 let result = Self::find_auth_token(|auth_token_entry: &AuthTokenEntry| {
                     let token_valid = now_in_millis
                         .checked_sub(&auth_token_entry.time_received())
@@ -889,7 +889,7 @@ impl Enforcements {
         &self,
         secure_user_id: i64,
         auth_type: HardwareAuthenticatorType,
-    ) -> Option<MonotonicRawTime> {
+    ) -> Option<BootTime> {
         let sids: Vec<i64> = vec![secure_user_id];
 
         let result =
