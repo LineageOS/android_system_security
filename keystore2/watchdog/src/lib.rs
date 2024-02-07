@@ -335,7 +335,7 @@ mod tests {
         android_logger::init_once(
             android_logger::Config::default()
                 .with_tag("keystore2_watchdog_tests")
-                .with_min_level(log::Level::Debug),
+                .with_max_level(log::LevelFilter::Debug),
         );
 
         let wd = Watchdog::new(Watchdog::NOISY_REPORT_TIMEOUT.checked_mul(3).unwrap());
