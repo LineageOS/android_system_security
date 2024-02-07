@@ -352,7 +352,7 @@ pub mod tests {
         android_logger::init_once(
             android_logger::Config::default()
                 .with_tag("keystore_error_tests")
-                .with_min_level(log::Level::Debug),
+                .with_max_level(log::LevelFilter::Debug),
         );
         // All Error::Rc(x) get mapped on a service specific error
         // code of x.

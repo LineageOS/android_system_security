@@ -69,7 +69,7 @@ fn test_concurrent_check_access() {
     android_logger::init_once(
         android_logger::Config::default()
             .with_tag("keystore2_selinux_concurrency_test")
-            .with_min_level(log::Level::Debug),
+            .with_max_level(log::LevelFilter::Debug),
     );
 
     let cpus = num_cpus::get();
