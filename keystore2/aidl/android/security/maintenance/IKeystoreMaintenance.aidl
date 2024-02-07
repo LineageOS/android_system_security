@@ -151,7 +151,8 @@ interface IKeystoreMaintenance {
      * (addition of a fingerprint, for example), authentication-bound keys may be invalidated.
      * This method allows the platform to find out which apps would be affected (for a given user)
      * when a given user secure ID is removed.
-     * Callers require 'ChangeUser' permission.
+     * Callers require the `android.permission.MANAGE_USERS` Android permission
+     * (not SELinux policy).
      *
      * @param userId The affected user.
      * @param sid The user secure ID - identifier of the authentication method.
