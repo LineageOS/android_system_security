@@ -720,7 +720,7 @@ mod tests {
                     android_logger::init_once(
                         android_logger::Config::default()
                             .with_tag("keystore_selinux_tests")
-                            .with_min_level(log::Level::Debug),
+                            .with_max_level(log::LevelFilter::Debug),
                     );
                     let scontext = Context::new("u:r:shell:s0")?;
                     let backend = KeystoreKeyBackend::new()?;
