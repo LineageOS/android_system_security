@@ -140,7 +140,7 @@ fn keystore2_list_entries_success() {
                 let key_descriptors = keystore2.listEntries(Domain::APP, -1).unwrap();
                 assert_eq!(1, key_descriptors.len());
 
-                let key = key_descriptors.get(0).unwrap();
+                let key = key_descriptors.first().unwrap();
                 assert_eq!(key.alias, Some(alias));
                 assert_eq!(key.nspace, GRANTEE_UID.try_into().unwrap());
                 assert_eq!(key.domain, Domain::APP);
