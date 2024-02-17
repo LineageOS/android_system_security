@@ -1167,9 +1167,9 @@ impl KeystoreDB {
                     "DELETE FROM persistent.blobmetadata WHERE blobentryid = ?;",
                     params![blob_id],
                 )
-                .context("Trying to delete blob metadata.")?;
+                .context(ks_err!("Trying to delete blob metadata: {:?}", blob_id))?;
                 tx.execute("DELETE FROM persistent.blobentry WHERE id = ?;", params![blob_id])
-                    .context("Trying to blob.")?;
+                    .context(ks_err!("Trying to delete blob: {:?}", blob_id))?;
             }
 
             Self::cleanup_unreferenced(tx).context("Trying to cleanup unreferenced.")?;
