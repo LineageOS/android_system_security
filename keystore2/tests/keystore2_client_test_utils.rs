@@ -15,6 +15,7 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use openssl::bn::BigNum;
@@ -88,6 +89,22 @@ pub fn device_id_attestation_feature_exists() -> bool {
     pm.hasSystemFeature(DEVICE_ID_ATTESTATION_FEATURE, 0).expect("hasSystemFeature failed.")
 }
 
+/// Determines whether to skip device id attestation tests on GSI build with API level < 34.
+pub fn skip_device_id_attest_tests() -> bool {
+    // b/298586194, there are some devices launched with Android T, and they will be receiving
+    // only system update and not vendor update, newly added attestation properties
+    // (ro.product.*_for_attestation) reading logic would not be available for such devices
+    // hence skipping this test for such scenario.
+    let api_level = std::str::from_utf8(&get_system_prop("ro.board.first_api_level"))
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    // This file is only present on GSI builds.
+    let path_buf = PathBuf::from("/system/system_ext/etc/init/init.gsi.rc");
+
+    api_level < 34 && path_buf.as_path().is_file()
+}
+
 #[macro_export]
 macro_rules! skip_test_if_no_app_attest_key_feature {
     () => {
@@ -101,6 +118,24 @@ macro_rules! skip_test_if_no_app_attest_key_feature {
 macro_rules! skip_test_if_no_device_id_attestation_feature {
     () => {
         if !device_id_attestation_feature_exists() {
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! skip_device_id_attestation_tests {
+    () => {
+        if skip_device_id_attest_tests() {
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! skip_tests_if_keymaster_impl_present {
+    () => {
+        if !key_generations::has_default_keymint() {
             return;
         }
     };
