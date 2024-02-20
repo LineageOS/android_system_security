@@ -155,11 +155,19 @@ bool ChainSignaturesAreValid(const vector<certificate_t>& chain, bool strict_iss
         }
 
         if (!X509_verify(key_cert.get(), signing_pubkey.get())) {
-            LOG(ERROR) << "Verification of certificate " << i << " failed "
-                       << "OpenSSL error string: " << ERR_error_string(ERR_get_error(), NULL)
-                       << '\n'
-                       << cert_data.str();
-            return false;
+            // Handles the case of device-unique attestation chain which is not expected to be
+            // self-signed - b/191361618
+            // For device-unique attestation chain `strict_issuer_check` is not set, so ignore the
+            // root certificate signature verification result and in all other cases return the
+            // error.
+            bool is_root_cert = (i == chain.size() - 1);
+            if (strict_issuer_check || !is_root_cert) {
+                LOG(ERROR) << "Verification of certificate " << i << " failed "
+                           << "OpenSSL error string: " << ERR_error_string(ERR_get_error(), NULL)
+                           << '\n'
+                           << cert_data.str();
+                return false;
+            }
         }
 
         string cert_issuer = x509NameToStr(X509_get_issuer_name(key_cert.get()));
