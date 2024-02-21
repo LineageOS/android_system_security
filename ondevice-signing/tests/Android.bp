@@ -13,6 +13,7 @@
 // limitations under the License.
 
 package {
+    default_team: "trendy_team_art_mainline",
     // See: http://go/android-license-faq
     // A large-scale-change added 'default_applicable_licenses' to import
     // all of the 'license_kinds' from "system_security_license"
@@ -22,23 +23,23 @@ package {
 }
 
 cc_test {
-  name: "libsigningutils_test",
-  srcs: ["SigningUtilsTest.cpp"],
-  test_suites: ["device-tests"],
-  compile_multilib: "both",
-  defaults: [
-    "odsign_flags_defaults",
-  ],
-  static_libs: [
-    "libsigningutils",
-  ],
-  shared_libs: [
-    "libbase",
-    "libcrypto",
-  ],
-  data: [
-    "test_file",
-    "test_file.sig",
-    "SigningUtils.cert.der",
-  ],
+    name: "libsigningutils_test",
+    srcs: ["SigningUtilsTest.cpp"],
+    test_suites: ["device-tests"],
+    compile_multilib: "both",
+    defaults: [
+        "odsign_flags_defaults",
+    ],
+    static_libs: [
+        "libsigningutils",
+    ],
+    shared_libs: [
+        "libbase",
+        "libcrypto",
+    ],
+    data: [
+        "test_file",
+        "test_file.sig",
+        "SigningUtils.cert.der",
+    ],
 }
