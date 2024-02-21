@@ -41,10 +41,13 @@ use keystore2_test_utils::{
 };
 
 use crate::keystore2_client_test_utils::{
-    delete_app_key, perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
-    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op,
-    verify_certificate_serial_num, verify_certificate_subject_name, SAMPLE_PLAIN_TEXT,
+    app_attest_key_feature_exists, delete_app_key, perform_sample_asym_sign_verify_op,
+    perform_sample_hmac_sign_verify_op, perform_sample_sym_key_decrypt_op,
+    perform_sample_sym_key_encrypt_op, verify_certificate_serial_num,
+    verify_certificate_subject_name, SAMPLE_PLAIN_TEXT,
 };
+
+use crate::{skip_test_if_no_app_attest_key_feature, skip_tests_if_keymaster_impl_present};
 
 use keystore2_test_utils::ffi_test_utils::get_value_from_attest_record;
 
@@ -112,8 +115,9 @@ fn generate_key_and_perform_op_with_max_usage_limit(
 
     let auth = key_generations::get_key_auth(&key_metadata.authorizations, Tag::USAGE_COUNT_LIMIT)
         .unwrap();
-    if check_attestation {
+    if check_attestation && key_generations::has_default_keymint() {
         // Check usage-count-limit is included in attest-record.
+        // `USAGE_COUNT_LIMIT` is supported from KeyMint1.0
         assert_ne!(
             gen_params.iter().filter(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE).count(),
             0,
@@ -443,6 +447,7 @@ fn keystore2_gen_key_auth_usage_expire_datetime_decrypt_op_fail() {
 /// during creation of an operation using this key.
 #[test]
 fn keystore2_gen_key_auth_boot_loader_only_op_fail() {
+    skip_tests_if_keymaster_impl_present!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
@@ -472,6 +477,7 @@ fn keystore2_gen_key_auth_boot_loader_only_op_fail() {
 /// during creation of an operation using this key.
 #[test]
 fn keystore2_gen_key_auth_early_boot_only_op_fail() {
+    skip_tests_if_keymaster_impl_present!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
@@ -815,6 +821,7 @@ fn keystore2_gen_key_auth_app_id_test_fail() {
 /// generated attestation-key.
 #[test]
 fn keystore2_gen_attested_key_auth_app_id_app_data_test_success() {
+    skip_test_if_no_app_attest_key_feature!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
@@ -869,6 +876,7 @@ fn keystore2_gen_attested_key_auth_app_id_app_data_test_success() {
 /// be provided to generateKey for an attestation key that was generated with them.
 #[test]
 fn keystore2_gen_attestation_key_with_auth_app_id_app_data_test_fail() {
+    skip_test_if_no_app_attest_key_feature!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
@@ -973,6 +981,7 @@ fn keystore2_flagged_on_get_last_auth_fingerprint_success() {
 /// generate a key successfully and verify the specified key parameters.
 #[test]
 fn keystore2_gen_key_auth_serial_number_subject_test_success() {
+    skip_tests_if_keymaster_impl_present!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
