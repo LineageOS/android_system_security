@@ -128,7 +128,8 @@ impl AuthorizationManager {
 
     fn add_auth_token(&self, auth_token: &HardwareAuthToken) -> Result<()> {
         // Check keystore permission.
-        check_keystore_permission(KeystorePerm::AddAuth).context(ks_err!())?;
+        check_keystore_permission(KeystorePerm::AddAuth)
+            .context(ks_err!("caller missing AddAuth permissions"))?;
 
         log::info!(
             "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
@@ -149,7 +150,8 @@ impl AuthorizationManager {
             user_id,
             password.is_some(),
         );
-        check_keystore_permission(KeystorePerm::Unlock).context(ks_err!("Unlock."))?;
+        check_keystore_permission(KeystorePerm::Unlock)
+            .context(ks_err!("caller missing Unlock permissions"))?;
         ENFORCEMENTS.set_device_locked(user_id, false);
 
         let mut skm = SUPER_KEY.write().unwrap();
@@ -160,7 +162,7 @@ impl AuthorizationManager {
             .context(ks_err!("Unlock with password."))
         } else {
             DB.with(|db| skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32))
-                .context(ks_err!("try_unlock_user_with_biometric failed"))
+                .context(ks_err!("try_unlock_user_with_biometric failed user_id={user_id}"))
         }
     }
 
@@ -179,7 +181,8 @@ impl AuthorizationManager {
         if !android_security_flags::fix_unlocked_device_required_keys_v2() {
             weak_unlock_enabled = false;
         }
-        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))?;
         ENFORCEMENTS.set_device_locked(user_id, true);
         let mut skm = SUPER_KEY.write().unwrap();
         DB.with(|db| {
@@ -198,7 +201,8 @@ impl AuthorizationManager {
         if !android_security_flags::fix_unlocked_device_required_keys_v2() {
             return Ok(());
         }
-        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))?;
         SUPER_KEY.write().unwrap().wipe_plaintext_unlocked_device_required_keys(user_id as u32);
         Ok(())
     }
@@ -208,7 +212,8 @@ impl AuthorizationManager {
         if !android_security_flags::fix_unlocked_device_required_keys_v2() {
             return Ok(());
         }
-        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        check_keystore_permission(KeystorePerm::Lock)
+            .context(ks_err!("caller missing Lock permission"))?;
         SUPER_KEY.write().unwrap().wipe_all_unlocked_device_required_keys(user_id as u32);
         Ok(())
     }
@@ -221,7 +226,8 @@ impl AuthorizationManager {
     ) -> Result<AuthorizationTokens> {
         // Check permission. Function should return if this failed. Therefore having '?' at the end
         // is very important.
-        check_keystore_permission(KeystorePerm::GetAuthToken).context(ks_err!("GetAuthToken"))?;
+        check_keystore_permission(KeystorePerm::GetAuthToken)
+            .context(ks_err!("caller missing GetAuthToken permission"))?;
 
         // If the challenge is zero, return error
         if challenge == 0 {
@@ -240,7 +246,8 @@ impl AuthorizationManager {
         auth_types: &[HardwareAuthenticatorType],
     ) -> Result<i64> {
         // Check keystore permission.
-        check_keystore_permission(KeystorePerm::GetLastAuthTime).context(ks_err!())?;
+        check_keystore_permission(KeystorePerm::GetLastAuthTime)
+            .context(ks_err!("caller missing GetLastAuthTime permission"))?;
 
         let mut max_time: i64 = -1;
         for auth_type in auth_types.iter() {
