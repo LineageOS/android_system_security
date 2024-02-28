@@ -247,7 +247,11 @@ fn connect_keymint(
                     }
                     e => e,
                 })
-                .context(ks_err!("Trying to get Legacy wrapper."))?,
+                .context(ks_err!(
+                    "Trying to get Legacy wrapper. Attempt to get keystore \
+                    compat service for security level {:?}",
+                    *security_level
+                ))?,
             None,
         )
     };
@@ -394,7 +398,7 @@ fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
                 }
                 e => e,
             })
-            .context(ks_err!("Trying to get Legacy wrapper."))
+            .context(ks_err!("Failed attempt to get legacy secure clock."))
     }?;
 
     Ok(secureclock)
@@ -437,5 +441,5 @@ pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -
         _ => None,
     }
     .ok_or(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-    .context(ks_err!())
+    .context(ks_err!("Failed to get rpc for sec level {:?}", *security_level))
 }
