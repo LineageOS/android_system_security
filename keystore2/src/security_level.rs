@@ -927,7 +927,7 @@ impl KeystoreSecurityLevel {
             .context(ks_err!("Check permission"))?;
 
         let km_dev = &self.keymint;
-        match {
+        let res = {
             let _wp = self.watch_millis(
                 concat!(
                     "In IKeystoreSecurityLevel::convert_storage_key_to_ephemeral: ",
@@ -936,7 +936,8 @@ impl KeystoreSecurityLevel {
                 500,
             );
             map_km_error(km_dev.convertStorageKeyToEphemeral(key_blob))
-        } {
+        };
+        match res {
             Ok(result) => {
                 Ok(EphemeralStorageKeyResponse { ephemeralKey: result, upgradedBlob: None })
             }
