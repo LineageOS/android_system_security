@@ -1467,7 +1467,7 @@ impl KeystoreDB {
         F: Fn(&Transaction) -> Result<(bool, T)>,
     {
         loop {
-            match self
+            let result = self
                 .conn
                 .transaction_with_behavior(behavior)
                 .context(ks_err!())
@@ -1475,7 +1475,8 @@ impl KeystoreDB {
                 .and_then(|(result, tx)| {
                     tx.commit().context(ks_err!("Failed to commit transaction."))?;
                     Ok(result)
-                }) {
+                });
+            match result {
                 Ok(result) => break Ok(result),
                 Err(e) => {
                     if Self::is_locked_error(&e) {
