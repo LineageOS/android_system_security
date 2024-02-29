@@ -290,7 +290,7 @@ impl Operation {
 
         // We abort the operation. If there was an error we log it but ignore it.
         if let Err(e) = map_km_error(self.km_op.abort()) {
-            log::error!("In prune: KeyMint::abort failed with {:?}.", e);
+            log::warn!("In prune: KeyMint::abort failed with {:?}.", e);
         }
 
         Ok(())
