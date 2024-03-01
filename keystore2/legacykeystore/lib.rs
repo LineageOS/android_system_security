@@ -55,7 +55,7 @@ impl DB {
         F: Fn(&Transaction) -> Result<T>,
     {
         loop {
-            match self
+            let result = self
                 .conn
                 .transaction_with_behavior(behavior)
                 .context("In with_transaction.")
@@ -63,7 +63,8 @@ impl DB {
                 .and_then(|(result, tx)| {
                     tx.commit().context("In with_transaction: Failed to commit transaction.")?;
                     Ok(result)
-                }) {
+                });
+            match result {
                 Ok(result) => break Ok(result),
                 Err(e) => {
                     if Self::is_locked_error(&e) {
