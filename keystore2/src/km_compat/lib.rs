@@ -21,6 +21,7 @@ extern "C" {
 
 #[allow(missing_docs)] // TODO remove this
 pub fn add_keymint_device_service() -> i32 {
+    // SAFETY: This is always safe to call.
     unsafe { addKeyMintDeviceService() }
 }
 

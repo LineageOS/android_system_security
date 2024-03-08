@@ -19,7 +19,11 @@ use anyhow::{ensure, Result};
 
 pub fn android_get_control_socket(name: &str) -> Result<UnixListener> {
     let name = CString::new(name)?;
+    // SAFETY: name is a valid C string, and android_get_control_socket doesn't retain it after it
+    // returns.
     let fd = unsafe { cutils_socket_bindgen::android_get_control_socket(name.as_ptr()) };
     ensure!(fd >= 0, "android_get_control_socket failed");
+    // SAFETY: android_get_control_socket either returns a valid and open FD or -1, and we checked
+    // that it's not -1.
     Ok(unsafe { UnixListener::from_raw_fd(fd) })
 }

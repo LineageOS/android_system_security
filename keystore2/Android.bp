@@ -31,6 +31,7 @@ rust_defaults {
     ],
 
     rustlibs: [
+        "android.hardware.security.rkp-V3-rust",
         "android.hardware.security.secureclock-V1-rust",
         "android.hardware.security.sharedsecret-V1-rust",
         "android.os.permissions_aidl-rust",
@@ -40,24 +41,30 @@ rust_defaults {
         "android.security.maintenance-rust",
         "android.security.metrics-rust",
         "android.security.rkp_aidl-rust",
+        "libaconfig_android_hardware_biometrics_rust",
+        "libandroid_security_flags_rust",
         "libanyhow",
         "libbinder_rs",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
+        "libkeystore2_flags_rust",
         "libkeystore2_km_compat",
         "libkeystore2_selinux",
-        "libkeystore2_vintf_rust",
+        "libkeystore2_hal_names_rust",
         "liblazy_static",
         "liblibc",
         "liblog_event_list",
         "liblog_rust",
+        "libmessage_macro",
         "librand",
+        "librkpd_client",
         "librustutils",
         "libserde",
         "libserde_cbor",
         "libthiserror",
         "libtokio",
+        "libwatchdog_rs",
     ],
     shared_libs: [
         "libcutils",
@@ -77,27 +84,6 @@ rust_library {
 }
 
 rust_library {
-    name: "libkeystore2_test_utils",
-    crate_name: "keystore2_test_utils",
-    srcs: ["test_utils/lib.rs"],
-    defaults: [
-        "keymint_use_latest_hal_aidl_rust",
-        "keystore2_use_latest_aidl_rust",
-    ],
-    rustlibs: [
-        "libbinder_rs",
-        "libkeystore2_selinux",
-        "liblog_rust",
-        "libnix",
-        "librand",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-        "libanyhow",
-    ],
-}
-
-rust_library {
     name: "libkeystore2_with_test_utils",
     defaults: ["libkeystore2_defaults"],
     features: [
@@ -111,30 +97,6 @@ rust_library {
 }
 
 rust_test {
-    name: "keystore2_test_utils_test",
-    srcs: ["test_utils/lib.rs"],
-    defaults: [
-        "keymint_use_latest_hal_aidl_rust",
-        "keystore2_use_latest_aidl_rust",
-    ],
-    test_suites: ["general-tests"],
-    require_root: true,
-    auto_gen_config: true,
-    compile_multilib: "first",
-    rustlibs: [
-        "libbinder_rs",
-        "libkeystore2_selinux",
-        "liblog_rust",
-        "libnix",
-        "librand",
-        "libserde",
-        "libserde_cbor",
-        "libthiserror",
-        "libanyhow",
-    ],
-}
-
-rust_test {
     name: "keystore2_test",
     crate_name: "keystore2",
     test_suites: ["general-tests"],
@@ -143,6 +105,7 @@ rust_test {
     defaults: ["libkeystore2_defaults"],
     rustlibs: [
         "libandroid_logger",
+        "libhex",
         "libkeystore2_test_utils",
         "liblibsqlite3_sys",
         "libnix",
@@ -189,4 +152,23 @@ rust_binary {
         "librusqlite",
     ],
     afdo: true,
+}
+
+// Keystore Flag definitions
+aconfig_declarations {
+    name: "keystore2_flags",
+    package: "android.security.keystore2",
+    srcs: ["aconfig/flags.aconfig"],
+}
+
+rust_aconfig_library {
+    name: "libkeystore2_flags_rust",
+    crate_name: "keystore2_flags",
+    aconfig_declarations: "keystore2_flags",
+}
+
+rust_aconfig_library {
+    name: "libaconfig_android_hardware_biometrics_rust",
+    crate_name: "aconfig_android_hardware_biometrics_rust",
+    aconfig_declarations: "android.hardware.biometrics.flags-aconfig",
 }

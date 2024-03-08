@@ -15,9 +15,9 @@
  */
 
 #include "keystoreCommon.h"
-#include <keystore/KeyAttestationApplicationId.h>
+#include <android/security/keystore/KeyAttestationApplicationId.h>
 
-using ::security::keymaster::KeyAttestationApplicationId;
+using ::android::security::keystore::KeyAttestationApplicationId;
 
 constexpr size_t kPackageVectorSizeMin = 1;
 constexpr size_t kPackageVectorSizeMax = 10;
@@ -33,26 +33,37 @@ class KeystoreApplicationId {
 };
 
 void KeystoreApplicationId::invokeApplicationId() {
-    std::optional<KeyAttestationApplicationId> applicationId;
+    KeyAttestationApplicationId applicationId;
     bool shouldUsePackageInfoVector = mFdp->ConsumeBool();
     if (shouldUsePackageInfoVector) {
-        KeyAttestationApplicationId::PackageInfoVector packageInfoVector;
+        ::std::vector<KeyAttestationPackageInfo> packageInfoVector;
         int32_t packageVectorSize =
             mFdp->ConsumeIntegralInRange<int32_t>(kPackageVectorSizeMin, kPackageVectorSizeMax);
         for (int32_t packageSize = 0; packageSize < packageVectorSize; ++packageSize) {
             auto packageInfoData = initPackageInfoData(mFdp.get());
-            packageInfoVector.push_back(make_optional<KeyAttestationPackageInfo>(
-                String16((packageInfoData.packageName).c_str()), packageInfoData.versionCode,
-                packageInfoData.sharedSignaturesVector));
+            auto pInfo = KeyAttestationPackageInfo();
+            pInfo.packageName = String16((packageInfoData.packageName).c_str());
+            pInfo.versionCode = packageInfoData.versionCode;
+            std::move(packageInfoData.sharedSignaturesVector->begin(),
+                      packageInfoData.sharedSignaturesVector->end(),
+                      std::back_inserter(pInfo.signatures));
+
+            packageInfoVector.push_back(std::move(pInfo));
         }
-        applicationId = KeyAttestationApplicationId(std::move(packageInfoVector));
+
+        std::move(packageInfoVector.begin(), packageInfoVector.end(),
+                  std::back_inserter(applicationId.packageInfos));
     } else {
         auto packageInfoData = initPackageInfoData(mFdp.get());
-        applicationId = KeyAttestationApplicationId(make_optional<KeyAttestationPackageInfo>(
-            String16((packageInfoData.packageName).c_str()), packageInfoData.versionCode,
-            packageInfoData.sharedSignaturesVector));
+        auto pInfo = KeyAttestationPackageInfo();
+        pInfo.packageName = String16((packageInfoData.packageName).c_str());
+        pInfo.versionCode = packageInfoData.versionCode;
+        std::move(packageInfoData.sharedSignaturesVector->begin(),
+                  packageInfoData.sharedSignaturesVector->end(),
+                  std::back_inserter(pInfo.signatures));
+        applicationId.packageInfos.push_back(std::move(pInfo));
     }
-    invokeReadWriteParcel(&applicationId.value());
+    invokeReadWriteParcel(&applicationId);
 }
 
 void KeystoreApplicationId::process(const uint8_t* data, size_t size) {

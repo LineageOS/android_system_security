@@ -19,20 +19,21 @@ use crate::globals::get_keymint_device;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 use android_hardware_security_keymint::binder::Strong;
 use android_hardware_security_sharedsecret::aidl::android::hardware::security::sharedsecret::{
-    ISharedSecret::ISharedSecret, SharedSecretParameters::SharedSecretParameters,
+    ISharedSecret::BpSharedSecret, ISharedSecret::ISharedSecret,
+    SharedSecretParameters::SharedSecretParameters,
 };
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::Result;
 use binder::get_declared_instances;
-use keystore2_vintf::get_hidl_instances;
+use keystore2_hal_names::get_hidl_instances;
 use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 /// This function initiates the shared secret negotiation. It starts a thread and then returns
-/// immediately. The thread consults the vintf manifest to enumerate expected negotiation
-/// participants. It then attempts to connect to all of these participants. If any connection
-/// fails the thread will retry once per second to connect to the failed instance(s) until all of
-/// the instances are connected. It then performs the negotiation.
+/// immediately. The thread gets hal names from the android ServiceManager. It then attempts
+/// to connect to all of these participants. If any connection fails the thread will retry once
+/// per second to connect to the failed instance(s) until all of the instances are connected.
+/// It then performs the negotiation.
 ///
 /// During the first phase of the negotiation it will again try every second until
 /// all instances have responded successfully to account for instances that register early but
@@ -63,11 +64,9 @@ enum SharedSecretParticipant {
 impl Display for SharedSecretParticipant {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Aidl(instance) => write!(
-                f,
-                "{}.{}/{}",
-                SHARED_SECRET_PACKAGE_NAME, SHARED_SECRET_INTERFACE_NAME, instance
-            ),
+            Self::Aidl(instance) => {
+                write!(f, "{}/{}", <BpSharedSecret as ISharedSecret>::get_descriptor(), instance)
+            }
             Self::Hidl { is_strongbox, version: (ma, mi) } => write!(
                 f,
                 "{}@V{}.{}::{}/{}",
@@ -110,10 +109,6 @@ fn filter_map_legacy_km_instances(
 
 static KEYMASTER_PACKAGE_NAME: &str = "android.hardware.keymaster";
 static KEYMASTER_INTERFACE_NAME: &str = "IKeymasterDevice";
-static SHARED_SECRET_PACKAGE_NAME: &str = "android.hardware.security.sharedsecret";
-static SHARED_SECRET_INTERFACE_NAME: &str = "ISharedSecret";
-static SHARED_SECRET_PACKAGE_AND_INTERFACE_NAME: &str =
-    "android.hardware.security.sharedsecret.ISharedSecret";
 static COMPAT_PACKAGE_NAME: &str = "android.security.compat";
 
 /// Lists participants.
@@ -144,7 +139,7 @@ fn list_participants() -> Result<Vec<SharedSecretParticipant>> {
                 .collect::<Vec<SharedSecretParticipant>>()
         })
         .chain({
-            get_declared_instances(SHARED_SECRET_PACKAGE_AND_INTERFACE_NAME)
+            get_declared_instances(<BpSharedSecret as ISharedSecret>::get_descriptor())
                 .unwrap()
                 .into_iter()
                 .map(SharedSecretParticipant::Aidl)
@@ -166,8 +161,9 @@ fn connect_participants(
                 match e {
                     SharedSecretParticipant::Aidl(instance_name) => {
                         let service_name = format!(
-                            "{}.{}/{}",
-                            SHARED_SECRET_PACKAGE_NAME, SHARED_SECRET_INTERFACE_NAME, instance_name
+                            "{}/{}",
+                            <BpSharedSecret as ISharedSecret>::get_descriptor(),
+                            instance_name
                         );
                         match map_binder_status_code(binder::get_interface(&service_name)) {
                             Err(e) => {

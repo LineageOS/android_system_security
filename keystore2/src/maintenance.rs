@@ -29,9 +29,8 @@ use crate::utils::{
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
 };
-use android_security_maintenance::aidl::android::security::maintenance::{
-    IKeystoreMaintenance::{BnKeystoreMaintenance, IKeystoreMaintenance},
-    UserState::UserState as AidlUserState,
+use android_security_maintenance::aidl::android::security::maintenance::IKeystoreMaintenance::{
+    BnKeystoreMaintenance, IKeystoreMaintenance,
 };
 use android_security_maintenance::binder::{
     BinderFeatures, Interface, Result as BinderResult, Strong, ThreadState,
@@ -78,31 +77,29 @@ impl Maintenance {
 
         if let Some(pw) = password.as_ref() {
             DB.with(|db| {
-                skm.unlock_screen_lock_bound_key(&mut db.borrow_mut(), user_id as u32, pw)
+                skm.unlock_unlocked_device_required_keys(&mut db.borrow_mut(), user_id as u32, pw)
             })
-            .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
+            .context(ks_err!("unlock_unlocked_device_required_keys failed"))?;
         }
 
-        match DB
-            .with(|db| {
-                skm.reset_or_init_user_and_get_user_state(
-                    &mut db.borrow_mut(),
-                    &LEGACY_IMPORTER,
-                    user_id as u32,
-                    password.as_ref(),
-                )
-            })
-            .context(ks_err!())?
+        if let UserState::BeforeFirstUnlock = DB
+            .with(|db| skm.get_user_state(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32))
+            .context(ks_err!("Could not get user state while changing password!"))?
         {
-            UserState::LskfLocked => {
-                // Error - password can not be changed when the device is locked
-                Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
-            }
-            _ => {
-                // LskfLocked is the only error case for password change
-                Ok(())
-            }
+            // Error - password can not be changed when the device is locked
+            return Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."));
         }
+
+        DB.with(|db| match password {
+            Some(pass) => {
+                skm.init_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32, &pass)
+            }
+            None => {
+                // User transitioned to swipe.
+                skm.reset_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32)
+            }
+        })
+        .context(ks_err!("Failed to change user password!"))
     }
 
     fn add_or_remove_user(&self, user_id: i32) -> Result<()> {
@@ -111,17 +108,51 @@ impl Maintenance {
         check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
 
         DB.with(|db| {
-            SUPER_KEY.write().unwrap().reset_user(
+            SUPER_KEY.write().unwrap().remove_user(
                 &mut db.borrow_mut(),
                 &LEGACY_IMPORTER,
                 user_id as u32,
-                false,
             )
         })
         .context(ks_err!("Trying to delete keys from db."))?;
         self.delete_listener
             .delete_user(user_id as u32)
             .context(ks_err!("While invoking the delete listener."))
+    }
+
+    fn init_user_super_keys(
+        &self,
+        user_id: i32,
+        password: Password,
+        allow_existing: bool,
+    ) -> Result<()> {
+        // Permission check. Must return on error. Do not touch the '?'.
+        check_keystore_permission(KeystorePerm::ChangeUser).context(ks_err!())?;
+
+        let mut skm = SUPER_KEY.write().unwrap();
+        DB.with(|db| {
+            skm.initialize_user(
+                &mut db.borrow_mut(),
+                &LEGACY_IMPORTER,
+                user_id as u32,
+                &password,
+                allow_existing,
+            )
+        })
+        .context(ks_err!("Failed to initialize user super keys"))
+    }
+
+    // Deletes all auth-bound keys when the user's LSKF is removed.
+    fn on_user_lskf_removed(user_id: i32) -> Result<()> {
+        // Permission check. Must return on error. Do not touch the '?'.
+        check_keystore_permission(KeystorePerm::ChangePassword).context(ks_err!())?;
+
+        LEGACY_IMPORTER
+            .bulk_delete_user(user_id as u32, true)
+            .context(ks_err!("Failed to delete legacy keys."))?;
+
+        DB.with(|db| db.borrow_mut().unbind_auth_bound_keys_for_user(user_id as u32))
+            .context(ks_err!("Failed to delete auth-bound keys."))
     }
 
     fn clear_namespace(&self, domain: Domain, nspace: i64) -> Result<()> {
@@ -136,27 +167,6 @@ impl Maintenance {
         self.delete_listener
             .delete_namespace(domain, nspace)
             .context(ks_err!("While invoking the delete listener."))
-    }
-
-    fn get_state(user_id: i32) -> Result<AidlUserState> {
-        // Check permission. Function should return if this failed. Therefore having '?' at the end
-        // is very important.
-        check_keystore_permission(KeystorePerm::GetState).context("In get_state.")?;
-        let state = DB
-            .with(|db| {
-                SUPER_KEY.read().unwrap().get_user_state(
-                    &mut db.borrow_mut(),
-                    &LEGACY_IMPORTER,
-                    user_id as u32,
-                )
-            })
-            .context(ks_err!("Trying to get UserState."))?;
-
-        match state {
-            UserState::Uninitialized => Ok(AidlUserState::UNINITIALIZED),
-            UserState::LskfUnlocked(_) => Ok(AidlUserState::LSKF_UNLOCKED),
-            UserState::LskfLocked => Ok(AidlUserState::LSKF_LOCKED),
-        }
     }
 
     fn call_with_watchdog<F>(sec_level: SecurityLevel, name: &'static str, op: &F) -> Result<()>
@@ -181,7 +191,7 @@ impl Maintenance {
             (SecurityLevel::TRUSTED_ENVIRONMENT, "TRUSTED_ENVIRONMENT"),
             (SecurityLevel::STRONGBOX, "STRONGBOX"),
         ];
-        sec_levels.iter().fold(Ok(()), move |result, (sec_level, sec_level_string)| {
+        sec_levels.iter().try_fold((), |_result, (sec_level, sec_level_string)| {
             let curr_result = Maintenance::call_with_watchdog(*sec_level, name, &op);
             match curr_result {
                 Ok(()) => log::info!(
@@ -196,7 +206,7 @@ impl Maintenance {
                     e
                 ),
             }
-            result.and(curr_result)
+            curr_result
         })
     }
 
@@ -242,7 +252,7 @@ impl Maintenance {
 
         let user_id = uid_to_android_user(calling_uid);
 
-        let super_key = SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(user_id);
+        let super_key = SUPER_KEY.read().unwrap().get_after_first_unlock_key_by_user_id(user_id);
 
         DB.with(|db| {
             let (key_id_guard, _) = LEGACY_IMPORTER
@@ -282,36 +292,58 @@ impl Interface for Maintenance {}
 
 impl IKeystoreMaintenance for Maintenance {
     fn onUserPasswordChanged(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
+        log::info!(
+            "onUserPasswordChanged(user={}, password.is_some()={})",
+            user_id,
+            password.is_some()
+        );
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserPasswordChanged", 500);
         map_or_log_err(Self::on_user_password_changed(user_id, password.map(|pw| pw.into())), Ok)
     }
 
     fn onUserAdded(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserAdded(user={user_id})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserAdded", 500);
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
+    fn initUserSuperKeys(
+        &self,
+        user_id: i32,
+        password: &[u8],
+        allow_existing: bool,
+    ) -> BinderResult<()> {
+        log::info!("initUserSuperKeys(user={user_id}, allow_existing={allow_existing})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::initUserSuperKeys", 500);
+        map_or_log_err(self.init_user_super_keys(user_id, password.into(), allow_existing), Ok)
+    }
+
     fn onUserRemoved(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserRemoved(user={user_id})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onUserRemoved", 500);
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
+    fn onUserLskfRemoved(&self, user_id: i32) -> BinderResult<()> {
+        log::info!("onUserLskfRemoved(user={user_id})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserLskfRemoved", 500);
+        map_or_log_err(Self::on_user_lskf_removed(user_id), Ok)
+    }
+
     fn clearNamespace(&self, domain: Domain, nspace: i64) -> BinderResult<()> {
+        log::info!("clearNamespace({domain:?}, nspace={nspace})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::clearNamespace", 500);
         map_or_log_err(self.clear_namespace(domain, nspace), Ok)
     }
 
-    fn getState(&self, user_id: i32) -> BinderResult<AidlUserState> {
-        let _wp = wd::watch_millis("IKeystoreMaintenance::getState", 500);
-        map_or_log_err(Self::get_state(user_id), Ok)
-    }
-
     fn earlyBootEnded(&self) -> BinderResult<()> {
+        log::info!("earlyBootEnded()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::earlyBootEnded", 500);
         map_or_log_err(Self::early_boot_ended(), Ok)
     }
 
     fn onDeviceOffBody(&self) -> BinderResult<()> {
+        log::info!("onDeviceOffBody()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::onDeviceOffBody", 500);
         map_or_log_err(Self::on_device_off_body(), Ok)
     }
@@ -321,11 +353,13 @@ impl IKeystoreMaintenance for Maintenance {
         source: &KeyDescriptor,
         destination: &KeyDescriptor,
     ) -> BinderResult<()> {
+        log::info!("migrateKeyNamespace(src={source:?}, dest={destination:?})");
         let _wp = wd::watch_millis("IKeystoreMaintenance::migrateKeyNamespace", 500);
         map_or_log_err(Self::migrate_key_namespace(source, destination), Ok)
     }
 
     fn deleteAllKeys(&self) -> BinderResult<()> {
+        log::warn!("deleteAllKeys()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
         map_or_log_err(Self::delete_all_keys(), Ok)
     }

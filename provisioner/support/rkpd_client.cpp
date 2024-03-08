@@ -26,7 +26,6 @@
 #include <binder/IServiceManager.h>
 #include <binder/Status.h>
 #include <rkp/support/rkpd_client.h>
-#include <vintf/VintfObject.h>
 
 namespace android::security::rkp::support {
 namespace {
@@ -61,12 +60,10 @@ std::optional<std::string> getRpcId(const sp<IRemotelyProvisionedComponent>& rpc
 }
 
 std::optional<String16> findRpcNameById(std::string_view targetRpcId) {
-    auto deviceManifest = vintf::VintfObject::GetDeviceHalManifest();
-    auto instances = deviceManifest->getAidlInstances("android.hardware.security.keymint",
-                                                      "IRemotelyProvisionedComponent");
-    for (const std::string& instance : instances) {
-        auto rpcName =
-            IRemotelyProvisionedComponent::descriptor + String16("/") + String16(instance.c_str());
+    auto instances = android::defaultServiceManager()->getDeclaredInstances(
+        IRemotelyProvisionedComponent::descriptor);
+    for (const auto& instance : instances) {
+        auto rpcName = IRemotelyProvisionedComponent::descriptor + String16("/") + instance;
         sp<IRemotelyProvisionedComponent> rpc =
             android::waitForService<IRemotelyProvisionedComponent>(rpcName);
 

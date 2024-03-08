@@ -161,6 +161,205 @@ impl AuthSetBuilder {
             .push(KeyParameter { tag: Tag::MIN_MAC_LENGTH, value: KeyParameterValue::Integer(l) });
         self
     }
+
+    /// Add Attestation-Device-Brand.
+    pub fn attestation_device_brand(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_BRAND,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-name.
+    pub fn attestation_device_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_DEVICE,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Product-Name.
+    pub fn attestation_device_product_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_PRODUCT,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Serial.
+    pub fn attestation_device_serial(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_SERIAL,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-IMEI.
+    pub fn attestation_device_imei(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_IMEI,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-IMEI.
+    pub fn attestation_device_second_imei(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_SECOND_IMEI,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-MEID.
+    pub fn attestation_device_meid(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MEID,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Manufacturer.
+    pub fn attestation_device_manufacturer(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MANUFACTURER,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Add Attestation-Device-Model.
+    pub fn attestation_device_model(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ATTESTATION_ID_MODEL,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
+
+    /// Set active date-time.
+    pub fn active_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ACTIVE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set origination expire date-time.
+    pub fn origination_expire_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::ORIGINATION_EXPIRE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set usage expire date-time.
+    pub fn usage_expire_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::USAGE_EXPIRE_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set boot loader only.
+    pub fn boot_loader_only(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::BOOTLOADER_ONLY,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Set early boot only.
+    pub fn early_boot_only(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::EARLY_BOOT_ONLY,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Set max uses per boot.
+    pub fn max_uses_per_boot(mut self, max_uses: i32) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::MAX_USES_PER_BOOT,
+            value: KeyParameterValue::Integer(max_uses),
+        });
+        self
+    }
+
+    /// Set max usage count.
+    pub fn usage_count_limit(mut self, usage_count: i32) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::USAGE_COUNT_LIMIT,
+            value: KeyParameterValue::Integer(usage_count),
+        });
+        self
+    }
+
+    /// Set creation date-time.
+    pub fn creation_date_time(mut self, date: i64) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CREATION_DATETIME,
+            value: KeyParameterValue::DateTime(date),
+        });
+        self
+    }
+
+    /// Set include unique id.
+    pub fn include_unique_id(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::INCLUDE_UNIQUE_ID,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Add app-data.
+    pub fn app_data(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter { tag: Tag::APPLICATION_DATA, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add app-id.
+    pub fn app_id(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter { tag: Tag::APPLICATION_ID, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Set device-unique-attestation.
+    pub fn device_unique_attestation(mut self) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::DEVICE_UNIQUE_ATTESTATION,
+            value: KeyParameterValue::BoolValue(true),
+        });
+        self
+    }
+
+    /// Add certificate serial number.
+    pub fn cert_serial(mut self, b: Vec<u8>) -> Self {
+        self.0
+            .push(KeyParameter { tag: Tag::CERTIFICATE_SERIAL, value: KeyParameterValue::Blob(b) });
+        self
+    }
+
+    /// Add certificate subject name.
+    pub fn cert_subject_name(mut self, b: Vec<u8>) -> Self {
+        self.0.push(KeyParameter {
+            tag: Tag::CERTIFICATE_SUBJECT,
+            value: KeyParameterValue::Blob(b),
+        });
+        self
+    }
 }
 
 impl Deref for AuthSetBuilder {

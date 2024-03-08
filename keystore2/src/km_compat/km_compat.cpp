@@ -146,6 +146,11 @@ const size_t kKeyBlobPrefixSize = 8;
 //
 const uint8_t kKeyBlobMagic[7] = {'p', 'K', 'M', 'b', 'l', 'o', 'b'};
 
+// Per RFC 5280 4.1.2.5, an undefined expiration (not-after) field should be set
+// to 9999-12-31T23:59:59Z.
+//
+const uint64_t kUndefinedNotAfter = 253402300799000;
+
 // Prefixes a keyblob returned by e.g. generateKey() with information on whether it
 // originated from the real underlying KeyMaster HAL or from soft-KeyMint.
 //
@@ -259,6 +264,16 @@ extractNewAndKeystoreEnforceableParams(const std::vector<KMV1::KeyParameter>& pa
     std::vector<KMV1::KeyParameter> result;
     std::copy_if(params.begin(), params.end(), std::back_inserter(result),
                  isNewAndKeystoreEnforceable);
+    return result;
+}
+
+std::vector<KMV1::KeyParameter>
+extractCombinedParams(const std::vector<KMV1::KeyCharacteristics>& characteristics) {
+    std::vector<KMV1::KeyParameter> result;
+    for (auto characteristic : characteristics) {
+        std::copy(characteristic.authorizations.begin(), characteristic.authorizations.end(),
+                  std::back_inserter(result));
+    }
     return result;
 }
 
@@ -600,6 +615,15 @@ KeyMintDevice::importWrappedKey(const std::vector<uint8_t>& in_inWrappedKeyData,
     if (!result.isOk()) {
         LOG(ERROR) << __func__ << " transaction failed. " << result.description();
         return convertErrorCode(KMV1::ErrorCode::UNKNOWN_ERROR);
+    }
+    if (errorCode == KMV1::ErrorCode::OK) {
+        auto params = extractCombinedParams(out_creationResult->keyCharacteristics);
+        auto cert = getCertificate(params, out_creationResult->keyBlob, true /* isWrappedKey */);
+        // importWrappedKey used to not generate a certificate. Ignore the error to preserve
+        // backwards compatibility with clients that can't successfully generate a certificate.
+        if (std::holds_alternative<std::vector<Certificate>>(cert)) {
+            out_creationResult->certificateChain = std::get<std::vector<Certificate>>(cert);
+        }
     }
     return convertErrorCode(errorCode);
 }
@@ -1069,7 +1093,7 @@ getMaximum(const std::vector<KeyParameter>& keyParams, T tag,
 
 static std::variant<keystore::X509_Ptr, KMV1::ErrorCode>
 makeCert(::android::sp<Keymaster> mDevice, const std::vector<KeyParameter>& keyParams,
-         const std::vector<uint8_t>& keyBlob) {
+         const std::vector<uint8_t>& keyBlob, bool isWrappedKey) {
     // Start generating the certificate.
     // Get public key for makeCert.
     KMV1::ErrorCode errorCode;
@@ -1111,15 +1135,21 @@ makeCert(::android::sp<Keymaster> mDevice, const std::vector<KeyParameter>& keyP
         serial = *blob;
     }
 
+    // There is no way to specify CERTIFICATE_NOT_BEFORE and CERTIFICATE_NOT_AFTER for wrapped keys.
+    // So we provide default values.
     int64_t activation;
-    if (auto date = getParam(keyParams, KMV1::TAG_CERTIFICATE_NOT_BEFORE)) {
+    if (isWrappedKey) {
+        activation = 0;
+    } else if (auto date = getParam(keyParams, KMV1::TAG_CERTIFICATE_NOT_BEFORE)) {
         activation = static_cast<int64_t>(*date);
     } else {
         return KMV1::ErrorCode::MISSING_NOT_BEFORE;
     }
 
     int64_t expiration;
-    if (auto date = getParam(keyParams, KMV1::TAG_CERTIFICATE_NOT_AFTER)) {
+    if (isWrappedKey) {
+        expiration = kUndefinedNotAfter;
+    } else if (auto date = getParam(keyParams, KMV1::TAG_CERTIFICATE_NOT_AFTER)) {
         expiration = static_cast<int64_t>(*date);
     } else {
         return KMV1::ErrorCode::MISSING_NOT_AFTER;
@@ -1249,7 +1279,7 @@ KeyMintDevice::signCertificate(const std::vector<KeyParameter>& keyParams,
 
 std::variant<std::vector<Certificate>, KMV1::ErrorCode>
 KeyMintDevice::getCertificate(const std::vector<KeyParameter>& keyParams,
-                              const std::vector<uint8_t>& prefixedKeyBlob) {
+                              const std::vector<uint8_t>& prefixedKeyBlob, bool isWrappedKey) {
     const std::vector<uint8_t>& keyBlob = prefixedKeyBlobRemovePrefix(prefixedKeyBlob);
 
     // There are no certificates for symmetric keys.
@@ -1292,7 +1322,7 @@ KeyMintDevice::getCertificate(const std::vector<KeyParameter>& keyParams,
     }
 
     // makeCert
-    auto certOrError = makeCert(mDevice, keyParams, keyBlob);
+    auto certOrError = makeCert(mDevice, keyParams, keyBlob, isWrappedKey);
     if (std::holds_alternative<KMV1::ErrorCode>(certOrError)) {
         return std::get<KMV1::ErrorCode>(certOrError);
     }
@@ -1434,7 +1464,12 @@ KeymasterDevices enumerateKeymasterDevices(IServiceManager* serviceManager) {
 
 KeymasterDevices initializeKeymasters() {
     auto serviceManager = IServiceManager::getService();
-    CHECK(serviceManager.get()) << "Failed to get ServiceManager";
+    if (!serviceManager.get()) {
+        // New devices no longer have HIDL support, so failing to get hwservicemanager is
+        // expected behavior.
+        LOG(INFO) << "Skipping keymaster compat, this system is AIDL only.";
+        return KeymasterDevices();
+    }
     auto result = enumerateKeymasterDevices<Keymaster4>(serviceManager.get());
     auto softKeymaster = result[SecurityLevel::SOFTWARE];
     if ((!result[SecurityLevel::TRUSTED_ENVIRONMENT]) && (!result[SecurityLevel::STRONGBOX])) {

@@ -1216,7 +1216,7 @@ mod storage_tests {
     use crate::key_parameter::*;
     use anyhow::Result;
     use rusqlite::types::ToSql;
-    use rusqlite::{params, Connection, NO_PARAMS};
+    use rusqlite::{params, Connection};
 
     /// Test initializing a KeyParameter (with key parameter value corresponding to an enum of i32)
     /// from a database table row.
@@ -1423,7 +1423,7 @@ mod storage_tests {
                                 tag INTEGER,
                                 data ANY,
                                 security_level INTEGER);",
-            NO_PARAMS,
+            [],
         )
         .context("Failed to initialize \"keyparameter\" table.")?;
         Ok(db)
@@ -1459,7 +1459,7 @@ mod storage_tests {
     fn query_from_keyparameter(db: &Connection) -> Result<KeyParameter> {
         let mut stmt =
             db.prepare("SELECT tag, data, security_level FROM persistent.keyparameter")?;
-        let mut rows = stmt.query(NO_PARAMS)?;
+        let mut rows = stmt.query([])?;
         let row = rows.next()?.unwrap();
         KeyParameter::new_from_sql(
             Tag(row.get(0)?),

@@ -16,7 +16,6 @@ package android.security.maintenance;
 
 import android.system.keystore2.Domain;
 import android.system.keystore2.KeyDescriptor;
-import android.security.maintenance.UserState;
 
 /**
  * IKeystoreMaintenance interface exposes the methods for adding/removing users and changing the
@@ -28,10 +27,10 @@ interface IKeystoreMaintenance {
 
     /**
      * Allows LockSettingsService to inform keystore about adding a new user.
-     * Callers require 'AddUser' permission.
+     * Callers require 'ChangeUser' permission.
      *
      * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'AddUser' permission.
+     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'ChangeUser' permission.
      * `ResponseCode::SYSTEM_ERROR` - if failed to delete the keys of an existing user with the same
      * user id.
      *
@@ -40,16 +39,42 @@ interface IKeystoreMaintenance {
     void onUserAdded(in int userId);
 
     /**
-     * Allows LockSettingsService to inform keystore about removing a user.
-     * Callers require 'RemoveUser' permission.
+     * Allows LockSettingsService to tell Keystore to create a user's superencryption keys and store
+     * them encrypted by the given secret.  Requires 'ChangeUser' permission.
      *
      * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'RemoveUser' permission.
+     * `ResponseCode::PERMISSION_DENIED` - if caller does not have the 'ChangeUser' permission
+     * `ResponseCode::SYSTEM_ERROR` - if failed to initialize the user's super keys
+     *
+     * @param userId - Android user id
+     * @param password - a secret derived from the synthetic password of the user
+     * @param allowExisting - if true, then the keys already existing is not considered an error
+     */
+    void initUserSuperKeys(in int userId, in byte[] password, in boolean allowExisting);
+
+    /**
+     * Allows LockSettingsService to inform keystore about removing a user.
+     * Callers require 'ChangeUser' permission.
+     *
+     * ## Error conditions:
+     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'ChangeUser' permission.
      * `ResponseCode::SYSTEM_ERROR` - if failed to delete the keys of the user being deleted.
      *
      * @param userId - Android user id
      */
     void onUserRemoved(in int userId);
+
+    /**
+     * Allows LockSettingsService to tell Keystore that a user's LSKF is being removed, ie the
+     * user's lock screen is changing to Swipe or None.  Requires 'ChangePassword' permission.
+     *
+     * ## Error conditions:
+     * `ResponseCode::PERMISSION_DENIED` - if caller does not have the 'ChangePassword' permission
+     * `ResponseCode::SYSTEM_ERROR` - if failed to delete the user's auth-bound keys
+     *
+     * @param userId - Android user id
+     */
+    void onUserLskfRemoved(in int userId);
 
     /**
      * Allows LockSettingsService to inform keystore about password change of a user.
@@ -75,19 +100,6 @@ interface IKeystoreMaintenance {
      *                 the SEPolicy namespace if domain is Domain.SELINUX.
      */
     void clearNamespace(Domain domain, long nspace);
-
-    /**
-     * Allows querying user state, given user id.
-     * Callers require 'GetState' permission.
-     *
-     * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the callers do not have the 'GetState'
-     *                                     permission.
-     * `ResponseCode::SYSTEM_ERROR` - if an error occurred when querying the user state.
-     *
-     * @param userId - Android user id
-     */
-    UserState getState(in int userId);
 
     /**
      * This function notifies the Keymint device of the specified securityLevel that

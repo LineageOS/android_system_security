@@ -30,71 +30,21 @@ rust_test {
     srcs: ["keystore2_client_tests.rs"],
     test_suites: [
         "general-tests",
+        "vts",
     ],
     test_config: "AndroidTest.xml",
 
     rustlibs: [
-        "librustutils",
-        "libkeystore2_test_utils",
-        "packagemanager_aidl-rust",
-        "libnix",
-        "libanyhow",
+        "android.hardware.security.secureclock-V1-rust",
+        "android.security.authorization-rust",
+        "libaconfig_android_hardware_biometrics_rust",
         "libbinder_rs",
-        "liblazy_static",
-        "liblibc",
-        "libserde",
-        "libthiserror",
-        "libcxx",
+        "libkeystore2_test_utils",
+        "libnix",
         "libopenssl",
-    ],
-    static_libs: [
-        "libkeystore2_ffi_test_utils",
-        "libgtest",
-        "libkeymint_vts_test_utils",
-    ],
-    shared_libs: [
-        "libcrypto",
-        "libkeymaster_portable",
-        "libkeymaster_messages",
-        "libcppbor_external",
+        "librustutils",
+        "libserde",
+        "packagemanager_aidl-rust",
     ],
     require_root: true,
-}
-
-cc_library_static {
-    name: "libkeystore2_ffi_test_utils",
-    srcs: ["ffi_test_utils.cpp"],
-    defaults: [
-        "keymint_vts_defaults",
-        "hidl_defaults",
-    ],
-    generated_headers: [
-        "cxx-bridge-header",
-        "libkeystore2_ffi_test_utils_bridge_header",
-    ],
-    generated_sources: ["libkeystore2_ffi_test_utils_bridge_code"],
-    static_libs: [
-        "libkeymint_vts_test_utils",
-    ],
-    shared_libs: [
-        "libkeymaster_portable",
-        "libkeymaster_messages",
-        "libcppbor_external",
-    ],
-}
-
-genrule {
-    name: "libkeystore2_ffi_test_utils_bridge_code",
-    tools: ["cxxbridge"],
-    cmd: "$(location cxxbridge) $(in) >> $(out)",
-    srcs: ["ffi_test_utils.rs"],
-    out: ["libkeystore2_test_utils_cxx_generated.cc"],
-}
-
-genrule {
-    name: "libkeystore2_ffi_test_utils_bridge_header",
-    tools: ["cxxbridge"],
-    cmd: "$(location cxxbridge) $(in) --header >> $(out)",
-    srcs: ["ffi_test_utils.rs"],
-    out: ["ffi_test_utils.rs.h"],
 }

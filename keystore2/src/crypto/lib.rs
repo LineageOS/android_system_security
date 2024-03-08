@@ -49,8 +49,8 @@ pub const LEGACY_IV_LENGTH: usize = 16;
 /// Generate an AES256 key, essentially 32 random bytes from the underlying
 /// boringssl library discretely stuffed into a ZVec.
 pub fn generate_aes256_key() -> Result<ZVec, Error> {
-    // Safety: key has the same length as the requested number of random bytes.
     let mut key = ZVec::new(AES_256_KEY_LENGTH)?;
+    // Safety: key has the same length as the requested number of random bytes.
     if unsafe { randomBytes(key.as_mut_ptr(), AES_256_KEY_LENGTH) } {
         Ok(key)
     } else {
@@ -65,8 +65,8 @@ pub fn generate_salt() -> Result<Vec<u8>, Error> {
 
 /// Generate random data of the given size.
 pub fn generate_random_data(size: usize) -> Result<Vec<u8>, Error> {
-    // Safety: data has the same length as the requested number of random bytes.
     let mut data = vec![0; size];
+    // Safety: data has the same length as the requested number of random bytes.
     if unsafe { randomBytes(data.as_mut_ptr(), size) } {
         Ok(data)
     } else {
@@ -209,6 +209,8 @@ impl<'a> Password<'a> {
         let pw = self.get_key();
         let mut result = ZVec::new(key_length)?;
 
+        // Safety: We checked that the salt is exactly 16 bytes long. The other pointers are valid,
+        // and have matching lengths.
         unsafe {
             generateKeyFromPassword(
                 result.as_mut_ptr(),
@@ -324,10 +326,10 @@ impl Drop for OwnedECPoint {
 /// Calls the boringssl ECDH_compute_key function.
 pub fn ecdh_compute_key(pub_key: &EC_POINT, priv_key: &ECKey) -> Result<ZVec, Error> {
     let mut buf = ZVec::new(EC_MAX_BYTES)?;
+    let result =
     // Safety: Our ECDHComputeKey wrapper passes EC_MAX_BYES to ECDH_compute_key, which
     // writes at most that many bytes to the output.
     // The two keys are valid objects.
-    let result =
         unsafe { ECDHComputeKey(buf.as_mut_ptr() as *mut std::ffi::c_void, pub_key, priv_key.0) };
     if result == -1 {
         return Err(Error::ECDHComputeKeyFailed);
@@ -487,9 +489,11 @@ mod tests {
         let input = vec![0; 16];
         let mut out = vec![0; 16];
         let mut out2 = vec![0; 16];
-        let key = vec![0; 16];
-        let iv = vec![0; 12];
+        let key = [0; 16];
+        let iv = [0; 12];
         let mut tag = vec![0; 16];
+        // SAFETY: The various pointers are obtained from references so they are valid, and
+        // `AES_gcm_encrypt` and `AES_gcm_decrypt` don't do anything with them after they return.
         unsafe {
             let res = AES_gcm_encrypt(
                 input.as_ptr(),
@@ -519,10 +523,12 @@ mod tests {
 
     #[test]
     fn test_create_key_id() {
-        let blob = vec![0; 16];
+        let blob = [0; 16];
         let mut out: u64 = 0;
+        // SAFETY: The pointers are obtained from references so they are valid, the length matches
+        // the length of the array, and `CreateKeyId` doesn't access them after it returns.
         unsafe {
-            let res = CreateKeyId(blob.as_ptr(), 16, &mut out);
+            let res = CreateKeyId(blob.as_ptr(), blob.len(), &mut out);
             assert!(res);
             assert_ne!(out, 0);
         }
@@ -531,10 +537,19 @@ mod tests {
     #[test]
     fn test_generate_key_from_password() {
         let mut key = vec![0; 16];
-        let pw = vec![0; 16];
-        let salt = vec![0; 16];
+        let pw = [0; 16];
+        let salt = [0; 16];
+        // SAFETY: The pointers are obtained from references so they are valid, the salt is the
+        // expected length, the other lengths match the lengths of the arrays, and
+        // `generateKeyFromPassword` doesn't access them after it returns.
         unsafe {
-            generateKeyFromPassword(key.as_mut_ptr(), 16, pw.as_ptr(), 16, salt.as_ptr());
+            generateKeyFromPassword(
+                key.as_mut_ptr(),
+                key.len(),
+                pw.as_ptr(),
+                pw.len(),
+                salt.as_ptr(),
+            );
         }
         assert_ne!(key, vec![0; 16]);
     }

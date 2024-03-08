@@ -255,7 +255,9 @@ where
     let (response_reader, mut response_writer) =
         pipe_channel().expect("Failed to create cmd pipe.");
 
-    match fork() {
+    // SAFETY: Our caller guarantees that the process only has a single thread, so calling
+    // non-async-signal-safe functions in the child is in fact safe.
+    match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => {
             drop(response_writer);
             drop(cmd_reader);
@@ -314,7 +316,9 @@ where
         selinux::Context::new(se_context).expect("Unable to construct selinux::Context.");
     let (mut reader, mut writer) = pipe_channel::<R>().expect("Failed to create pipe.");
 
-    match fork() {
+    // SAFETY: Our caller guarantees that the process only has a single thread, so calling
+    // non-async-signal-safe functions in the child is in fact safe.
+    match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => {
             drop(writer);
             let status = waitpid(child, None).expect("Failed while waiting for child.");

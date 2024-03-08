@@ -31,7 +31,6 @@ cc_defaults {
         "libbase",
         "libbinder",
         "libutils",
-        "libvintf",
     ],
     cflags: [
         "-Wall",

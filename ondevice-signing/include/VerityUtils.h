@@ -22,7 +22,6 @@
 #include <string>
 #include <vector>
 
-android::base::Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyName);
 android::base::Result<std::vector<uint8_t>> createDigest(const std::string& path);
 android::base::Result<std::string> enableFsVerity(int fd);
 bool SupportsFsVerity();
@@ -34,7 +33,7 @@ verifyAllFilesInVerity(const std::string& path);
 android::base::Result<std::map<std::string, std::string>>
 addFilesToVerityRecursive(const std::string& path);
 
-// Enable verity on the provided file, using the given PKCS7 signature.
+// Enable verity on the provided file.
 android::base::Result<void> enableFsVerity(const std::string& path);
 
 android::base::Result<void>

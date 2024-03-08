@@ -70,6 +70,7 @@ fn get_socket(path: &Path) -> Result<UnixListener> {
 fn setup() -> Result<(ConditionerBuilder, UnixListener)> {
     configure_logging()?;
     let cli = Cli::try_parse()?;
+    // SAFETY: Nothing else sets the signal handler, so either it was set here or it is the default.
     unsafe { signal::signal(signal::Signal::SIGPIPE, signal::SigHandler::SigIgn) }
         .context("In setup, setting SIGPIPE to SIG_IGN")?;
 

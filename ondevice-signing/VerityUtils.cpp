@@ -24,7 +24,6 @@
 #include <linux/fs.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 
 #include "android-base/errors.h"
 #include <android-base/file.h>
@@ -42,7 +41,6 @@ using android::base::Error;
 using android::base::Result;
 using android::base::unique_fd;
 
-static const char* kFsVerityInitPath = "/system/bin/fsverity_init";
 static const char* kFsVerityProcPath = "/proc/sys/fs/verity";
 
 bool SupportsFsVerity() {
@@ -281,44 +279,6 @@ Result<void> verifyAllFilesUsingCompOs(const std::string& directory_path,
     if (verified_count != digests.size()) {
         return Error() << "Verified " << verified_count << " files, but expected "
                        << digests.size();
-    }
-
-    return {};
-}
-
-Result<void> addCertToFsVerityKeyring(const std::string& path, const char* keyName) {
-    const char* const argv[] = {kFsVerityInitPath, "--load-extra-key", keyName};
-
-    int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (fd == -1) {
-        return ErrnoError() << "Failed to open " << path;
-    }
-    pid_t pid = fork();
-    if (pid == 0) {
-        dup2(fd, STDIN_FILENO);
-        close(fd);
-        int argc = arraysize(argv);
-        char* argv_child[argc + 1];
-        memcpy(argv_child, argv, argc * sizeof(char*));
-        argv_child[argc] = nullptr;
-        execvp(argv_child[0], argv_child);
-        PLOG(ERROR) << "exec in ForkExecvp";
-        _exit(EXIT_FAILURE);
-    } else {
-        close(fd);
-    }
-    if (pid == -1) {
-        return ErrnoError() << "Failed to fork.";
-    }
-    int status;
-    if (waitpid(pid, &status, 0) == -1) {
-        return ErrnoError() << "waitpid() failed.";
-    }
-    if (!WIFEXITED(status)) {
-        return Error() << kFsVerityInitPath << ": abnormal process exit";
-    }
-    if (WEXITSTATUS(status) != 0) {
-        return Error() << kFsVerityInitPath << " exited with " << WEXITSTATUS(status);
     }
 
     return {};

@@ -37,6 +37,7 @@ rust_protobuf {
     crate_name: "odsign_proto",
     protos: ["odsign_info.proto"],
     source_stem: "odsign_proto",
+    use_protobuf3: true,
     host_supported: true,
     apex_available: [
         "com.android.compos",

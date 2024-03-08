@@ -26,7 +26,6 @@ use crate::{
     error::ResponseCode,
     key_parameter::{KeyParameter, KeyParameterValue},
     ks_err,
-    legacy_blob::LegacyBlobLoader,
     legacy_importer::LegacyImporter,
     raw_device::KeyMintDevice,
     utils::{watchdog as wd, AesGcm, AID_KEYSTORE},
@@ -79,25 +78,35 @@ pub struct SuperKeyType<'a> {
     pub alias: &'a str,
     /// Encryption algorithm
     pub algorithm: SuperEncryptionAlgorithm,
+    /// What to call this key in log messages. Not used for anything else.
+    pub name: &'a str,
 }
 
-/// Key used for LskfLocked keys; the corresponding superencryption key is loaded in memory
-/// when the user first unlocks, and remains in memory until the device reboots.
-pub const USER_SUPER_KEY: SuperKeyType =
-    SuperKeyType { alias: "USER_SUPER_KEY", algorithm: SuperEncryptionAlgorithm::Aes256Gcm };
-/// Key used for ScreenLockBound keys; the corresponding superencryption key is loaded in memory
-/// each time the user enters their LSKF, and cleared from memory each time the device is locked.
-/// Symmetric.
-pub const USER_SCREEN_LOCK_BOUND_KEY: SuperKeyType = SuperKeyType {
+/// The user's AfterFirstUnlock super key. This super key is loaded into memory when the user first
+/// unlocks the device, and it remains in memory until the device reboots. This is used to encrypt
+/// keys that require user authentication but not an unlocked device.
+pub const USER_AFTER_FIRST_UNLOCK_SUPER_KEY: SuperKeyType = SuperKeyType {
+    alias: "USER_SUPER_KEY",
+    algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+    name: "AfterFirstUnlock super key",
+};
+
+/// The user's UnlockedDeviceRequired symmetric super key. This super key is loaded into memory each
+/// time the user unlocks the device, and it is cleared from memory each time the user locks the
+/// device. This is used to encrypt keys that use the UnlockedDeviceRequired key parameter.
+pub const USER_UNLOCKED_DEVICE_REQUIRED_SYMMETRIC_SUPER_KEY: SuperKeyType = SuperKeyType {
     alias: "USER_SCREEN_LOCK_BOUND_KEY",
     algorithm: SuperEncryptionAlgorithm::Aes256Gcm,
+    name: "UnlockedDeviceRequired symmetric super key",
 };
-/// Key used for ScreenLockBound keys; the corresponding superencryption key is loaded in memory
-/// each time the user enters their LSKF, and cleared from memory each time the device is locked.
-/// Asymmetric, so keys can be encrypted when the device is locked.
-pub const USER_SCREEN_LOCK_BOUND_P521_KEY: SuperKeyType = SuperKeyType {
+
+/// The user's UnlockedDeviceRequired asymmetric super key. This is used to allow, while the device
+/// is locked, the creation of keys that use the UnlockedDeviceRequired key parameter. The private
+/// part of this key is loaded and cleared when the symmetric key is loaded and cleared.
+pub const USER_UNLOCKED_DEVICE_REQUIRED_P521_SUPER_KEY: SuperKeyType = SuperKeyType {
     alias: "USER_SCREEN_LOCK_BOUND_P521_KEY",
     algorithm: SuperEncryptionAlgorithm::EcdhP521,
+    name: "UnlockedDeviceRequired asymmetric super key",
 };
 
 /// Superencryption to apply to a new key.
@@ -105,10 +114,10 @@ pub const USER_SCREEN_LOCK_BOUND_P521_KEY: SuperKeyType = SuperKeyType {
 pub enum SuperEncryptionType {
     /// Do not superencrypt this key.
     None,
-    /// Superencrypt with a key that remains in memory from first unlock to reboot.
-    LskfBound,
-    /// Superencrypt with a key cleared from memory when the device is locked.
-    ScreenLockBound,
+    /// Superencrypt with the AfterFirstUnlock super key.
+    AfterFirstUnlock,
+    /// Superencrypt with an UnlockedDeviceRequired super key.
+    UnlockedDeviceRequired,
     /// Superencrypt with a key based on the desired boot level
     BootLevel(i32),
 }
@@ -225,33 +234,33 @@ impl LockedKey {
     }
 }
 
-/// Keys for unlocking UNLOCKED_DEVICE_REQUIRED keys, as LockedKeys, complete with
-/// a database descriptor for the encrypting key and the sids for the auth tokens
-/// that can be used to decrypt it.
+/// A user's UnlockedDeviceRequired super keys, encrypted with a biometric-bound key, and
+/// information about that biometric-bound key.
 struct BiometricUnlock {
-    /// List of auth token SIDs that can be used to unlock these keys.
+    /// List of auth token SIDs that are accepted by the encrypting biometric-bound key.
     sids: Vec<i64>,
-    /// Database descriptor of key to use to unlock.
+    /// Key descriptor of the encrypting biometric-bound key.
     key_desc: KeyDescriptor,
-    /// Locked versions of the matching UserSuperKeys fields
-    screen_lock_bound: LockedKey,
-    screen_lock_bound_private: LockedKey,
+    /// The UnlockedDeviceRequired super keys, encrypted with a biometric-bound key.
+    symmetric: LockedKey,
+    private: LockedKey,
 }
 
 #[derive(Default)]
 struct UserSuperKeys {
-    /// The per boot key is used for LSKF binding of authentication bound keys. There is one
-    /// key per android user. The key is stored on flash encrypted with a key derived from a
-    /// secret, that is itself derived from the user's lock screen knowledge factor (LSKF).
-    /// When the user unlocks the device for the first time, this key is unlocked, i.e., decrypted,
-    /// and stays memory resident until the device reboots.
-    per_boot: Option<Arc<SuperKey>>,
-    /// The screen lock key works like the per boot key with the distinction that it is cleared
-    /// from memory when the screen lock is engaged.
-    screen_lock_bound: Option<Arc<SuperKey>>,
-    /// When the device is locked, screen-lock-bound keys can still be encrypted, using
-    /// ECDH public-key encryption. This field holds the decryption private key.
-    screen_lock_bound_private: Option<Arc<SuperKey>>,
+    /// The AfterFirstUnlock super key is used for synthetic password binding of authentication
+    /// bound keys. There is one key per android user. The key is stored on flash encrypted with a
+    /// key derived from a secret, that is itself derived from the user's synthetic password. (In
+    /// most cases, the user's synthetic password can, in turn, only be decrypted using the user's
+    /// Lock Screen Knowledge Factor or LSKF.) When the user unlocks the device for the first time,
+    /// this key is unlocked, i.e., decrypted, and stays memory resident until the device reboots.
+    after_first_unlock: Option<Arc<SuperKey>>,
+    /// The UnlockedDeviceRequired symmetric super key works like the AfterFirstUnlock super key
+    /// with the distinction that it is cleared from memory when the device is locked.
+    unlocked_device_required_symmetric: Option<Arc<SuperKey>>,
+    /// When the device is locked, keys that use the UnlockedDeviceRequired key parameter can still
+    /// be created, using ECDH public-key encryption. This field holds the decryption private key.
+    unlocked_device_required_private: Option<Arc<SuperKey>>,
     /// Versions of the above two keys, locked behind a biometric.
     biometric_unlock: Option<BiometricUnlock>,
 }
@@ -336,7 +345,7 @@ impl SuperKeyManager {
                     break;
                 }
             }
-            w.wait().context(ks_err!("property wait failed"))?;
+            w.wait(None).context(ks_err!("property wait failed"))?;
         }
         Ok(())
     }
@@ -352,7 +361,7 @@ impl SuperKeyManager {
         self.data.user_keys.remove(&user);
     }
 
-    fn install_per_boot_key_for_user(
+    fn install_after_first_unlock_key_for_user(
         &mut self,
         user: UserId,
         super_key: Arc<SuperKey>,
@@ -360,7 +369,7 @@ impl SuperKeyManager {
         self.data
             .add_key_to_key_index(&super_key)
             .context(ks_err!("add_key_to_key_index failed"))?;
-        self.data.user_keys.entry(user).or_default().per_boot = Some(super_key);
+        self.data.user_keys.entry(user).or_default().after_first_unlock = Some(super_key);
         Ok(())
     }
 
@@ -388,61 +397,21 @@ impl SuperKeyManager {
         })
     }
 
-    pub fn get_per_boot_key_by_user_id(
+    /// Returns the AfterFirstUnlock superencryption key for the given user ID, or None if the user
+    /// has not yet unlocked the device since boot.
+    pub fn get_after_first_unlock_key_by_user_id(
         &self,
         user_id: UserId,
     ) -> Option<Arc<dyn AesGcm + Send + Sync>> {
-        self.get_per_boot_key_by_user_id_internal(user_id)
+        self.get_after_first_unlock_key_by_user_id_internal(user_id)
             .map(|sk| -> Arc<dyn AesGcm + Send + Sync> { sk })
     }
 
-    fn get_per_boot_key_by_user_id_internal(&self, user_id: UserId) -> Option<Arc<SuperKey>> {
-        self.data.user_keys.get(&user_id).and_then(|e| e.per_boot.as_ref().cloned())
-    }
-
-    /// This function unlocks the super keys for a given user.
-    /// This means the key is loaded from the database, decrypted and placed in the
-    /// super key cache. If there is no such key a new key is created, encrypted with
-    /// a key derived from the given password and stored in the database.
-    pub fn unlock_user_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        user: UserId,
-        pw: &Password,
-        legacy_blob_loader: &LegacyBlobLoader,
-    ) -> Result<()> {
-        let (_, entry) = db
-            .get_or_create_key_with(
-                Domain::APP,
-                user as u64 as i64,
-                USER_SUPER_KEY.alias,
-                crate::database::KEYSTORE_UUID,
-                || {
-                    // For backward compatibility we need to check if there is a super key present.
-                    let super_key = legacy_blob_loader
-                        .load_super_key(user, pw)
-                        .context(ks_err!("Failed to load legacy key blob."))?;
-                    let super_key = match super_key {
-                        None => {
-                            // No legacy file was found. So we generate a new key.
-                            generate_aes256_key()
-                                .context(ks_err!("Failed to generate AES 256 key."))?
-                        }
-                        Some(key) => key,
-                    };
-                    // Regardless of whether we loaded an old AES128 key or generated a new AES256
-                    // key as the super key, we derive a AES256 key from the password and re-encrypt
-                    // the super key before we insert it in the database. The length of the key is
-                    // preserved by the encryption so we don't need any extra flags to inform us
-                    // which algorithm to use it with.
-                    Self::encrypt_with_password(&super_key, pw).context("In create_new_key.")
-                },
-            )
-            .context(ks_err!("Failed to get key id."))?;
-
-        self.populate_cache_from_super_key_blob(user, USER_SUPER_KEY.algorithm, entry, pw)
-            .context(ks_err!())?;
-        Ok(())
+    fn get_after_first_unlock_key_by_user_id_internal(
+        &self,
+        user_id: UserId,
+    ) -> Option<Arc<SuperKey>> {
+        self.data.user_keys.get(&user_id).and_then(|e| e.after_first_unlock.as_ref().cloned())
     }
 
     /// Check if a given key is super-encrypted, from its metadata. If so, unwrap the key using
@@ -506,7 +475,7 @@ impl SuperKeyManager {
         }
     }
 
-    /// Checks if user has setup LSKF, even when super key cache is empty for the user.
+    /// Checks if the user's AfterFirstUnlock super key exists in the database (or legacy database).
     /// The reference to self is unused but it is required to prevent calling this function
     /// concurrently with skm state database changes.
     fn super_key_exists_in_db_for_user(
@@ -516,90 +485,18 @@ impl SuperKeyManager {
         user_id: UserId,
     ) -> Result<bool> {
         let key_in_db = db
-            .key_exists(Domain::APP, user_id as u64 as i64, USER_SUPER_KEY.alias, KeyType::Super)
+            .key_exists(
+                Domain::APP,
+                user_id as u64 as i64,
+                USER_AFTER_FIRST_UNLOCK_SUPER_KEY.alias,
+                KeyType::Super,
+            )
             .context(ks_err!())?;
 
         if key_in_db {
             Ok(key_in_db)
         } else {
             legacy_importer.has_super_key(user_id).context(ks_err!("Trying to query legacy db."))
-        }
-    }
-
-    /// Checks if user has already setup LSKF (i.e. a super key is persisted in the database or the
-    /// legacy database). If not, return Uninitialized state.
-    /// Otherwise, decrypt the super key from the password and return LskfUnlocked state.
-    pub fn check_and_unlock_super_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        pw: &Password,
-    ) -> Result<UserState> {
-        let alias = &USER_SUPER_KEY;
-        let result = legacy_importer
-            .with_try_import_super_key(user_id, pw, || db.load_super_key(alias, user_id))
-            .context(ks_err!("Failed to load super key"))?;
-
-        match result {
-            Some((_, entry)) => {
-                let super_key = self
-                    .populate_cache_from_super_key_blob(user_id, alias.algorithm, entry, pw)
-                    .context(ks_err!())?;
-                Ok(UserState::LskfUnlocked(super_key))
-            }
-            None => Ok(UserState::Uninitialized),
-        }
-    }
-
-    /// Checks if user has already setup LSKF (i.e. a super key is persisted in the database or the
-    /// legacy database). If so, return LskfLocked state.
-    /// If the password is provided, generate a new super key, encrypt with the password,
-    /// store in the database and populate the super key cache for the new user
-    /// and return LskfUnlocked state.
-    /// If the password is not provided, return Uninitialized state.
-    pub fn check_and_initialize_super_key(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        pw: Option<&Password>,
-    ) -> Result<UserState> {
-        let super_key_exists_in_db = self
-            .super_key_exists_in_db_for_user(db, legacy_importer, user_id)
-            .context(ks_err!("Failed to check if super key exists."))?;
-        if super_key_exists_in_db {
-            Ok(UserState::LskfLocked)
-        } else if let Some(pw) = pw {
-            // Generate a new super key.
-            let super_key =
-                generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?;
-            // Derive an AES256 key from the password and re-encrypt the super key
-            // before we insert it in the database.
-            let (encrypted_super_key, blob_metadata) =
-                Self::encrypt_with_password(&super_key, pw).context(ks_err!())?;
-
-            let key_entry = db
-                .store_super_key(
-                    user_id,
-                    &USER_SUPER_KEY,
-                    &encrypted_super_key,
-                    &blob_metadata,
-                    &KeyMetaData::new(),
-                )
-                .context(ks_err!("Failed to store super key."))?;
-
-            let super_key = self
-                .populate_cache_from_super_key_blob(
-                    user_id,
-                    USER_SUPER_KEY.algorithm,
-                    key_entry,
-                    pw,
-                )
-                .context(ks_err!())?;
-            Ok(UserState::LskfUnlocked(super_key))
-        } else {
-            Ok(UserState::Uninitialized)
         }
     }
 
@@ -613,7 +510,8 @@ impl SuperKeyManager {
     ) -> Result<Arc<SuperKey>> {
         let super_key = Self::extract_super_key_from_key_entry(algorithm, entry, pw, None)
             .context(ks_err!("Failed to extract super key from key entry"))?;
-        self.install_per_boot_key_for_user(user_id, super_key.clone())?;
+        self.install_after_first_unlock_key_for_user(user_id, super_key.clone())
+            .context(ks_err!("Failed to install AfterFirstUnlock super key for user!"))?;
         Ok(super_key)
     }
 
@@ -683,33 +581,6 @@ impl SuperKeyManager {
         Ok((encrypted_key, metadata))
     }
 
-    // Encrypt the given key blob with the user's super key, if the super key exists and the device
-    // is unlocked. If the super key exists and the device is locked, or LSKF is not setup,
-    // return error. Note that it is out of the scope of this function to check if super encryption
-    // is required. Such check should be performed before calling this function.
-    fn super_encrypt_on_key_init(
-        &self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        key_blob: &[u8],
-    ) -> Result<(Vec<u8>, BlobMetaData)> {
-        match self
-            .get_user_state(db, legacy_importer, user_id)
-            .context(ks_err!("Failed to get user state."))?
-        {
-            UserState::LskfUnlocked(super_key) => {
-                Self::encrypt_with_aes_super_key(key_blob, &super_key)
-                    .context(ks_err!("Failed to encrypt the key."))
-            }
-            UserState::LskfLocked => {
-                Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
-            }
-            UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
-                .context(ks_err!("LSKF is not setup for the user.")),
-        }
-    }
-
     // Helper function to encrypt a key with the given super key. Callers should select which super
     // key to be used. This is called when a key is super encrypted at its creation as well as at
     // its upgrade.
@@ -729,6 +600,52 @@ impl SuperKeyManager {
         Ok((encrypted_key, metadata))
     }
 
+    // Encrypts a given key_blob using a hybrid approach, which can either use the symmetric super
+    // key or the public super key depending on which is available.
+    //
+    // If the symmetric_key is available, the key_blob is encrypted using symmetric encryption with
+    // the provided symmetric super key.  Otherwise, the function loads the public super key from
+    // the KeystoreDB and encrypts the key_blob using ECDH encryption and marks the keyblob to be
+    // re-encrypted with the symmetric super key on the first use.
+    //
+    // This hybrid scheme allows keys that use the UnlockedDeviceRequired key parameter to be
+    // created while the device is locked.
+    fn encrypt_with_hybrid_super_key(
+        key_blob: &[u8],
+        symmetric_key: Option<&SuperKey>,
+        public_key_type: &SuperKeyType,
+        db: &mut KeystoreDB,
+        user_id: UserId,
+    ) -> Result<(Vec<u8>, BlobMetaData)> {
+        if let Some(super_key) = symmetric_key {
+            Self::encrypt_with_aes_super_key(key_blob, super_key).context(ks_err!(
+                "Failed to encrypt with UnlockedDeviceRequired symmetric super key."
+            ))
+        } else {
+            // Symmetric key is not available, use public key encryption
+            let loaded = db
+                .load_super_key(public_key_type, user_id)
+                .context(ks_err!("load_super_key failed."))?;
+            let (key_id_guard, key_entry) =
+                loaded.ok_or_else(Error::sys).context(ks_err!("User ECDH super key missing."))?;
+            let public_key = key_entry
+                .metadata()
+                .sec1_public_key()
+                .ok_or_else(Error::sys)
+                .context(ks_err!("sec1_public_key missing."))?;
+            let mut metadata = BlobMetaData::new();
+            let (ephem_key, salt, iv, encrypted_key, aead_tag) =
+                ECDHPrivateKey::encrypt_message(public_key, key_blob)
+                    .context(ks_err!("ECDHPrivateKey::encrypt_message failed."))?;
+            metadata.add(BlobMetaEntry::PublicKey(ephem_key));
+            metadata.add(BlobMetaEntry::Salt(salt));
+            metadata.add(BlobMetaEntry::Iv(iv));
+            metadata.add(BlobMetaEntry::AeadTag(aead_tag));
+            SuperKeyIdentifier::DatabaseId(key_id_guard.id()).add_to_metadata(&mut metadata);
+            Ok((encrypted_key, metadata))
+        }
+    }
+
     /// Check if super encryption is required and if so, super-encrypt the key to be stored in
     /// the database.
     #[allow(clippy::too_many_arguments)]
@@ -744,39 +661,41 @@ impl SuperKeyManager {
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         match Enforcements::super_encryption_required(domain, key_parameters, flags) {
             SuperEncryptionType::None => Ok((key_blob.to_vec(), BlobMetaData::new())),
-            SuperEncryptionType::LskfBound => self
-                .super_encrypt_on_key_init(db, legacy_importer, user_id, key_blob)
-                .context(ks_err!("Failed to super encrypt with LskfBound key.")),
-            SuperEncryptionType::ScreenLockBound => {
-                let entry =
-                    self.data.user_keys.get(&user_id).and_then(|e| e.screen_lock_bound.as_ref());
-                if let Some(super_key) = entry {
-                    Self::encrypt_with_aes_super_key(key_blob, super_key)
-                        .context(ks_err!("Failed to encrypt with ScreenLockBound key."))
-                } else {
-                    // Symmetric key is not available, use public key encryption
-                    let loaded = db
-                        .load_super_key(&USER_SCREEN_LOCK_BOUND_P521_KEY, user_id)
-                        .context(ks_err!("load_super_key failed."))?;
-                    let (key_id_guard, key_entry) =
-                        loaded.ok_or_else(Error::sys).context(ks_err!("User ECDH key missing."))?;
-                    let public_key = key_entry
-                        .metadata()
-                        .sec1_public_key()
-                        .ok_or_else(Error::sys)
-                        .context(ks_err!("sec1_public_key missing."))?;
-                    let mut metadata = BlobMetaData::new();
-                    let (ephem_key, salt, iv, encrypted_key, aead_tag) =
-                        ECDHPrivateKey::encrypt_message(public_key, key_blob)
-                            .context(ks_err!("ECDHPrivateKey::encrypt_message failed."))?;
-                    metadata.add(BlobMetaEntry::PublicKey(ephem_key));
-                    metadata.add(BlobMetaEntry::Salt(salt));
-                    metadata.add(BlobMetaEntry::Iv(iv));
-                    metadata.add(BlobMetaEntry::AeadTag(aead_tag));
-                    SuperKeyIdentifier::DatabaseId(key_id_guard.id())
-                        .add_to_metadata(&mut metadata);
-                    Ok((encrypted_key, metadata))
+            SuperEncryptionType::AfterFirstUnlock => {
+                // Encrypt the given key blob with the user's AfterFirstUnlock super key. If the
+                // user has not unlocked the device since boot or the super keys were never
+                // initialized for the user for some reason, an error is returned.
+                match self
+                    .get_user_state(db, legacy_importer, user_id)
+                    .context(ks_err!("Failed to get user state for user {user_id}"))?
+                {
+                    UserState::AfterFirstUnlock(super_key) => {
+                        Self::encrypt_with_aes_super_key(key_blob, &super_key).context(ks_err!(
+                            "Failed to encrypt with AfterFirstUnlock super key for user {user_id}"
+                        ))
+                    }
+                    UserState::BeforeFirstUnlock => {
+                        Err(Error::Rc(ResponseCode::LOCKED)).context(ks_err!("Device is locked."))
+                    }
+                    UserState::Uninitialized => Err(Error::Rc(ResponseCode::UNINITIALIZED))
+                        .context(ks_err!("User {user_id} does not have super keys")),
                 }
+            }
+            SuperEncryptionType::UnlockedDeviceRequired => {
+                let symmetric_key = self
+                    .data
+                    .user_keys
+                    .get(&user_id)
+                    .and_then(|e| e.unlocked_device_required_symmetric.as_ref())
+                    .map(|arc| arc.as_ref());
+                Self::encrypt_with_hybrid_super_key(
+                    key_blob,
+                    symmetric_key,
+                    &USER_UNLOCKED_DEVICE_REQUIRED_P521_SUPER_KEY,
+                    db,
+                    user_id,
+                )
+                .context(ks_err!("Failed to encrypt with UnlockedDeviceRequired hybrid scheme."))
             }
             SuperEncryptionType::BootLevel(level) => {
                 let key_id = SuperKeyIdentifier::BootLevel(level);
@@ -809,6 +728,47 @@ impl SuperKeyManager {
         }
     }
 
+    fn create_super_key(
+        &mut self,
+        db: &mut KeystoreDB,
+        user_id: UserId,
+        key_type: &SuperKeyType,
+        password: &Password,
+        reencrypt_with: Option<Arc<SuperKey>>,
+    ) -> Result<Arc<SuperKey>> {
+        log::info!("Creating {} for user {}", key_type.name, user_id);
+        let (super_key, public_key) = match key_type.algorithm {
+            SuperEncryptionAlgorithm::Aes256Gcm => {
+                (generate_aes256_key().context(ks_err!("Failed to generate AES-256 key."))?, None)
+            }
+            SuperEncryptionAlgorithm::EcdhP521 => {
+                let key =
+                    ECDHPrivateKey::generate().context(ks_err!("Failed to generate ECDH key"))?;
+                (
+                    key.private_key().context(ks_err!("private_key failed"))?,
+                    Some(key.public_key().context(ks_err!("public_key failed"))?),
+                )
+            }
+        };
+        // Derive an AES-256 key from the password and re-encrypt the super key before we insert it
+        // in the database.
+        let (encrypted_super_key, blob_metadata) =
+            Self::encrypt_with_password(&super_key, password).context(ks_err!())?;
+        let mut key_metadata = KeyMetaData::new();
+        if let Some(pk) = public_key {
+            key_metadata.add(KeyMetaEntry::Sec1PublicKey(pk));
+        }
+        let key_entry = db
+            .store_super_key(user_id, key_type, &encrypted_super_key, &blob_metadata, &key_metadata)
+            .context(ks_err!("Failed to store super key."))?;
+        Ok(Arc::new(SuperKey {
+            algorithm: key_type.algorithm,
+            key: super_key,
+            id: SuperKeyIdentifier::DatabaseId(key_entry.id()),
+            reencrypt_with,
+        }))
+    }
+
     /// Fetch a superencryption key from the database, or create it if it doesn't already exist.
     /// When this is called, the caller must hold the lock on the SuperKeyManager.
     /// So it's OK that the check and creation are different DB transactions.
@@ -829,83 +789,59 @@ impl SuperKeyManager {
                 reencrypt_with,
             )?)
         } else {
-            let (super_key, public_key) = match key_type.algorithm {
-                SuperEncryptionAlgorithm::Aes256Gcm => (
-                    generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?,
-                    None,
-                ),
-                SuperEncryptionAlgorithm::EcdhP521 => {
-                    let key = ECDHPrivateKey::generate()
-                        .context(ks_err!("Failed to generate ECDH key"))?;
-                    (
-                        key.private_key().context(ks_err!("private_key failed"))?,
-                        Some(key.public_key().context(ks_err!("public_key failed"))?),
-                    )
-                }
-            };
-            // Derive an AES256 key from the password and re-encrypt the super key
-            // before we insert it in the database.
-            let (encrypted_super_key, blob_metadata) =
-                Self::encrypt_with_password(&super_key, password).context(ks_err!())?;
-            let mut key_metadata = KeyMetaData::new();
-            if let Some(pk) = public_key {
-                key_metadata.add(KeyMetaEntry::Sec1PublicKey(pk));
-            }
-            let key_entry = db
-                .store_super_key(
-                    user_id,
-                    key_type,
-                    &encrypted_super_key,
-                    &blob_metadata,
-                    &key_metadata,
-                )
-                .context(ks_err!("Failed to store super key."))?;
-            Ok(Arc::new(SuperKey {
-                algorithm: key_type.algorithm,
-                key: super_key,
-                id: SuperKeyIdentifier::DatabaseId(key_entry.id()),
-                reencrypt_with,
-            }))
+            self.create_super_key(db, user_id, key_type, password, reencrypt_with)
         }
     }
 
-    /// Decrypt the screen-lock bound keys for this user using the password and store in memory.
-    pub fn unlock_screen_lock_bound_key(
+    /// Decrypt the UnlockedDeviceRequired super keys for this user using the password and store
+    /// them in memory. If these keys don't exist yet, create them.
+    pub fn unlock_unlocked_device_required_keys(
         &mut self,
         db: &mut KeystoreDB,
         user_id: UserId,
         password: &Password,
     ) -> Result<()> {
-        let (screen_lock_bound, screen_lock_bound_private) = self
+        let (symmetric, private) = self
             .data
             .user_keys
             .get(&user_id)
-            .map(|e| (e.screen_lock_bound.clone(), e.screen_lock_bound_private.clone()))
+            .map(|e| {
+                (
+                    e.unlocked_device_required_symmetric.clone(),
+                    e.unlocked_device_required_private.clone(),
+                )
+            })
             .unwrap_or((None, None));
 
-        if screen_lock_bound.is_some() && screen_lock_bound_private.is_some() {
+        if symmetric.is_some() && private.is_some() {
             // Already unlocked.
             return Ok(());
         }
 
-        let aes = if let Some(screen_lock_bound) = screen_lock_bound {
-            // This is weird. If this point is reached only one of the screen locked keys was
-            // initialized. This should never happen.
-            screen_lock_bound
-        } else {
-            self.get_or_create_super_key(db, user_id, &USER_SCREEN_LOCK_BOUND_KEY, password, None)
-                .context(ks_err!("Trying to get or create symmetric key."))?
-        };
-
-        let ecdh = if let Some(screen_lock_bound_private) = screen_lock_bound_private {
-            // This is weird. If this point is reached only one of the screen locked keys was
-            // initialized. This should never happen.
-            screen_lock_bound_private
+        let aes = if let Some(symmetric) = symmetric {
+            // This is weird. If this point is reached only one of the UnlockedDeviceRequired super
+            // keys was initialized. This should never happen.
+            symmetric
         } else {
             self.get_or_create_super_key(
                 db,
                 user_id,
-                &USER_SCREEN_LOCK_BOUND_P521_KEY,
+                &USER_UNLOCKED_DEVICE_REQUIRED_SYMMETRIC_SUPER_KEY,
+                password,
+                None,
+            )
+            .context(ks_err!("Trying to get or create symmetric key."))?
+        };
+
+        let ecdh = if let Some(private) = private {
+            // This is weird. If this point is reached only one of the UnlockedDeviceRequired super
+            // keys was initialized. This should never happen.
+            private
+        } else {
+            self.get_or_create_super_key(
+                db,
+                user_id,
+                &USER_UNLOCKED_DEVICE_REQUIRED_P521_SUPER_KEY,
                 password,
                 Some(aes.clone()),
             )
@@ -915,24 +851,28 @@ impl SuperKeyManager {
         self.data.add_key_to_key_index(&aes)?;
         self.data.add_key_to_key_index(&ecdh)?;
         let entry = self.data.user_keys.entry(user_id).or_default();
-        entry.screen_lock_bound = Some(aes);
-        entry.screen_lock_bound_private = Some(ecdh);
+        entry.unlocked_device_required_symmetric = Some(aes);
+        entry.unlocked_device_required_private = Some(ecdh);
         Ok(())
     }
 
-    /// Wipe the screen-lock bound keys for this user from memory.
-    pub fn lock_screen_lock_bound_key(
+    /// Wipe the user's UnlockedDeviceRequired super keys from memory.
+    pub fn lock_unlocked_device_required_keys(
         &mut self,
         db: &mut KeystoreDB,
         user_id: UserId,
         unlocking_sids: &[i64],
     ) {
-        log::info!("Locking screen bound for user {} sids {:?}", user_id, unlocking_sids);
-        let mut entry = self.data.user_keys.entry(user_id).or_default();
+        log::info!(
+            "Locking UnlockedDeviceRequired super keys for user {}; unlocking_sids={:?}",
+            user_id,
+            unlocking_sids
+        );
+        let entry = self.data.user_keys.entry(user_id).or_default();
         if !unlocking_sids.is_empty() {
             if let (Some(aes), Some(ecdh)) = (
-                entry.screen_lock_bound.as_ref().cloned(),
-                entry.screen_lock_bound_private.as_ref().cloned(),
+                entry.unlocked_device_required_symmetric.as_ref().cloned(),
+                entry.unlocked_device_required_private.as_ref().cloned(),
             ) {
                 let res = (|| -> Result<()> {
                     let key_desc = KeyMintDevice::internal_descriptor(format!(
@@ -967,7 +907,7 @@ impl SuperKeyManager {
                         KeyType::Client, /* TODO Should be Super b/189470584 */
                         |dev| {
                             let _wp = wd::watch_millis(
-                                "In lock_screen_lock_bound_key: calling importKey.",
+                                "In lock_unlocked_device_required_keys: calling importKey.",
                                 500,
                             );
                             dev.importKey(
@@ -981,20 +921,20 @@ impl SuperKeyManager {
                     entry.biometric_unlock = Some(BiometricUnlock {
                         sids: unlocking_sids.into(),
                         key_desc,
-                        screen_lock_bound: LockedKey::new(&encrypting_key, &aes)?,
-                        screen_lock_bound_private: LockedKey::new(&encrypting_key, &ecdh)?,
+                        symmetric: LockedKey::new(&encrypting_key, &aes)?,
+                        private: LockedKey::new(&encrypting_key, &ecdh)?,
                     });
                     Ok(())
                 })();
-                // There is no reason to propagate an error here upwards. We must discard
-                // entry.screen_lock_bound* in any case.
+                // There is no reason to propagate an error here upwards. We must clear the keys
+                // from memory in any case.
                 if let Err(e) = res {
                     log::error!("Error setting up biometric unlock: {:#?}", e);
                 }
             }
         }
-        entry.screen_lock_bound = None;
-        entry.screen_lock_bound_private = None;
+        entry.unlocked_device_required_symmetric = None;
+        entry.unlocked_device_required_private = None;
     }
 
     /// User has unlocked, not using a password. See if any of our stored auth tokens can be used
@@ -1004,7 +944,7 @@ impl SuperKeyManager {
         db: &mut KeystoreDB,
         user_id: UserId,
     ) -> Result<()> {
-        let mut entry = self.data.user_keys.entry(user_id).or_default();
+        let entry = self.data.user_keys.entry(user_id).or_default();
         if let Some(biometric) = entry.biometric_unlock.as_ref() {
             let (key_id_guard, key_entry) = db
                 .load_key_entry(
@@ -1017,12 +957,14 @@ impl SuperKeyManager {
                 .context(ks_err!("load_key_entry failed"))?;
             let km_dev: KeyMintDevice = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
                 .context(ks_err!("KeyMintDevice::get failed"))?;
+            let mut errs = vec![];
             for sid in &biometric.sids {
+                let sid = *sid;
                 if let Some((auth_token_entry, _)) = db.find_auth_token_entry(|entry| {
-                    entry.auth_token().userId == *sid || entry.auth_token().authenticatorId == *sid
+                    entry.auth_token().userId == sid || entry.auth_token().authenticatorId == sid
                 }) {
                     let res: Result<(Arc<SuperKey>, Arc<SuperKey>)> = (|| {
-                        let slb = biometric.screen_lock_bound.decrypt(
+                        let symmetric = biometric.symmetric.decrypt(
                             db,
                             &km_dev,
                             &key_id_guard,
@@ -1030,29 +972,36 @@ impl SuperKeyManager {
                             auth_token_entry.auth_token(),
                             None,
                         )?;
-                        let slbp = biometric.screen_lock_bound_private.decrypt(
+                        let private = biometric.private.decrypt(
                             db,
                             &km_dev,
                             &key_id_guard,
                             &key_entry,
                             auth_token_entry.auth_token(),
-                            Some(slb.clone()),
+                            Some(symmetric.clone()),
                         )?;
-                        Ok((slb, slbp))
+                        Ok((symmetric, private))
                     })();
                     match res {
-                        Ok((slb, slbp)) => {
-                            entry.screen_lock_bound = Some(slb.clone());
-                            entry.screen_lock_bound_private = Some(slbp.clone());
-                            self.data.add_key_to_key_index(&slb)?;
-                            self.data.add_key_to_key_index(&slbp)?;
-                            log::info!("Successfully unlocked with biometric");
+                        Ok((symmetric, private)) => {
+                            entry.unlocked_device_required_symmetric = Some(symmetric.clone());
+                            entry.unlocked_device_required_private = Some(private.clone());
+                            self.data.add_key_to_key_index(&symmetric)?;
+                            self.data.add_key_to_key_index(&private)?;
+                            log::info!("Successfully unlocked user {user_id} with biometric {sid}",);
                             return Ok(());
                         }
                         Err(e) => {
-                            log::warn!("attempt failed: {:?}", e)
+                            // Don't log an error yet, as some other biometric SID might work.
+                            errs.push((sid, e));
                         }
                     }
+                }
+            }
+            if !errs.is_empty() {
+                log::warn!("biometric unlock failed for all SIDs, with errors:");
+                for (sid, err) in errs {
+                    log::warn!("  biometric {sid}: {err}");
                 }
             }
         }
@@ -1068,8 +1017,8 @@ impl SuperKeyManager {
         legacy_importer: &LegacyImporter,
         user_id: UserId,
     ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(super_key) => Ok(UserState::LskfUnlocked(super_key)),
+        match self.get_after_first_unlock_key_by_user_id_internal(user_id) {
+            Some(super_key) => Ok(UserState::AfterFirstUnlock(super_key)),
             None => {
                 // Check if a super key exists in the database or legacy database.
                 // If so, return locked user state.
@@ -1077,7 +1026,7 @@ impl SuperKeyManager {
                     .super_key_exists_in_db_for_user(db, legacy_importer, user_id)
                     .context(ks_err!())?
                 {
-                    Ok(UserState::LskfLocked)
+                    Ok(UserState::BeforeFirstUnlock)
                 } else {
                     Ok(UserState::Uninitialized)
                 }
@@ -1085,108 +1034,200 @@ impl SuperKeyManager {
         }
     }
 
-    /// If the given user is unlocked:
-    /// * and `password` is None, the user is reset, all authentication bound keys are deleted and
-    ///   `Ok(UserState::Uninitialized)` is returned.
-    /// * and `password` is Some, `Ok(UserState::LskfUnlocked)` is returned.
-    /// If the given user is locked:
-    /// * and the user was initialized before, `Ok(UserState::Locked)` is returned.
-    /// * and the user was not initialized before:
-    ///   * and `password` is None, `Ok(Uninitialized)` is returned.
-    ///   * and `password` is Some, super keys are generated and `Ok(UserState::LskfUnlocked)` is
-    ///     returned.
-    pub fn reset_or_init_user_and_get_user_state(
+    /// Deletes all keys and super keys for the given user.
+    /// This is called when a user is deleted.
+    pub fn remove_user(
         &mut self,
         db: &mut KeystoreDB,
         legacy_importer: &LegacyImporter,
         user_id: UserId,
-        password: Option<&Password>,
-    ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(_) if password.is_none() => {
-                // Transitioning to swiping, delete only the super key in database and cache,
-                // and super-encrypted keys in database (and in KM).
-                self.reset_user(db, legacy_importer, user_id, true)
-                    .context(ks_err!("Trying to delete keys from the db."))?;
-                // Lskf is now removed in Keystore.
-                Ok(UserState::Uninitialized)
-            }
-            Some(super_key) => {
-                // Keystore won't be notified when changing to a new password when LSKF is
-                // already setup. Therefore, ideally this path wouldn't be reached.
-                Ok(UserState::LskfUnlocked(super_key))
-            }
-            None => {
-                // Check if a super key exists in the database or legacy database.
-                // If so, return LskfLocked state.
-                // Otherwise, i) if the password is provided, initialize the super key and return
-                // LskfUnlocked state ii) if password is not provided, return Uninitialized state.
-                self.check_and_initialize_super_key(db, legacy_importer, user_id, password)
-            }
-        }
+    ) -> Result<()> {
+        log::info!("remove_user(user={user_id})");
+        // Mark keys created on behalf of the user as unreferenced.
+        legacy_importer
+            .bulk_delete_user(user_id, false)
+            .context(ks_err!("Trying to delete legacy keys."))?;
+        db.unbind_keys_for_user(user_id, false).context(ks_err!("Error in unbinding keys."))?;
+
+        // Delete super key in cache, if exists.
+        self.forget_all_keys_for_user(user_id);
+        Ok(())
     }
 
-    /// Unlocks the given user with the given password. If the key was already unlocked or unlocking
-    /// was successful, `Ok(UserState::LskfUnlocked)` is returned.
-    /// If the user was never initialized `Ok(UserState::Uninitialized)` is returned.
-    pub fn unlock_and_get_user_state(
-        &mut self,
-        db: &mut KeystoreDB,
-        legacy_importer: &LegacyImporter,
-        user_id: UserId,
-        password: &Password,
-    ) -> Result<UserState> {
-        match self.get_per_boot_key_by_user_id_internal(user_id) {
-            Some(super_key) => {
-                log::info!("Trying to unlock when already unlocked.");
-                Ok(UserState::LskfUnlocked(super_key))
-            }
-            None => {
-                // Check if a super key exists in the database or legacy database.
-                // If not, return Uninitialized state.
-                // Otherwise, try to unlock the super key and if successful,
-                // return LskfUnlocked.
-                self.check_and_unlock_super_key(db, legacy_importer, user_id, password)
-                    .context(ks_err!("Failed to unlock super key."))
-            }
-        }
-    }
-
-    /// Delete all the keys created on behalf of the user.
-    /// If 'keep_non_super_encrypted_keys' is set to true, delete only the super key and super
-    /// encrypted keys.
+    /// Deletes all authentication bound keys and super keys for the given user.  The user must be
+    /// unlocked before this function is called.  This function is used to transition a user to
+    /// swipe.
     pub fn reset_user(
         &mut self,
         db: &mut KeystoreDB,
         legacy_importer: &LegacyImporter,
         user_id: UserId,
-        keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
-        // Mark keys created on behalf of the user as unreferenced.
-        legacy_importer
-            .bulk_delete_user(user_id, keep_non_super_encrypted_keys)
-            .context(ks_err!("Trying to delete legacy keys."))?;
-        db.unbind_keys_for_user(user_id, keep_non_super_encrypted_keys)
-            .context(ks_err!("Error in unbinding keys."))?;
+        log::info!("reset_user(user={user_id})");
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::Uninitialized => {
+                Err(Error::sys()).context(ks_err!("Tried to reset an uninitialized user!"))
+            }
+            UserState::BeforeFirstUnlock => {
+                Err(Error::sys()).context(ks_err!("Tried to reset a locked user's password!"))
+            }
+            UserState::AfterFirstUnlock(_) => {
+                // Mark keys created on behalf of the user as unreferenced.
+                legacy_importer
+                    .bulk_delete_user(user_id, true)
+                    .context(ks_err!("Trying to delete legacy keys."))?;
+                db.unbind_keys_for_user(user_id, true)
+                    .context(ks_err!("Error in unbinding keys."))?;
 
-        // Delete super key in cache, if exists.
-        self.forget_all_keys_for_user(user_id);
-        Ok(())
+                // Delete super key in cache, if exists.
+                self.forget_all_keys_for_user(user_id);
+                Ok(())
+            }
+        }
+    }
+
+    /// If the user hasn't been initialized yet, then this function generates the user's
+    /// AfterFirstUnlock super key and sets the user's state to AfterFirstUnlock. Otherwise this
+    /// function returns an error.
+    pub fn init_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+        password: &Password,
+    ) -> Result<()> {
+        log::info!("init_user(user={user_id})");
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::AfterFirstUnlock(_) | UserState::BeforeFirstUnlock => {
+                Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"))
+            }
+            UserState::Uninitialized => {
+                // Generate a new super key.
+                let super_key =
+                    generate_aes256_key().context(ks_err!("Failed to generate AES 256 key."))?;
+                // Derive an AES256 key from the password and re-encrypt the super key
+                // before we insert it in the database.
+                let (encrypted_super_key, blob_metadata) =
+                    Self::encrypt_with_password(&super_key, password)
+                        .context(ks_err!("Failed to encrypt super key with password!"))?;
+
+                let key_entry = db
+                    .store_super_key(
+                        user_id,
+                        &USER_AFTER_FIRST_UNLOCK_SUPER_KEY,
+                        &encrypted_super_key,
+                        &blob_metadata,
+                        &KeyMetaData::new(),
+                    )
+                    .context(ks_err!("Failed to store super key."))?;
+
+                self.populate_cache_from_super_key_blob(
+                    user_id,
+                    USER_AFTER_FIRST_UNLOCK_SUPER_KEY.algorithm,
+                    key_entry,
+                    password,
+                )
+                .context(ks_err!("Failed to initialize user!"))?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Initializes the given user by creating their super keys, both AfterFirstUnlock and
+    /// UnlockedDeviceRequired. If allow_existing is true, then the user already being initialized
+    /// is not considered an error.
+    pub fn initialize_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+        password: &Password,
+        allow_existing: bool,
+    ) -> Result<()> {
+        // Create the AfterFirstUnlock super key.
+        if self.super_key_exists_in_db_for_user(db, legacy_importer, user_id)? {
+            log::info!("AfterFirstUnlock super key already exists");
+            if !allow_existing {
+                return Err(Error::sys()).context(ks_err!("Tried to re-init an initialized user!"));
+            }
+        } else {
+            let super_key = self
+                .create_super_key(db, user_id, &USER_AFTER_FIRST_UNLOCK_SUPER_KEY, password, None)
+                .context(ks_err!("Failed to create AfterFirstUnlock super key"))?;
+
+            self.install_after_first_unlock_key_for_user(user_id, super_key)
+                .context(ks_err!("Failed to install AfterFirstUnlock super key for user"))?;
+        }
+
+        // Create the UnlockedDeviceRequired super keys.
+        self.unlock_unlocked_device_required_keys(db, user_id, password)
+            .context(ks_err!("Failed to create UnlockedDeviceRequired super keys"))
+    }
+
+    /// Unlocks the given user with the given password.
+    ///
+    /// If the user state is BeforeFirstUnlock:
+    /// - Unlock the user's AfterFirstUnlock super key
+    /// - Unlock the user's UnlockedDeviceRequired super keys
+    ///
+    /// If the user state is AfterFirstUnlock:
+    /// - Unlock the user's UnlockedDeviceRequired super keys only
+    ///
+    pub fn unlock_user(
+        &mut self,
+        db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: UserId,
+        password: &Password,
+    ) -> Result<()> {
+        log::info!("unlock_user(user={user_id})");
+        match self.get_user_state(db, legacy_importer, user_id)? {
+            UserState::AfterFirstUnlock(_) => {
+                self.unlock_unlocked_device_required_keys(db, user_id, password)
+            }
+            UserState::Uninitialized => {
+                Err(Error::sys()).context(ks_err!("Tried to unlock an uninitialized user!"))
+            }
+            UserState::BeforeFirstUnlock => {
+                let alias = &USER_AFTER_FIRST_UNLOCK_SUPER_KEY;
+                let result = legacy_importer
+                    .with_try_import_super_key(user_id, password, || {
+                        db.load_super_key(alias, user_id)
+                    })
+                    .context(ks_err!("Failed to load super key"))?;
+
+                match result {
+                    Some((_, entry)) => {
+                        self.populate_cache_from_super_key_blob(
+                            user_id,
+                            alias.algorithm,
+                            entry,
+                            password,
+                        )
+                        .context(ks_err!("Failed when unlocking user."))?;
+                        self.unlock_unlocked_device_required_keys(db, user_id, password)
+                    }
+                    None => {
+                        Err(Error::sys()).context(ks_err!("Locked user does not have a super key!"))
+                    }
+                }
+            }
+        }
     }
 }
 
 /// This enum represents different states of the user's life cycle in the device.
 /// For now, only three states are defined. More states may be added later.
 pub enum UserState {
-    // The user has registered LSKF and has unlocked the device by entering PIN/Password,
-    // and hence the per-boot super key is available in the cache.
-    LskfUnlocked(Arc<SuperKey>),
-    // The user has registered LSKF, but has not unlocked the device using password, after reboot.
-    // Hence the per-boot super-key(s) is not available in the cache.
-    // However, the encrypted super key is available in the database.
-    LskfLocked,
-    // There's no user in the device for the given user id, or the user with the user id has not
-    // setup LSKF.
+    // The user's super keys exist, and the user has unlocked the device at least once since boot.
+    // Hence, the AfterFirstUnlock super key is available in the cache.
+    AfterFirstUnlock(Arc<SuperKey>),
+    // The user's super keys exist, but the user hasn't unlocked the device at least once since
+    // boot. Hence, the AfterFirstUnlock and UnlockedDeviceRequired super keys are not available in
+    // the cache. However, they exist in the database in encrypted form.
+    BeforeFirstUnlock,
+    // The user's super keys don't exist. I.e., there's no user with the given user ID, or the user
+    // is in the process of being created or destroyed.
     Uninitialized,
 }
 
@@ -1231,5 +1272,392 @@ impl<'a> Deref for KeyBlob<'a> {
             Self::NonSensitive(key) => key,
             Self::Ref(key) => key,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::make_bootlevel_key_entry;
+    use crate::database::tests::make_test_key_entry;
+    use crate::database::tests::new_test_db;
+    use rand::prelude::*;
+    const USER_ID: u32 = 0;
+    const TEST_KEY_ALIAS: &str = "TEST_KEY";
+    const TEST_BOOT_KEY_ALIAS: &str = "TEST_BOOT_KEY";
+
+    pub fn generate_password_blob() -> Password<'static> {
+        let mut rng = rand::thread_rng();
+        let mut password = vec![0u8; 64];
+        rng.fill_bytes(&mut password);
+
+        let mut zvec = ZVec::new(64).expect("Failed to create ZVec");
+        zvec[..].copy_from_slice(&password[..]);
+
+        Password::Owned(zvec)
+    }
+
+    fn setup_test(pw: &Password) -> (Arc<RwLock<SuperKeyManager>>, KeystoreDB, LegacyImporter) {
+        let mut keystore_db = new_test_db().unwrap();
+        let mut legacy_importer = LegacyImporter::new(Arc::new(Default::default()));
+        legacy_importer.set_empty();
+        let skm: Arc<RwLock<SuperKeyManager>> = Default::default();
+        assert!(skm
+            .write()
+            .unwrap()
+            .init_user(&mut keystore_db, &legacy_importer, USER_ID, pw)
+            .is_ok());
+        (skm, keystore_db, legacy_importer)
+    }
+
+    fn assert_unlocked(
+        skm: &Arc<RwLock<SuperKeyManager>>,
+        keystore_db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: u32,
+        err_msg: &str,
+    ) {
+        let user_state =
+            skm.write().unwrap().get_user_state(keystore_db, legacy_importer, user_id).unwrap();
+        match user_state {
+            UserState::AfterFirstUnlock(_) => {}
+            _ => panic!("{}", err_msg),
+        }
+    }
+
+    fn assert_locked(
+        skm: &Arc<RwLock<SuperKeyManager>>,
+        keystore_db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: u32,
+        err_msg: &str,
+    ) {
+        let user_state =
+            skm.write().unwrap().get_user_state(keystore_db, legacy_importer, user_id).unwrap();
+        match user_state {
+            UserState::BeforeFirstUnlock => {}
+            _ => panic!("{}", err_msg),
+        }
+    }
+
+    fn assert_uninitialized(
+        skm: &Arc<RwLock<SuperKeyManager>>,
+        keystore_db: &mut KeystoreDB,
+        legacy_importer: &LegacyImporter,
+        user_id: u32,
+        err_msg: &str,
+    ) {
+        let user_state =
+            skm.write().unwrap().get_user_state(keystore_db, legacy_importer, user_id).unwrap();
+        match user_state {
+            UserState::Uninitialized => {}
+            _ => panic!("{}", err_msg),
+        }
+    }
+
+    #[test]
+    fn test_init_user() {
+        let pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+    }
+
+    #[test]
+    fn test_unlock_user() {
+        let pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+
+        skm.write().unwrap().data.user_keys.clear();
+        assert_locked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "Clearing the cache did not lock the user!",
+        );
+
+        assert!(skm
+            .write()
+            .unwrap()
+            .unlock_user(&mut keystore_db, &legacy_importer, USER_ID, &pw)
+            .is_ok());
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user did not unlock!",
+        );
+    }
+
+    #[test]
+    fn test_unlock_wrong_password() {
+        let pw: Password = generate_password_blob();
+        let wrong_pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+
+        skm.write().unwrap().data.user_keys.clear();
+        assert_locked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "Clearing the cache did not lock the user!",
+        );
+
+        assert!(skm
+            .write()
+            .unwrap()
+            .unlock_user(&mut keystore_db, &legacy_importer, USER_ID, &wrong_pw)
+            .is_err());
+        assert_locked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was unlocked with an incorrect password!",
+        );
+    }
+
+    #[test]
+    fn test_unlock_user_idempotent() {
+        let pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+
+        skm.write().unwrap().data.user_keys.clear();
+        assert_locked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "Clearing the cache did not lock the user!",
+        );
+
+        for _ in 0..5 {
+            assert!(skm
+                .write()
+                .unwrap()
+                .unlock_user(&mut keystore_db, &legacy_importer, USER_ID, &pw)
+                .is_ok());
+            assert_unlocked(
+                &skm,
+                &mut keystore_db,
+                &legacy_importer,
+                USER_ID,
+                "The user did not unlock!",
+            );
+        }
+    }
+
+    fn test_user_removal(locked: bool) {
+        let pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+
+        assert!(make_test_key_entry(
+            &mut keystore_db,
+            Domain::APP,
+            USER_ID.into(),
+            TEST_KEY_ALIAS,
+            None
+        )
+        .is_ok());
+        assert!(make_bootlevel_key_entry(
+            &mut keystore_db,
+            Domain::APP,
+            USER_ID.into(),
+            TEST_BOOT_KEY_ALIAS,
+            false
+        )
+        .is_ok());
+
+        assert!(keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+        assert!(keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_BOOT_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+
+        if locked {
+            skm.write().unwrap().data.user_keys.clear();
+            assert_locked(
+                &skm,
+                &mut keystore_db,
+                &legacy_importer,
+                USER_ID,
+                "Clearing the cache did not lock the user!",
+            );
+        }
+
+        assert!(skm
+            .write()
+            .unwrap()
+            .remove_user(&mut keystore_db, &legacy_importer, USER_ID)
+            .is_ok());
+        assert_uninitialized(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not removed!",
+        );
+
+        assert!(!skm
+            .write()
+            .unwrap()
+            .super_key_exists_in_db_for_user(&mut keystore_db, &legacy_importer, USER_ID)
+            .unwrap());
+
+        assert!(!keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+        assert!(!keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_BOOT_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+    }
+
+    fn test_user_reset(locked: bool) {
+        let pw: Password = generate_password_blob();
+        let (skm, mut keystore_db, legacy_importer) = setup_test(&pw);
+        assert_unlocked(
+            &skm,
+            &mut keystore_db,
+            &legacy_importer,
+            USER_ID,
+            "The user was not unlocked after initialization!",
+        );
+
+        assert!(make_test_key_entry(
+            &mut keystore_db,
+            Domain::APP,
+            USER_ID.into(),
+            TEST_KEY_ALIAS,
+            None
+        )
+        .is_ok());
+        assert!(make_bootlevel_key_entry(
+            &mut keystore_db,
+            Domain::APP,
+            USER_ID.into(),
+            TEST_BOOT_KEY_ALIAS,
+            false
+        )
+        .is_ok());
+        assert!(keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+        assert!(keystore_db
+            .key_exists(Domain::APP, USER_ID.into(), TEST_BOOT_KEY_ALIAS, KeyType::Client)
+            .unwrap());
+
+        if locked {
+            skm.write().unwrap().data.user_keys.clear();
+            assert_locked(
+                &skm,
+                &mut keystore_db,
+                &legacy_importer,
+                USER_ID,
+                "Clearing the cache did not lock the user!",
+            );
+            assert!(skm
+                .write()
+                .unwrap()
+                .reset_user(&mut keystore_db, &legacy_importer, USER_ID)
+                .is_err());
+            assert_locked(
+                &skm,
+                &mut keystore_db,
+                &legacy_importer,
+                USER_ID,
+                "User state should not have changed!",
+            );
+
+            // Keys should still exist.
+            assert!(keystore_db
+                .key_exists(Domain::APP, USER_ID.into(), TEST_KEY_ALIAS, KeyType::Client)
+                .unwrap());
+            assert!(keystore_db
+                .key_exists(Domain::APP, USER_ID.into(), TEST_BOOT_KEY_ALIAS, KeyType::Client)
+                .unwrap());
+        } else {
+            assert!(skm
+                .write()
+                .unwrap()
+                .reset_user(&mut keystore_db, &legacy_importer, USER_ID)
+                .is_ok());
+            assert_uninitialized(
+                &skm,
+                &mut keystore_db,
+                &legacy_importer,
+                USER_ID,
+                "The user was not reset!",
+            );
+            assert!(!skm
+                .write()
+                .unwrap()
+                .super_key_exists_in_db_for_user(&mut keystore_db, &legacy_importer, USER_ID)
+                .unwrap());
+
+            // Auth bound key should no longer exist.
+            assert!(!keystore_db
+                .key_exists(Domain::APP, USER_ID.into(), TEST_KEY_ALIAS, KeyType::Client)
+                .unwrap());
+            assert!(keystore_db
+                .key_exists(Domain::APP, USER_ID.into(), TEST_BOOT_KEY_ALIAS, KeyType::Client)
+                .unwrap());
+        }
+    }
+
+    #[test]
+    fn test_remove_unlocked_user() {
+        test_user_removal(false);
+    }
+
+    #[test]
+    fn test_remove_locked_user() {
+        test_user_removal(true);
+    }
+
+    #[test]
+    fn test_reset_unlocked_user() {
+        test_user_reset(false);
+    }
+
+    #[test]
+    fn test_reset_locked_user() {
+        test_user_reset(true);
     }
 }

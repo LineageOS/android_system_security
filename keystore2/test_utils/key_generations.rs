@@ -15,21 +15,33 @@
 //! This module implements test utils to generate various types of keys.
 
 use anyhow::Result;
+use core::ops::Range;
+use nix::unistd::getuid;
+use std::collections::HashSet;
+use std::fmt::Write;
+
+use binder::ThreadState;
 
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, HardwareAuthenticatorType::HardwareAuthenticatorType,
     KeyOrigin::KeyOrigin, KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue,
-    KeyPurpose::KeyPurpose, PaddingMode::PaddingMode, Tag::Tag,
+    KeyPurpose::KeyPurpose, PaddingMode::PaddingMode, SecurityLevel::SecurityLevel, Tag::Tag,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    AuthenticatorSpec::AuthenticatorSpec, Authorization::Authorization, Domain::Domain,
+    AuthenticatorSpec::AuthenticatorSpec, Authorization::Authorization,
+    CreateOperationResponse::CreateOperationResponse, Domain::Domain,
     IKeystoreSecurityLevel::IKeystoreSecurityLevel, KeyDescriptor::KeyDescriptor,
     KeyMetadata::KeyMetadata, ResponseCode::ResponseCode,
 };
 
 use crate::authorizations::AuthSetBuilder;
 use android_system_keystore2::binder::{ExceptionCode, Result as BinderResult};
+
+use crate::ffi_test_utils::{
+    get_os_patchlevel, get_os_version, get_value_from_attest_record, get_vendor_patchlevel,
+    validate_certchain_with_strict_issuer_check,
+};
 
 /// Shell namespace.
 pub const SELINUX_SHELL_NAMESPACE: i64 = 1;
@@ -41,6 +53,52 @@ pub const TARGET_SU_CTX: &str = "u:r:su:s0";
 
 /// Vold context
 pub const TARGET_VOLD_CTX: &str = "u:r:vold:s0";
+
+/// Allowed tags in generated/imported key authorizations.
+/// See hardware/interfaces/security/keymint/aidl/android/hardware/security/keymint/Tag.aidl for the
+/// list feature tags.
+/// Note: This list need to be updated whenever a new Tag is introduced and is expected to be added
+/// in key authorizations.
+pub const ALLOWED_TAGS_IN_KEY_AUTHS: &[Tag] = &[
+    Tag::ACTIVE_DATETIME,
+    Tag::ALGORITHM,
+    Tag::ALLOW_WHILE_ON_BODY,
+    Tag::AUTH_TIMEOUT,
+    Tag::BLOCK_MODE,
+    Tag::BOOTLOADER_ONLY,
+    Tag::BOOT_PATCHLEVEL,
+    Tag::CALLER_NONCE,
+    Tag::CREATION_DATETIME,
+    Tag::DIGEST,
+    Tag::EARLY_BOOT_ONLY,
+    Tag::EC_CURVE,
+    Tag::IDENTITY_CREDENTIAL_KEY,
+    Tag::INCLUDE_UNIQUE_ID,
+    Tag::KEY_SIZE,
+    Tag::MAX_BOOT_LEVEL,
+    Tag::MAX_USES_PER_BOOT,
+    Tag::MIN_MAC_LENGTH,
+    Tag::NO_AUTH_REQUIRED,
+    Tag::ORIGIN,
+    Tag::ORIGINATION_EXPIRE_DATETIME,
+    Tag::OS_PATCHLEVEL,
+    Tag::OS_VERSION,
+    Tag::PADDING,
+    Tag::PURPOSE,
+    Tag::ROLLBACK_RESISTANCE,
+    Tag::RSA_OAEP_MGF_DIGEST,
+    Tag::RSA_PUBLIC_EXPONENT,
+    Tag::STORAGE_KEY,
+    Tag::TRUSTED_CONFIRMATION_REQUIRED,
+    Tag::TRUSTED_USER_PRESENCE_REQUIRED,
+    Tag::UNLOCKED_DEVICE_REQUIRED,
+    Tag::USAGE_COUNT_LIMIT,
+    Tag::USAGE_EXPIRE_DATETIME,
+    Tag::USER_AUTH_TYPE,
+    Tag::USER_ID,
+    Tag::USER_SECURE_ID,
+    Tag::VENDOR_PATCHLEVEL,
+];
 
 /// Key parameters to generate a key.
 pub struct KeyParams {
@@ -299,6 +357,15 @@ pub enum Error {
     /// Error code to indicate error in ASN.1 DER-encoded data creation.
     #[error("Failed to create and encode ASN.1 data.")]
     DerEncodeFailed,
+    /// Error code to indicate error while using keystore-engine API.
+    #[error("Failed to perform crypto op using keystore-engine APIs.")]
+    Keystore2EngineOpFailed,
+    /// Error code to indicate error in attestation-id validation.
+    #[error("Failed to validate attestation-id.")]
+    ValidateAttestIdFailed,
+    /// Error code to indicate error in getting value from attest record.
+    #[error("Failed to get value from attest record.")]
+    AttestRecordGetValueFailed,
 }
 
 /// Keystore2 error mapping.
@@ -322,6 +389,120 @@ pub fn map_ks_error<T>(r: BinderResult<T>) -> Result<T, Error> {
             e_code => Error::Binder(e_code),
         }
     })
+}
+
+/// Indicate whether the default device is KeyMint (rather than Keymaster).
+pub fn has_default_keymint() -> bool {
+    binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
+        .expect("Could not check for declared keymint interface")
+}
+
+/// Verify that given key param is listed in given authorizations list.
+pub fn check_key_param(authorizations: &[Authorization], key_param: &KeyParameter) -> bool {
+    authorizations.iter().any(|auth| &auth.keyParameter == key_param)
+}
+
+/// Verify the given key authorizations with the expected authorizations.
+pub fn check_key_authorizations(
+    authorizations: &[Authorization],
+    expected_params: &[KeyParameter],
+    expected_key_origin: KeyOrigin,
+) {
+    // Make sure key authorizations contains only `ALLOWED_TAGS_IN_KEY_AUTHS`
+    authorizations.iter().all(|auth| {
+        assert!(
+            ALLOWED_TAGS_IN_KEY_AUTHS.contains(&auth.keyParameter.tag),
+            "key authorization is not allowed: {:#?}",
+            auth.keyParameter
+        );
+        true
+    });
+
+    //Check allowed-expected-key-parameters are present in given key authorizations list.
+    expected_params.iter().all(|key_param| {
+        // `INCLUDE_UNIQUE_ID` is not strictly expected to be in key authorizations but has been
+        // put there by some implementations so cope with that.
+        if key_param.tag == Tag::INCLUDE_UNIQUE_ID
+            && !authorizations.iter().any(|auth| auth.keyParameter.tag == key_param.tag)
+        {
+            return true;
+        }
+        if ALLOWED_TAGS_IN_KEY_AUTHS.contains(&key_param.tag) {
+            assert!(
+                check_key_param(authorizations, key_param),
+                "Key parameter not found: {:#?}",
+                key_param
+            );
+        }
+        true
+    });
+
+    check_common_auths(authorizations, expected_key_origin);
+}
+
+/// Verify common key authorizations.
+fn check_common_auths(authorizations: &[Authorization], expected_key_origin: KeyOrigin) {
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::OS_VERSION,
+            value: KeyParameterValue::Integer(get_os_version().try_into().unwrap())
+        }
+    ));
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::OS_PATCHLEVEL,
+            value: KeyParameterValue::Integer(get_os_patchlevel().try_into().unwrap())
+        }
+    ));
+
+    // Access denied for finding vendor-patch-level ("ro.vendor.build.security_patch") property
+    // in a test running with `untrusted_app` context. Keeping this check to verify
+    // vendor-patch-level in tests running with `su` context.
+    if getuid().is_root() {
+        assert!(check_key_param(
+            authorizations,
+            &KeyParameter {
+                tag: Tag::VENDOR_PATCHLEVEL,
+                value: KeyParameterValue::Integer(get_vendor_patchlevel().try_into().unwrap())
+            }
+        ));
+    }
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(expected_key_origin) }
+    ));
+    assert!(check_key_param(
+        authorizations,
+        &KeyParameter {
+            tag: Tag::USER_ID,
+            value: KeyParameterValue::Integer(
+                rustutils::users::multiuser_get_user_id(ThreadState::get_calling_uid())
+                    .try_into()
+                    .unwrap()
+            )
+        }
+    ));
+
+    if has_default_keymint() {
+        assert!(authorizations
+            .iter()
+            .map(|auth| &auth.keyParameter)
+            .any(|key_param| key_param.tag == Tag::CREATION_DATETIME));
+    }
+}
+
+/// Get the key `Authorization` for the given auth `Tag`.
+pub fn get_key_auth(authorizations: &[Authorization], tag: Tag) -> Option<&Authorization> {
+    let auths: Vec<&Authorization> =
+        authorizations.iter().filter(|auth| auth.keyParameter.tag == tag).collect();
+
+    if !auths.is_empty() {
+        Some(auths[0])
+    } else {
+        None
+    }
 }
 
 /// Generate EC Key using given security level and domain with below key parameters and
@@ -367,6 +548,11 @@ pub fn generate_ec_p256_signing_key(
                 assert!(key_metadata.key.blob.is_some());
             }
 
+            check_key_authorizations(
+                &key_metadata.authorizations,
+                &gen_params,
+                KeyOrigin::GENERATED,
+            );
             Ok(key_metadata)
         }
         Err(e) => Err(e),
@@ -409,6 +595,7 @@ pub fn generate_ec_key(
     } else {
         assert!(key_metadata.key.blob.is_none());
     }
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -470,6 +657,19 @@ pub fn generate_rsa_key(
             || key_metadata.key.blob.is_none()
     );
 
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
+    // If `RSA_OAEP_MGF_DIGEST` tag is not mentioned explicitly while generating/importing a key,
+    // then make sure `RSA_OAEP_MGF_DIGEST` tag with default value (SHA1) must not be included in
+    // key authorization list.
+    if key_params.mgf_digest.is_none() {
+        assert!(!check_key_param(
+            &key_metadata.authorizations,
+            &KeyParameter {
+                tag: Tag::RSA_OAEP_MGF_DIGEST,
+                value: KeyParameterValue::Digest(Digest::SHA1)
+            }
+        ));
+    }
     Ok(key_metadata)
 }
 
@@ -514,6 +714,7 @@ pub fn generate_sym_key(
 
     // Should not have an attestation record.
     assert!(key_metadata.certificateChain.is_none());
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -553,6 +754,7 @@ pub fn generate_hmac_key(
     // Should not have an attestation record.
     assert!(key_metadata.certificateChain.is_none());
 
+    check_key_authorizations(&key_metadata.authorizations, &gen_params, KeyOrigin::GENERATED);
     Ok(key_metadata)
 }
 
@@ -637,6 +839,11 @@ pub fn generate_ec_attestation_key(
     // Should have an attestation record.
     assert!(attestation_key_metadata.certificateChain.is_some());
 
+    check_key_authorizations(
+        &attestation_key_metadata.authorizations,
+        &gen_params,
+        KeyOrigin::GENERATED,
+    );
     Ok(attestation_key_metadata)
 }
 
@@ -671,18 +878,8 @@ pub fn generate_ec_256_attested_key(
     // Shouldn't have an attestation record.
     assert!(ec_key_metadata.certificateChain.is_none());
 
+    check_key_authorizations(&ec_key_metadata.authorizations, &ec_gen_params, KeyOrigin::GENERATED);
     Ok(ec_key_metadata)
-}
-
-/// Verify that given key param is listed in given authorizations list.
-pub fn check_key_param(authorizations: &[Authorization], key_param: KeyParameter) -> bool {
-    for authrization in authorizations {
-        if authrization.keyParameter == key_param {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Imports above defined RSA key - `RSA_2048_KEY` and validates imported key parameters.
@@ -706,24 +903,27 @@ pub fn import_rsa_2048_key(
     assert!(key_metadata.certificate.is_some());
     assert!(key_metadata.certificateChain.is_none());
 
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
+
+    // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::RSA) }
+        &KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::RSA) }
     ));
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(2048) }
+        &KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(2048) }
     ));
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
+        &KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
     ));
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter {
+        &KeyParameter {
             tag: Tag::RSA_PUBLIC_EXPONENT,
             value: KeyParameterValue::LongInteger(65537)
         }
@@ -731,7 +931,7 @@ pub fn import_rsa_2048_key(
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter {
+        &KeyParameter {
             tag: Tag::PADDING,
             value: KeyParameterValue::PaddingMode(PaddingMode::RSA_PSS)
         }
@@ -739,7 +939,7 @@ pub fn import_rsa_2048_key(
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
     ));
 
     Ok(key_metadata)
@@ -766,23 +966,26 @@ pub fn import_ec_p_256_key(
     assert!(key_metadata.certificate.is_some());
     assert!(key_metadata.certificateChain.is_none());
 
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
+
+    // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::EC) }
+        &KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::EC) }
     ));
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::EC_CURVE, value: KeyParameterValue::EcCurve(EcCurve::P_256) }
+        &KeyParameter { tag: Tag::EC_CURVE, value: KeyParameterValue::EcCurve(EcCurve::P_256) }
     ));
 
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
+        &KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
     ));
 
     Ok(key_metadata)
@@ -815,28 +1018,31 @@ pub fn import_aes_key(
         AES_KEY,
     )?;
 
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
+
+    // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::AES) }
+        &KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::AES) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) }
+        &KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter {
+        &KeyParameter {
             tag: Tag::PADDING,
             value: KeyParameterValue::PaddingMode(PaddingMode::PKCS7)
         }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::BLOCK_MODE, value: KeyParameterValue::BlockMode(BlockMode::ECB) }
+        &KeyParameter { tag: Tag::BLOCK_MODE, value: KeyParameterValue::BlockMode(BlockMode::ECB) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
     ));
 
     Ok(key_metadata)
@@ -871,31 +1077,34 @@ pub fn import_3des_key(
         TRIPLE_DES_KEY,
     )?;
 
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
+
+    // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter {
+        &KeyParameter {
             tag: Tag::ALGORITHM,
             value: KeyParameterValue::Algorithm(Algorithm::TRIPLE_DES)
         }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(168) }
+        &KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(168) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter {
+        &KeyParameter {
             tag: Tag::PADDING,
             value: KeyParameterValue::PaddingMode(PaddingMode::PKCS7)
         }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::BLOCK_MODE, value: KeyParameterValue::BlockMode(BlockMode::ECB) }
+        &KeyParameter { tag: Tag::BLOCK_MODE, value: KeyParameterValue::BlockMode(BlockMode::ECB) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
     ));
 
     Ok(key_metadata)
@@ -928,21 +1137,24 @@ pub fn import_hmac_key(
         HMAC_KEY,
     )?;
 
+    check_key_authorizations(&key_metadata.authorizations, &import_params, KeyOrigin::IMPORTED);
+
+    // Check below auths explicitly, they might not be addd in import parameters.
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::HMAC) }
+        &KeyParameter { tag: Tag::ALGORITHM, value: KeyParameterValue::Algorithm(Algorithm::HMAC) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) }
+        &KeyParameter { tag: Tag::KEY_SIZE, value: KeyParameterValue::Integer(128) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
+        &KeyParameter { tag: Tag::DIGEST, value: KeyParameterValue::Digest(Digest::SHA_2_256) }
     ));
     assert!(check_key_param(
         &key_metadata.authorizations,
-        KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
+        &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(KeyOrigin::IMPORTED) }
     ));
 
     Ok(key_metadata)
@@ -1077,8 +1289,184 @@ pub fn generate_ec_agree_key(
                 assert!(key_metadata.key.blob.is_some());
             }
 
+            check_key_authorizations(
+                &key_metadata.authorizations,
+                &gen_params,
+                KeyOrigin::GENERATED,
+            );
             Ok(key_metadata)
         }
         Err(e) => Err(e),
     }
+}
+
+/// Helper method to import AES keys `total_count` of times.
+pub fn import_aes_keys(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    alias_prefix: String,
+    total_count: Range<i32>,
+) -> binder::Result<HashSet<String>> {
+    let mut imported_key_aliases = HashSet::new();
+
+    // Import Total number of keys with given alias prefix.
+    for count in total_count {
+        let mut alias = String::new();
+        write!(alias, "{}_{}", alias_prefix, count).unwrap();
+        imported_key_aliases.insert(alias.clone());
+
+        import_aes_key(sec_level, Domain::APP, -1, Some(alias))?;
+    }
+
+    Ok(imported_key_aliases)
+}
+
+/// Generate attested EC-P_256 key with device id attestation.
+pub fn generate_key_with_attest_id(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    algorithm: Algorithm,
+    alias: Option<String>,
+    att_challenge: &[u8],
+    attest_key: &KeyDescriptor,
+    attest_id: Tag,
+    value: Vec<u8>,
+) -> binder::Result<KeyMetadata> {
+    assert!(algorithm == Algorithm::RSA || algorithm == Algorithm::EC);
+
+    let mut ec_gen_params;
+    if algorithm == Algorithm::EC {
+        ec_gen_params = AuthSetBuilder::new()
+            .no_auth_required()
+            .algorithm(Algorithm::EC)
+            .purpose(KeyPurpose::SIGN)
+            .purpose(KeyPurpose::VERIFY)
+            .digest(Digest::SHA_2_256)
+            .ec_curve(EcCurve::P_256)
+            .attestation_challenge(att_challenge.to_vec());
+    } else {
+        ec_gen_params = AuthSetBuilder::new()
+            .no_auth_required()
+            .algorithm(Algorithm::RSA)
+            .rsa_public_exponent(65537)
+            .key_size(2048)
+            .purpose(KeyPurpose::SIGN)
+            .purpose(KeyPurpose::VERIFY)
+            .digest(Digest::SHA_2_256)
+            .padding_mode(PaddingMode::RSA_PKCS1_1_5_SIGN)
+            .attestation_challenge(att_challenge.to_vec());
+    }
+
+    match attest_id {
+        Tag::ATTESTATION_ID_BRAND => {
+            ec_gen_params = ec_gen_params.attestation_device_brand(value);
+        }
+        Tag::ATTESTATION_ID_DEVICE => {
+            ec_gen_params = ec_gen_params.attestation_device_name(value);
+        }
+        Tag::ATTESTATION_ID_PRODUCT => {
+            ec_gen_params = ec_gen_params.attestation_device_product_name(value);
+        }
+        Tag::ATTESTATION_ID_SERIAL => {
+            ec_gen_params = ec_gen_params.attestation_device_serial(value);
+        }
+        Tag::ATTESTATION_ID_MANUFACTURER => {
+            ec_gen_params = ec_gen_params.attestation_device_manufacturer(value);
+        }
+        Tag::ATTESTATION_ID_MODEL => {
+            ec_gen_params = ec_gen_params.attestation_device_model(value);
+        }
+        Tag::ATTESTATION_ID_IMEI => {
+            ec_gen_params = ec_gen_params.attestation_device_imei(value);
+        }
+        Tag::ATTESTATION_ID_SECOND_IMEI => {
+            ec_gen_params = ec_gen_params.attestation_device_second_imei(value);
+        }
+        _ => {
+            panic!("Unknown attestation id");
+        }
+    }
+
+    sec_level.generateKey(
+        &KeyDescriptor { domain: Domain::APP, nspace: -1, alias, blob: None },
+        Some(attest_key),
+        &ec_gen_params,
+        0,
+        b"entropy",
+    )
+}
+
+/// Generate Key and validate key characteristics.
+pub fn generate_key(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &AuthSetBuilder,
+    alias: &str,
+) -> binder::Result<KeyMetadata> {
+    let key_metadata = sec_level.generateKey(
+        &KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(alias.to_string()),
+            blob: None,
+        },
+        None,
+        gen_params,
+        0,
+        b"entropy",
+    )?;
+
+    if gen_params.iter().any(|kp| {
+        matches!(
+            kp.value,
+            KeyParameterValue::Algorithm(Algorithm::RSA)
+                | KeyParameterValue::Algorithm(Algorithm::EC)
+        )
+    }) {
+        assert!(key_metadata.certificate.is_some());
+        if gen_params.iter().any(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE) {
+            assert!(key_metadata.certificateChain.is_some());
+            let mut cert_chain: Vec<u8> = Vec::new();
+            cert_chain.extend(key_metadata.certificate.as_ref().unwrap());
+            cert_chain.extend(key_metadata.certificateChain.as_ref().unwrap());
+            let strict_issuer_check =
+                !(gen_params.iter().any(|kp| kp.tag == Tag::DEVICE_UNIQUE_ATTESTATION));
+            validate_certchain_with_strict_issuer_check(&cert_chain, strict_issuer_check)
+                .expect("Error while validating cert chain");
+        }
+
+        if let Some(challenge_param) =
+            gen_params.iter().find(|kp| kp.tag == Tag::ATTESTATION_CHALLENGE)
+        {
+            if let KeyParameterValue::Blob(val) = &challenge_param.value {
+                let att_challenge = get_value_from_attest_record(
+                    key_metadata.certificate.as_ref().unwrap(),
+                    challenge_param.tag,
+                    key_metadata.keySecurityLevel,
+                )
+                .expect("Attestation challenge verification failed.");
+                assert_eq!(&att_challenge, val);
+            }
+
+            let att_app_id = get_value_from_attest_record(
+                key_metadata.certificate.as_ref().unwrap(),
+                Tag::ATTESTATION_APPLICATION_ID,
+                SecurityLevel::KEYSTORE,
+            )
+            .expect("Attestation application id verification failed.");
+            assert!(!att_app_id.is_empty());
+        }
+    }
+    check_key_authorizations(&key_metadata.authorizations, gen_params, KeyOrigin::GENERATED);
+
+    Ok(key_metadata)
+}
+
+/// Generate a key using given authorizations and create an operation using the generated key.
+pub fn create_key_and_operation(
+    sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
+    gen_params: &AuthSetBuilder,
+    op_params: &AuthSetBuilder,
+    alias: &str,
+) -> binder::Result<CreateOperationResponse> {
+    let key_metadata = generate_key(sec_level, gen_params, alias)?;
+
+    sec_level.createOperation(&key_metadata.key, op_params, false)
 }

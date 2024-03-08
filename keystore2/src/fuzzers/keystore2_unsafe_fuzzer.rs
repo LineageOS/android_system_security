@@ -16,7 +16,6 @@
 
 #![no_main]
 
-use binder::get_declared_instances;
 use keystore2::{legacy_blob::LegacyBlobLoader, utils::ui_opts_2_compat};
 use keystore2_aaid::get_aaid;
 use keystore2_apc_compat::ApcHal;
@@ -26,8 +25,8 @@ use keystore2_crypto::{
     ec_point_point_to_oct, ecdh_compute_key, generate_random_data, hkdf_expand, hkdf_extract,
     hmac_sha256, parse_subject_from_certificate, Password, ZVec,
 };
+use keystore2_hal_names::get_hidl_instances;
 use keystore2_selinux::{check_access, getpidcon, setcon, Backend, Context, KeystoreKeyBackend};
-use keystore2_vintf::get_hidl_instances;
 use libfuzzer_sys::{arbitrary::Arbitrary, fuzz_target};
 use std::{ffi::CString, sync::Arc};
 
@@ -93,10 +92,6 @@ enum FuzzCommand<'a> {
         major_version: usize,
         minor_version: usize,
         hidl_interface_name: &'a str,
-    },
-    GetAidlInstances {
-        aidl_package: &'a str,
-        aidl_interface_name: &'a str,
     },
     GetAaid {
         aaid_uid: u32,
@@ -188,12 +183,6 @@ fuzz_target!(|commands: Vec<FuzzCommand>| {
                 hidl_interface_name,
             } => {
                 get_hidl_instances(hidl_package, major_version, minor_version, hidl_interface_name);
-            }
-            FuzzCommand::GetAidlInstances { aidl_package, aidl_interface_name } => {
-                get_declared_instances(
-                    format!("{}.{}", aidl_package, aidl_interface_name).as_str(),
-                )
-                .unwrap();
             }
             FuzzCommand::GetAaid { aaid_uid } => {
                 let _res = get_aaid(aaid_uid);

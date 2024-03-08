@@ -25,7 +25,6 @@
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
 #include <rkp/support/rkpd_client.h>
-#include <vintf/VintfObject.h>
 
 #include "Credential.h"
 #include "CredentialData.h"

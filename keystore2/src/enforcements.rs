@@ -51,9 +51,9 @@ enum AuthRequestState {
     /// An outstanding per operation authorization request.
     OpAuth,
     /// An outstanding request for per operation authorization and secure timestamp.
-    TimeStampedOpAuth(Receiver<Result<TimeStampToken, Error>>),
+    TimeStampedOpAuth(Mutex<Receiver<Result<TimeStampToken, Error>>>),
     /// An outstanding request for a timestamp token.
-    TimeStamp(Receiver<Result<TimeStampToken, Error>>),
+    TimeStamp(Mutex<Receiver<Result<TimeStampToken, Error>>>),
 }
 
 #[derive(Debug)]
@@ -64,8 +64,6 @@ struct AuthRequest {
     hat: Mutex<Option<HardwareAuthToken>>,
 }
 
-unsafe impl Sync for AuthRequest {}
-
 impl AuthRequest {
     fn op_auth() -> Arc<Self> {
         Arc::new(Self { state: AuthRequestState::OpAuth, hat: Mutex::new(None) })
@@ -73,7 +71,7 @@ impl AuthRequest {
 
     fn timestamped_op_auth(receiver: Receiver<Result<TimeStampToken, Error>>) -> Arc<Self> {
         Arc::new(Self {
-            state: AuthRequestState::TimeStampedOpAuth(receiver),
+            state: AuthRequestState::TimeStampedOpAuth(Mutex::new(receiver)),
             hat: Mutex::new(None),
         })
     }
@@ -82,7 +80,10 @@ impl AuthRequest {
         hat: HardwareAuthToken,
         receiver: Receiver<Result<TimeStampToken, Error>>,
     ) -> Arc<Self> {
-        Arc::new(Self { state: AuthRequestState::TimeStamp(receiver), hat: Mutex::new(Some(hat)) })
+        Arc::new(Self {
+            state: AuthRequestState::TimeStamp(Mutex::new(receiver)),
+            hat: Mutex::new(Some(hat)),
+        })
     }
 
     fn add_auth_token(&self, hat: HardwareAuthToken) {
@@ -100,7 +101,11 @@ impl AuthRequest {
 
         let tst = match &self.state {
             AuthRequestState::TimeStampedOpAuth(recv) | AuthRequestState::TimeStamp(recv) => {
-                let result = recv.recv().context("In get_auth_tokens: Sender disconnected.")?;
+                let result = recv
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .context("In get_auth_tokens: Sender disconnected.")?;
                 Some(result.context(ks_err!(
                     "Worker responded with error \
                     from generating timestamp token.",
@@ -598,6 +603,44 @@ impl Enforcements {
             }
         }
 
+        if android_security_flags::fix_unlocked_device_required_keys_v2() {
+            let (hat, state) = if user_secure_ids.is_empty() {
+                (None, DeferredAuthState::NoAuthRequired)
+            } else if let Some(key_time_out) = key_time_out {
+                let (hat, last_off_body) =
+                    Self::find_auth_token(|hat: &AuthTokenEntry| match user_auth_type {
+                        Some(auth_type) => hat.satisfies(&user_secure_ids, auth_type),
+                        None => false, // not reachable due to earlier check
+                    })
+                    .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                    .context(ks_err!("No suitable auth token found."))?;
+                let now = MonotonicRawTime::now();
+                let token_age = now
+                    .checked_sub(&hat.time_received())
+                    .ok_or_else(Error::sys)
+                    .context(ks_err!(
+                        "Overflow while computing Auth token validity. \
+                    Validity cannot be established."
+                    ))?;
+
+                let on_body_extended = allow_while_on_body && last_off_body < hat.time_received();
+
+                if token_age.seconds() > key_time_out && !on_body_extended {
+                    return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                        .context(ks_err!("matching auth token is expired."));
+                }
+                let state = if requires_timestamp {
+                    DeferredAuthState::TimeStampRequired(hat.auth_token().clone())
+                } else {
+                    DeferredAuthState::NoAuthRequired
+                };
+                (Some(hat.take_auth_token()), state)
+            } else {
+                (None, DeferredAuthState::OpAuthRequired)
+            };
+            return Ok((hat, AuthInfo { state, key_usage_limited, confirmation_token_receiver }));
+        }
+
         if !unlocked_device_required && no_auth_required {
             return Ok((
                 None,
@@ -769,10 +812,10 @@ impl Enforcements {
                     Candidate { priority: 3, enc_type: SuperEncryptionType::BootLevel(*level) }
                 }
                 KeyParameterValue::UnlockedDeviceRequired if *domain == Domain::APP => {
-                    Candidate { priority: 2, enc_type: SuperEncryptionType::ScreenLockBound }
+                    Candidate { priority: 2, enc_type: SuperEncryptionType::UnlockedDeviceRequired }
                 }
                 KeyParameterValue::UserSecureID(_) if *domain == Domain::APP => {
-                    Candidate { priority: 1, enc_type: SuperEncryptionType::LskfBound }
+                    Candidate { priority: 1, enc_type: SuperEncryptionType::AfterFirstUnlock }
                 }
                 _ => Candidate { priority: 0, enc_type: SuperEncryptionType::None },
             };
@@ -839,6 +882,24 @@ impl Enforcements {
         let tst =
             get_timestamp_token(challenge).context(ks_err!("Error in getting timestamp token."))?;
         Ok((auth_token, tst))
+    }
+
+    /// Finds the most recent received time for an auth token that matches the given secure user id and authenticator
+    pub fn get_last_auth_time(
+        &self,
+        secure_user_id: i64,
+        auth_type: HardwareAuthenticatorType,
+    ) -> Option<MonotonicRawTime> {
+        let sids: Vec<i64> = vec![secure_user_id];
+
+        let result =
+            Self::find_auth_token(|entry: &AuthTokenEntry| entry.satisfies(&sids, auth_type));
+
+        if let Some((auth_token_entry, _)) = result {
+            Some(auth_token_entry.time_received())
+        } else {
+            None
+        }
     }
 }
 

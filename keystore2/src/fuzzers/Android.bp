@@ -20,10 +20,9 @@ rust_fuzz {
     name: "keystore2_unsafe_fuzzer",
     srcs: ["keystore2_unsafe_fuzzer.rs"],
     rustlibs: [
-        "libbinder_rs",
         "libkeystore2",
         "libkeystore2_crypto_rust",
-        "libkeystore2_vintf_rust",
+        "libkeystore2_hal_names_rust",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_selinux",
@@ -46,7 +45,7 @@ rust_fuzz {
     rustlibs: [
         "libkeystore2",
         "libkeystore2_crypto_rust",
-        "libkeystore2_vintf_rust",
+        "libkeystore2_hal_names_rust",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_selinux",

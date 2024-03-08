@@ -15,9 +15,13 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use std::process::{Command, Output};
+
+use openssl::bn::BigNum;
 use openssl::encrypt::Encrypter;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
+use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use openssl::pkey::Public;
 use openssl::rsa::Padding;
@@ -66,6 +70,7 @@ pub const SAMPLE_PLAIN_TEXT: &[u8] = b"my message 11111";
 
 pub const PACKAGE_MANAGER_NATIVE_SERVICE: &str = "package_native";
 pub const APP_ATTEST_KEY_FEATURE: &str = "android.hardware.keystore.app_attest_key";
+pub const DEVICE_ID_ATTESTATION_FEATURE: &str = "android.software.device_id_attestation";
 
 /// Determines whether app_attest_key_feature is supported or not.
 pub fn app_attest_key_feature_exists() -> bool {
@@ -73,6 +78,14 @@ pub fn app_attest_key_feature_exists() -> bool {
         .expect("Failed to get package manager native service.");
 
     pm.hasSystemFeature(APP_ATTEST_KEY_FEATURE, 0).expect("hasSystemFeature failed.")
+}
+
+/// Determines whether device_id_attestation is supported or not.
+pub fn device_id_attestation_feature_exists() -> bool {
+    let pm = wait_for_interface::<dyn IPackageManagerNative>(PACKAGE_MANAGER_NATIVE_SERVICE)
+        .expect("Failed to get package manager native service.");
+
+    pm.hasSystemFeature(DEVICE_ID_ATTESTATION_FEATURE, 0).expect("hasSystemFeature failed.")
 }
 
 #[macro_export]
@@ -84,10 +97,13 @@ macro_rules! skip_test_if_no_app_attest_key_feature {
     };
 }
 
-/// Indicate whether the default device is KeyMint (rather than Keymaster).
-pub fn has_default_keymint() -> bool {
-    binder::is_declared("android.hardware.security.keymint.IKeyMintDevice/default")
-        .expect("Could not check for declared keymint interface")
+#[macro_export]
+macro_rules! skip_test_if_no_device_id_attestation_feature {
+    () => {
+        if !device_id_attestation_feature_exists() {
+            return;
+        }
+    };
 }
 
 /// Generate EC key and grant it to the list of users with given access vector.
@@ -246,7 +262,11 @@ pub fn perform_sample_asym_sign_verify_op(
 }
 
 /// Create new operation on child proc and perform simple operation after parent notification.
-pub fn execute_op_run_as_child(
+///
+/// # Safety
+///
+/// Must only be called from a single-threaded process.
+pub unsafe fn execute_op_run_as_child(
     target_ctx: &'static str,
     domain: Domain,
     nspace: i64,
@@ -255,6 +275,7 @@ pub fn execute_op_run_as_child(
     agid: Gid,
     forced_op: ForcedOp,
 ) -> run_as::ChildHandle<TestOutcome, BarrierReached> {
+    // SAFETY: The caller guarantees that there are no other threads.
     unsafe {
         run_as::run_as_child(target_ctx, auid, agid, move |reader, writer| {
             let result = key_generations::map_ks_error(create_signing_operation(
@@ -376,6 +397,17 @@ pub fn delete_app_key(
     })
 }
 
+/// Deletes all entries from keystore.
+pub fn delete_all_entries(keystore2: &binder::Strong<dyn IKeystoreService>) {
+    while keystore2.getNumberOfEntries(Domain::APP, -1).unwrap() != 0 {
+        let key_descriptors = keystore2.listEntries(Domain::APP, -1).unwrap();
+        key_descriptors.into_iter().map(|key| key.alias.unwrap()).for_each(|alias| {
+            delete_app_key(keystore2, &alias).unwrap();
+        });
+    }
+    assert!(keystore2.getNumberOfEntries(Domain::APP, -1).unwrap() == 0);
+}
+
 /// Encrypt the secure key with given transport key.
 pub fn encrypt_secure_key(
     sec_level: &binder::Strong<dyn IKeystoreSecurityLevel>,
@@ -416,4 +448,104 @@ pub fn encrypt_transport_key(
     let encoded = &encoded[..encoded_len];
 
     Ok(encoded.to_vec())
+}
+
+/// List aliases using given `startingPastAlias` and verify that the fetched list is matching with
+/// the expected list of aliases.
+pub fn verify_aliases(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+    starting_past_alias: Option<&str>,
+    expected_aliases: Vec<String>,
+) {
+    let key_descriptors =
+        keystore2.listEntriesBatched(Domain::APP, -1, starting_past_alias).unwrap();
+
+    assert_eq!(key_descriptors.len(), expected_aliases.len());
+    assert!(key_descriptors
+        .iter()
+        .all(|key| expected_aliases.contains(key.alias.as_ref().unwrap())));
+}
+
+// Get the value of the given system property, if the given system property doesn't exist
+// then returns an empty byte vector.
+pub fn get_system_prop(name: &str) -> Vec<u8> {
+    match rustutils::system_properties::read(name) {
+        Ok(Some(value)) => {
+            return value.as_bytes().to_vec();
+        }
+        _ => {
+            vec![]
+        }
+    }
+}
+
+/// Determines whether the SECOND-IMEI can be used as device attest-id.
+pub fn is_second_imei_id_attestation_required(
+    keystore2: &binder::Strong<dyn IKeystoreService>,
+) -> bool {
+    let api_level = std::str::from_utf8(&get_system_prop("ro.vendor.api_level"))
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    keystore2.getInterfaceVersion().unwrap() >= 3 && api_level > 33
+}
+
+/// Run a service command and collect the output.
+pub fn run_service_command(command: &[&str]) -> std::io::Result<Output> {
+    Command::new("cmd").args(command).output()
+}
+
+/// Get IMEI from telephony service.
+pub fn get_imei(slot: i32) -> Option<Vec<u8>> {
+    let mut cmd = vec!["phone", "get-imei"];
+    let slot_str = slot.to_string();
+    cmd.push(slot_str.as_str());
+    let output = run_service_command(&cmd).unwrap();
+    if output.status.success() {
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let mut split_out = stdout.split_whitespace();
+        let imei = split_out.next_back().unwrap();
+        if imei == "null" {
+            return None;
+        }
+        return Some(imei.as_bytes().to_vec());
+    }
+
+    None
+}
+
+/// Get value of the given attestation id.
+pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
+    match attest_id {
+        Tag::ATTESTATION_ID_IMEI => get_imei(0),
+        Tag::ATTESTATION_ID_SECOND_IMEI => get_imei(1),
+        Tag::ATTESTATION_ID_SERIAL => Some(get_system_prop(format!("ro.{}", prop_name).as_str())),
+        _ => {
+            let prop_val =
+                get_system_prop(format!("ro.product.{}_for_attestation", prop_name).as_str());
+            if !prop_val.is_empty() {
+                Some(prop_val)
+            } else {
+                let prop_val = get_system_prop(format!("ro.product.vendor.{}", prop_name).as_str());
+                if !prop_val.is_empty() {
+                    Some(prop_val)
+                } else {
+                    Some(get_system_prop(format!("ro.product.{}", prop_name).as_str()))
+                }
+            }
+        }
+    }
+}
+
+pub fn verify_certificate_subject_name(cert_bytes: &[u8], expected_subject: &[u8]) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let subject = cert.subject_name();
+    let cn = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
+    assert_eq!(cn.data().as_slice(), expected_subject);
+}
+
+pub fn verify_certificate_serial_num(cert_bytes: &[u8], expected_serial_num: &BigNum) {
+    let cert = X509::from_der(cert_bytes).unwrap();
+    let serial_num = cert.serial_number();
+    assert_eq!(serial_num.to_bn().as_ref().unwrap(), expected_serial_num);
 }

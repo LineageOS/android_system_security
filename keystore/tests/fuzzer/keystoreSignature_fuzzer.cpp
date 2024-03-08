@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 #include "keystoreCommon.h"
-#include <keystore/Signature.h>
+#include <android/security/keystore/Signature.h>
+
+using ::android::security::keystore::Signature;
 
 class KeystoreSignatureFuzzer {
   public:
@@ -27,15 +29,15 @@ class KeystoreSignatureFuzzer {
 };
 
 void KeystoreSignatureFuzzer::invokeSignature() {
-    std::optional<Signature> signature;
+    Signature signature;
     bool shouldUseParameterizedConstructor = mFdp->ConsumeBool();
     if (shouldUseParameterizedConstructor) {
         std::vector<uint8_t> signatureData = initSignatureData(mFdp.get());
-        signature = Signature(signatureData);
+        signature.data = signatureData;
     } else {
         signature = Signature();
     }
-    invokeReadWriteParcel(&signature.value());
+    invokeReadWriteParcel(&signature);
 }
 
 void KeystoreSignatureFuzzer::process(const uint8_t* data, size_t size) {

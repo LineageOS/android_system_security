@@ -16,8 +16,9 @@
 //! database connections and connections to services that Keystore needs
 //! to talk to.
 
-use crate::ks_err;
 use crate::gc::Gc;
+use crate::km_compat::{BacklevelKeyMintWrapper, KeyMintV1};
+use crate::ks_err;
 use crate::legacy_blob::LegacyBlobLoader;
 use crate::legacy_importer::LegacyImporter;
 use crate::super_key::SuperKeyManager;
@@ -28,20 +29,23 @@ use crate::{
     database::Uuid,
     error::{map_binder_status, map_binder_status_code, Error, ErrorCode},
 };
-use crate::km_compat::{KeyMintV1, BacklevelKeyMintWrapper};
 use crate::{enforcements::Enforcements, error::map_km_error};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::BpKeyMintDevice, IKeyMintDevice::IKeyMintDevice,
     KeyMintHardwareInfo::KeyMintHardwareInfo, SecurityLevel::SecurityLevel,
 };
-use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
-    ISecureClock::ISecureClock,
-};
 use android_hardware_security_keymint::binder::{StatusCode, Strong};
+use android_hardware_security_rkp::aidl::android::hardware::security::keymint::{
+    IRemotelyProvisionedComponent::BpRemotelyProvisionedComponent,
+    IRemotelyProvisionedComponent::IRemotelyProvisionedComponent,
+};
+use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
+    ISecureClock::BpSecureClock, ISecureClock::ISecureClock,
+};
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::{Context, Result};
-use binder::FromIBinder;
 use binder::get_declared_instances;
+use binder::FromIBinder;
 use lazy_static::lazy_static;
 use std::sync::{Arc, Mutex, RwLock};
 use std::{cell::RefCell, sync::Once};
@@ -174,8 +178,8 @@ lazy_static! {
 }
 
 /// Determine the service name for a KeyMint device of the given security level
-/// which implements at least the specified version of the `IKeyMintDevice`
-/// interface.
+/// gotten by binder service from the device and determining what services
+/// are available.
 fn keymint_service_name(security_level: &SecurityLevel) -> Result<Option<String>> {
     let keymint_descriptor: &str = <BpKeyMintDevice as IKeyMintDevice>::get_descriptor();
     let keymint_instances = get_declared_instances(keymint_descriptor).unwrap();
@@ -212,10 +216,10 @@ fn keymint_service_name(security_level: &SecurityLevel) -> Result<Option<String>
 fn connect_keymint(
     security_level: &SecurityLevel,
 ) -> Result<(Strong<dyn IKeyMintDevice>, KeyMintHardwareInfo)> {
-    // Connects to binder to get the current keymint interface and
-    // based on the security level returns a service name to connect
-    // to.
-    let service_name = keymint_service_name(security_level).context(ks_err!("Get service name"))?;
+    // Show the keymint interface that is registered in the binder
+    // service and use the security level to get the service name.
+    let service_name = keymint_service_name(security_level)
+        .context(ks_err!("Get service name from binder service"))?;
 
     let (keymint, hal_version) = if let Some(service_name) = service_name {
         let km: Strong<dyn IKeyMintDevice> =
@@ -359,19 +363,17 @@ pub fn get_keymint_devices() -> Vec<Strong<dyn IKeyMintDevice>> {
     KEY_MINT_DEVICES.lock().unwrap().devices()
 }
 
-static TIME_STAMP_SERVICE_NAME: &str = "android.hardware.security.secureclock.ISecureClock";
-
 /// Make a new connection to a secure clock service.
 /// If no native SecureClock device can be found brings up the compatibility service and attempts
 /// to connect to the legacy wrapper.
 fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
-    let secureclock_instances =
-        get_declared_instances("android.hardware.security.secureclock.ISecureClock").unwrap();
+    let secure_clock_descriptor: &str = <BpSecureClock as ISecureClock>::get_descriptor();
+    let secureclock_instances = get_declared_instances(secure_clock_descriptor).unwrap();
 
     let secure_clock_available =
         secureclock_instances.iter().any(|instance| *instance == "default");
 
-    let default_time_stamp_service_name = format!("{}/default", TIME_STAMP_SERVICE_NAME);
+    let default_time_stamp_service_name = format!("{}/default", secure_clock_descriptor);
 
     let secureclock = if secure_clock_available {
         map_binder_status_code(binder::get_interface(&default_time_stamp_service_name))
@@ -411,25 +413,23 @@ pub fn get_timestamp_service() -> Result<Strong<dyn ISecureClock>> {
     }
 }
 
-static REMOTE_PROVISIONING_HAL_SERVICE_NAME: &str =
-    "android.hardware.security.keymint.IRemotelyProvisionedComponent";
-
 /// Get the service name of a remotely provisioned component corresponding to given security level.
 pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -> Result<String> {
-    let remotely_prov_instances =
-        get_declared_instances(REMOTE_PROVISIONING_HAL_SERVICE_NAME).unwrap();
+    let remote_prov_descriptor: &str =
+        <BpRemotelyProvisionedComponent as IRemotelyProvisionedComponent>::get_descriptor();
+    let remotely_prov_instances = get_declared_instances(remote_prov_descriptor).unwrap();
 
     match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
             if remotely_prov_instances.iter().any(|instance| *instance == "default") {
-                Some(format!("{}/default", REMOTE_PROVISIONING_HAL_SERVICE_NAME))
+                Some(format!("{}/default", remote_prov_descriptor))
             } else {
                 None
             }
         }
         SecurityLevel::STRONGBOX => {
             if remotely_prov_instances.iter().any(|instance| *instance == "strongbox") {
-                Some(format!("{}/strongbox", REMOTE_PROVISIONING_HAL_SERVICE_NAME))
+                Some(format!("{}/strongbox", remote_prov_descriptor))
             } else {
                 None
             }

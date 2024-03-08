@@ -36,7 +36,11 @@ use crate::keystore2_client_test_utils::{
 
 /// Create `max_ops` number child processes with the given context and perform an operation under each
 /// child process.
-pub fn create_operations(
+///
+/// # Safety
+///
+/// Must be called from a process with no other threads.
+pub unsafe fn create_operations(
     target_ctx: &'static str,
     forced_op: ForcedOp,
     max_ops: i32,
@@ -45,7 +49,8 @@ pub fn create_operations(
     let base_gid = 99 * AID_USER_OFFSET + 10001;
     let base_uid = 99 * AID_USER_OFFSET + 10001;
     (0..max_ops)
-        .map(|i| {
+        // SAFETY: The caller guarantees that there are no other threads.
+        .map(|i| unsafe {
             execute_op_run_as_child(
                 target_ctx,
                 Domain::APP,
@@ -87,7 +92,8 @@ fn keystore2_backend_busy_test() {
     const MAX_OPS: i32 = 100;
     static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 
-    let mut child_handles = create_operations(TARGET_CTX, ForcedOp(false), MAX_OPS);
+    // SAFETY: The test is run in a separate process with no other threads.
+    let mut child_handles = unsafe { create_operations(TARGET_CTX, ForcedOp(false), MAX_OPS) };
 
     // Wait until all child procs notifies us to continue,
     // so that there are definitely enough operations outstanding to trigger a BACKEND_BUSY.
@@ -120,7 +126,8 @@ fn keystore2_forced_op_after_backendbusy_test() {
     static TARGET_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 
     // Create regular operations.
-    let mut child_handles = create_operations(TARGET_CTX, ForcedOp(false), MAX_OPS);
+    // SAFETY: The test is run in a separate process with no other threads.
+    let mut child_handles = unsafe { create_operations(TARGET_CTX, ForcedOp(false), MAX_OPS) };
 
     // Wait until all child procs notifies us to continue, so that there are enough
     // operations outstanding to trigger a BACKEND_BUSY.
@@ -131,6 +138,7 @@ fn keystore2_forced_op_after_backendbusy_test() {
     // Create a forced operation.
     let auid = 99 * AID_USER_OFFSET + 10604;
     let agid = 99 * AID_USER_OFFSET + 10604;
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(
             key_generations::TARGET_VOLD_CTX,
@@ -203,15 +211,18 @@ fn keystore2_max_forced_ops_test() {
     // Create initial forced operation in a child process
     // and wait for the parent to notify to perform operation.
     let alias = format!("ks_forced_op_key_{}", getuid());
-    let mut first_op_handle = execute_op_run_as_child(
-        key_generations::TARGET_SU_CTX,
-        Domain::SELINUX,
-        key_generations::SELINUX_SHELL_NAMESPACE,
-        Some(alias),
-        Uid::from_raw(auid),
-        Gid::from_raw(agid),
-        ForcedOp(true),
-    );
+    // SAFETY: The test is run in a separate process with no other threads.
+    let mut first_op_handle = unsafe {
+        execute_op_run_as_child(
+            key_generations::TARGET_SU_CTX,
+            Domain::SELINUX,
+            key_generations::SELINUX_SHELL_NAMESPACE,
+            Some(alias),
+            Uid::from_raw(auid),
+            Gid::from_raw(agid),
+            ForcedOp(true),
+        )
+    };
 
     // Wait until above child proc notifies us to continue, so that there is definitely a forced
     // operation outstanding to perform a operation.
@@ -219,7 +230,8 @@ fn keystore2_max_forced_ops_test() {
 
     // Create MAX_OPS number of forced operations.
     let mut child_handles =
-        create_operations(key_generations::TARGET_SU_CTX, ForcedOp(true), MAX_OPS);
+    // SAFETY: The test is run in a separate process with no other threads.
+        unsafe { create_operations(key_generations::TARGET_SU_CTX, ForcedOp(true), MAX_OPS) };
 
     // Wait until all child procs notifies us to continue, so that  there are enough operations
     // outstanding to trigger a BACKEND_BUSY.
@@ -282,15 +294,18 @@ fn keystore2_ops_prune_test() {
     // Create an operation in an untrusted_app context. Wait until the parent notifies to continue.
     // Once the parent notifies, this operation is expected to be completed successfully.
     let alias = format!("ks_reg_op_key_{}", getuid());
-    let mut child_handle = execute_op_run_as_child(
-        TARGET_CTX,
-        Domain::APP,
-        -1,
-        Some(alias),
-        Uid::from_raw(uid),
-        Gid::from_raw(gid),
-        ForcedOp(false),
-    );
+    // SAFETY: The test is run in a separate process with no other threads.
+    let mut child_handle = unsafe {
+        execute_op_run_as_child(
+            TARGET_CTX,
+            Domain::APP,
+            -1,
+            Some(alias),
+            Uid::from_raw(uid),
+            Gid::from_raw(gid),
+            ForcedOp(false),
+        )
+    };
 
     // Wait until child process notifies us to continue, so that an operation from child process is
     // outstanding to complete the operation.
@@ -377,6 +392,7 @@ fn keystore2_forced_op_perm_denied_test() {
     let gid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
 
     for context in TARGET_CTXS.iter() {
+        // SAFETY: The test is run in a separate process with no other threads.
         unsafe {
             run_as::run_as(context, Uid::from_raw(uid), Gid::from_raw(gid), move || {
                 let alias = format!("ks_app_forced_op_test_key_{}", getuid());
@@ -406,6 +422,7 @@ fn keystore2_forced_op_success_test() {
     let uid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     let gid = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
 
+    // SAFETY: The test is run in a separate process with no other threads.
     unsafe {
         run_as::run_as(TARGET_CTX, Uid::from_raw(uid), Gid::from_raw(gid), move || {
             let alias = format!("ks_vold_forced_op_key_{}", getuid());

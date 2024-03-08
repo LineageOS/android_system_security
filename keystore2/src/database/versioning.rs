@@ -13,21 +13,19 @@
 // limitations under the License.
 
 use anyhow::{anyhow, Context, Result};
-use rusqlite::{params, OptionalExtension, Transaction, NO_PARAMS};
+use rusqlite::{params, OptionalExtension, Transaction};
 
 pub fn create_or_get_version(tx: &Transaction, current_version: u32) -> Result<u32> {
     tx.execute(
         "CREATE TABLE IF NOT EXISTS persistent.version (
                 id INTEGER PRIMARY KEY,
                 version INTEGER);",
-        NO_PARAMS,
+        [],
     )
     .context("In create_or_get_version: Failed to create version table.")?;
 
     let version = tx
-        .query_row("SELECT version FROM persistent.version WHERE id = 0;", NO_PARAMS, |row| {
-            row.get(0)
-        })
+        .query_row("SELECT version FROM persistent.version WHERE id = 0;", [], |row| row.get(0))
         .optional()
         .context("In create_or_get_version: Failed to read version.")?;
 
@@ -44,7 +42,7 @@ pub fn create_or_get_version(tx: &Transaction, current_version: u32) -> Result<u
             .query_row(
                 "SELECT name FROM persistent.sqlite_master
                  WHERE type = 'table' AND name = 'keyentry';",
-                NO_PARAMS,
+                [],
                 |_| Ok(()),
             )
             .optional()
@@ -94,12 +92,12 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use rusqlite::{Connection, TransactionBehavior, NO_PARAMS};
+    use rusqlite::{Connection, TransactionBehavior};
 
     #[test]
     fn upgrade_database_test() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", NO_PARAMS).unwrap();
+        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", []).unwrap();
 
         let upgraders: Vec<_> = (0..30_u32)
             .map(move |i| {
@@ -125,19 +123,19 @@ mod test {
                         alias BLOB,
                         state INTEGER,
                         km_uuid BLOB);",
-                    NO_PARAMS,
+                    [],
                 )
                 .unwrap();
             }
             for from in 1..29 {
                 for to in from..30 {
-                    conn.execute("DROP TABLE IF EXISTS persistent.version;", NO_PARAMS).unwrap();
-                    conn.execute("DROP TABLE IF EXISTS persistent.test;", NO_PARAMS).unwrap();
+                    conn.execute("DROP TABLE IF EXISTS persistent.version;", []).unwrap();
+                    conn.execute("DROP TABLE IF EXISTS persistent.test;", []).unwrap();
                     conn.execute(
                         "CREATE TABLE IF NOT EXISTS persistent.test (
                             id INTEGER PRIMARY KEY,
                             test_field INTEGER);",
-                        NO_PARAMS,
+                        [],
                     )
                     .unwrap();
 
@@ -163,7 +161,7 @@ mod test {
                         to - from,
                         conn.query_row(
                             "SELECT COUNT(test_field) FROM persistent.test;",
-                            NO_PARAMS,
+                            [],
                             |row| row.get(0)
                         )
                         .unwrap()
@@ -188,7 +186,7 @@ mod test {
     #[test]
     fn create_or_get_version_new_database() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", NO_PARAMS).unwrap();
+        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", []).unwrap();
         {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
             let version = create_or_get_version(&tx, 3).unwrap();
@@ -202,7 +200,7 @@ mod test {
             conn.query_row(
                 "SELECT name FROM persistent.sqlite_master
                  WHERE type = 'table' AND name = 'version';",
-                NO_PARAMS,
+                [],
                 |row| row.get(0),
             )
         );
@@ -210,18 +208,14 @@ mod test {
         // There is exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // The version must be set to 3
         assert_eq!(
             Ok(3),
-            conn.query_row(
-                "SELECT version from persistent.version WHERE id = 0;",
-                NO_PARAMS,
-                |row| row.get(0)
-            )
+            conn.query_row("SELECT version from persistent.version WHERE id = 0;", [], |row| row
+                .get(0))
         );
 
         // Will subsequent calls to create_or_get_version still return the same version even
@@ -236,8 +230,7 @@ mod test {
         // There is still exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // Bump the version.
@@ -258,25 +251,21 @@ mod test {
         // There is still exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // The version must be set to 5
         assert_eq!(
             Ok(5),
-            conn.query_row(
-                "SELECT version from persistent.version WHERE id = 0;",
-                NO_PARAMS,
-                |row| row.get(0)
-            )
+            conn.query_row("SELECT version from persistent.version WHERE id = 0;", [], |row| row
+                .get(0))
         );
     }
 
     #[test]
     fn create_or_get_version_legacy_database() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", NO_PARAMS).unwrap();
+        conn.execute("ATTACH DATABASE 'file::memory:' as persistent;", []).unwrap();
         // A legacy (version 0) database is detected if the keyentry table exists but no
         // version table.
         conn.execute(
@@ -288,7 +277,7 @@ mod test {
              alias BLOB,
              state INTEGER,
              km_uuid BLOB);",
-            NO_PARAMS,
+            [],
         )
         .unwrap();
 
@@ -306,7 +295,7 @@ mod test {
             conn.query_row(
                 "SELECT name FROM persistent.sqlite_master
                  WHERE type = 'table' AND name = 'version';",
-                NO_PARAMS,
+                [],
                 |row| row.get(0),
             )
         );
@@ -314,18 +303,14 @@ mod test {
         // There is exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // The version must be set to 0
         assert_eq!(
             Ok(0),
-            conn.query_row(
-                "SELECT version from persistent.version WHERE id = 0;",
-                NO_PARAMS,
-                |row| row.get(0)
-            )
+            conn.query_row("SELECT version from persistent.version WHERE id = 0;", [], |row| row
+                .get(0))
         );
 
         // Will subsequent calls to create_or_get_version still return the same version even
@@ -340,8 +325,7 @@ mod test {
         // There is still exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // Bump the version.
@@ -362,18 +346,14 @@ mod test {
         // There is still exactly one row in the version table.
         assert_eq!(
             Ok(1),
-            conn.query_row("SELECT COUNT(id) from persistent.version;", NO_PARAMS, |row| row
-                .get(0))
+            conn.query_row("SELECT COUNT(id) from persistent.version;", [], |row| row.get(0))
         );
 
         // The version must be set to 5
         assert_eq!(
             Ok(5),
-            conn.query_row(
-                "SELECT version from persistent.version WHERE id = 0;",
-                NO_PARAMS,
-                |row| row.get(0)
-            )
+            conn.query_row("SELECT version from persistent.version WHERE id = 0;", [], |row| row
+                .get(0))
         );
     }
 }

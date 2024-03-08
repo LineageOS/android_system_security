@@ -118,8 +118,7 @@ class ConfuiHidlCompatSession : public HidlConfirmationResultCb,
                                                    hidl_ui_options);
         if (!rc.isOk()) {
             LOG(ERROR) << "Communication error: promptUserConfirmation: " << rc.description();
-        }
-        if (rc == ResponseCode::OK) {
+        } else if (rc == ResponseCode::OK) {
             callback_ = callback;
         }
         return responseCode2Compat(rc.withDefault(ResponseCode::SystemError));

@@ -17,21 +17,26 @@ use nix::unistd::getuid;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     Algorithm::Algorithm, BlockMode::BlockMode, Digest::Digest, EcCurve::EcCurve,
     ErrorCode::ErrorCode, KeyPurpose::KeyPurpose, PaddingMode::PaddingMode,
-    SecurityLevel::SecurityLevel,
+    SecurityLevel::SecurityLevel, Tag::Tag,
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
-    Domain::Domain, KeyDescriptor::KeyDescriptor, ResponseCode::ResponseCode,
+    Domain::Domain, IKeystoreService::IKeystoreService, KeyDescriptor::KeyDescriptor,
+    ResponseCode::ResponseCode,
 };
 
 use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error,
 };
 
-use crate::ffi_test_utils::validate_certchain;
+use keystore2_test_utils::ffi_test_utils::{get_value_from_attest_record, validate_certchain};
 
 use crate::{
-    keystore2_client_test_utils::app_attest_key_feature_exists,
-    skip_test_if_no_app_attest_key_feature,
+    skip_test_if_no_app_attest_key_feature, skip_test_if_no_device_id_attestation_feature,
+};
+
+use crate::keystore2_client_test_utils::{
+    app_attest_key_feature_exists, device_id_attestation_feature_exists, get_attest_id_value,
+    is_second_imei_id_attestation_required,
 };
 
 /// Generate RSA and EC attestation keys and use them for signing RSA-signing keys.
@@ -479,4 +484,182 @@ fn keystore2_attest_symmetric_key_fail_sys_error() {
 
     // Should not have an attestation record.
     assert!(aes_key_metadata.certificateChain.is_none());
+}
+
+fn get_attestation_ids(keystore2: &binder::Strong<dyn IKeystoreService>) -> Vec<(Tag, Vec<u8>)> {
+    let attest_ids = vec![
+        (Tag::ATTESTATION_ID_BRAND, "brand"),
+        (Tag::ATTESTATION_ID_DEVICE, "device"),
+        (Tag::ATTESTATION_ID_PRODUCT, "name"),
+        (Tag::ATTESTATION_ID_SERIAL, "serialno"),
+        (Tag::ATTESTATION_ID_MANUFACTURER, "manufacturer"),
+        (Tag::ATTESTATION_ID_MODEL, "model"),
+        (Tag::ATTESTATION_ID_IMEI, ""), //Get this value from Telephony service.
+        (Tag::ATTESTATION_ID_SECOND_IMEI, ""), //Get this value from Telephony service.
+    ];
+
+    let mut attest_id_params: Vec<(Tag, Vec<u8>)> = vec![];
+    for (attest_id, prop_name) in attest_ids {
+        if attest_id == Tag::ATTESTATION_ID_SECOND_IMEI
+            && !is_second_imei_id_attestation_required(keystore2)
+        {
+            continue;
+        }
+
+        if let Some(value) = get_attest_id_value(attest_id, prop_name) {
+            if !value.is_empty() {
+                attest_id_params.push((attest_id, value));
+            }
+        }
+    }
+
+    attest_id_params
+}
+
+/// Generate an attested key with attestation of the device's identifiers. Test should succeed in
+/// generating a attested key with attestation of device identifiers. Test might fail on devices
+/// which don't support device id attestation with error response code `CANNOT_ATTEST_IDS or
+/// INVALID_TAG`
+fn generate_attested_key_with_device_attest_ids(algorithm: Algorithm) {
+    skip_test_if_no_device_id_attestation_feature!();
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let att_challenge: &[u8] = b"foo";
+
+    let attest_key_metadata =
+        key_generations::generate_attestation_key(&sec_level, algorithm, att_challenge).unwrap();
+
+    let attest_id_params = get_attestation_ids(&keystore2);
+
+    for (attest_id, value) in attest_id_params {
+        // Create RSA/EC key and use attestation key to sign it.
+        let key_alias = format!("ks_attested_test_key_{}", getuid());
+        let key_metadata =
+            key_generations::map_ks_error(key_generations::generate_key_with_attest_id(
+                &sec_level,
+                algorithm,
+                Some(key_alias),
+                att_challenge,
+                &attest_key_metadata.key,
+                attest_id,
+                value.clone(),
+            ))
+            .unwrap();
+
+        assert!(key_metadata.certificate.is_some());
+        assert!(key_metadata.certificateChain.is_none());
+
+        let mut cert_chain: Vec<u8> = Vec::new();
+        cert_chain.extend(key_metadata.certificate.as_ref().unwrap());
+        cert_chain.extend(attest_key_metadata.certificate.as_ref().unwrap());
+        cert_chain.extend(attest_key_metadata.certificateChain.as_ref().unwrap());
+
+        validate_certchain(&cert_chain).expect("Error while validating cert chain");
+        let attest_id_value = get_value_from_attest_record(
+            key_metadata.certificate.as_ref().unwrap(),
+            attest_id,
+            SecurityLevel::TRUSTED_ENVIRONMENT,
+        )
+        .expect("Attest id verification failed.");
+        assert_eq!(attest_id_value, value);
+    }
+}
+
+#[test]
+fn keystore2_attest_ecdsa_attestation_id() {
+    generate_attested_key_with_device_attest_ids(Algorithm::EC);
+}
+
+#[test]
+fn keystore2_attest_rsa_attestation_id() {
+    generate_attested_key_with_device_attest_ids(Algorithm::RSA);
+}
+
+/// Try to generate an attested key with attestation of invalid device's identifiers. Test should
+/// fail with error response code `CANNOT_ATTEST_IDS`.
+#[test]
+fn keystore2_attest_key_fails_with_invalid_attestation_id() {
+    skip_test_if_no_device_id_attestation_feature!();
+
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let digest = Digest::SHA_2_256;
+    let att_challenge: &[u8] = b"foo";
+
+    // Create EC-Attestation key.
+    let attest_key_metadata = key_generations::generate_ec_attestation_key(
+        &sec_level,
+        att_challenge,
+        digest,
+        EcCurve::P_256,
+    )
+    .unwrap();
+
+    let attest_id_params = vec![
+        (Tag::ATTESTATION_ID_BRAND, b"invalid-brand".to_vec()),
+        (Tag::ATTESTATION_ID_DEVICE, b"invalid-device-name".to_vec()),
+        (Tag::ATTESTATION_ID_PRODUCT, b"invalid-product-name".to_vec()),
+        (Tag::ATTESTATION_ID_SERIAL, b"invalid-ro-serial".to_vec()),
+        (Tag::ATTESTATION_ID_MANUFACTURER, b"invalid-ro-product-manufacturer".to_vec()),
+        (Tag::ATTESTATION_ID_MODEL, b"invalid-ro-product-model".to_vec()),
+        (Tag::ATTESTATION_ID_IMEI, b"invalid-imei".to_vec()),
+    ];
+
+    for (attest_id, value) in attest_id_params {
+        // Create EC key and use attestation key to sign it.
+        let ec_key_alias = format!("ks_ec_attested_test_key_fail_{}{}", getuid(), digest.0);
+        let result = key_generations::map_ks_error(key_generations::generate_key_with_attest_id(
+            &sec_level,
+            Algorithm::EC,
+            Some(ec_key_alias),
+            att_challenge,
+            &attest_key_metadata.key,
+            attest_id,
+            value,
+        ));
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::CANNOT_ATTEST_IDS));
+    }
+}
+
+///  If `DEVICE_ID_ATTESTATION_FEATURE` is not supported then test tries to generate an attested
+///  key with attestation of valid device's identifiers. Test should fail to generate key with
+///  error code `CANNOT_ATTEST_IDS`.
+#[test]
+fn keystore2_attest_key_without_attestation_id_support_fails_with_cannot_attest_id() {
+    if device_id_attestation_feature_exists() {
+        // Skip this test on device supporting `DEVICE_ID_ATTESTATION_FEATURE`.
+        return;
+    }
+
+    let keystore2 = get_keystore_service();
+    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
+
+    let att_challenge: &[u8] = b"foo";
+    let attest_key_metadata =
+        key_generations::generate_attestation_key(&sec_level, Algorithm::RSA, att_challenge)
+            .unwrap();
+
+    let attest_id_params = get_attestation_ids(&keystore2);
+    for (attest_id, value) in attest_id_params {
+        // Create RSA/EC key and use attestation key to sign it.
+        let key_alias = format!("ks_attested_test_key_{}", getuid());
+        let result = key_generations::map_ks_error(key_generations::generate_key_with_attest_id(
+            &sec_level,
+            Algorithm::RSA,
+            Some(key_alias),
+            att_challenge,
+            &attest_key_metadata.key,
+            attest_id,
+            value.clone(),
+        ));
+        assert!(
+            result.is_err(),
+            "Expected to fail as FEATURE_DEVICE_ID_ATTESTATION is not supported."
+        );
+        assert_eq!(result.unwrap_err(), Error::Km(ErrorCode::CANNOT_ATTEST_IDS));
+    }
 }

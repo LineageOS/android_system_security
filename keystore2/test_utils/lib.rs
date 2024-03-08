@@ -20,12 +20,15 @@ use std::path::{Path, PathBuf};
 use std::{env::temp_dir, ops::Deref};
 
 use android_system_keystore2::aidl::android::system::keystore2::IKeystoreService::IKeystoreService;
+use android_security_authorization::aidl::android::security::authorization::IKeystoreAuthorization::IKeystoreAuthorization;
 
 pub mod authorizations;
+pub mod ffi_test_utils;
 pub mod key_generations;
 pub mod run_as;
 
 static KS2_SERVICE_NAME: &str = "android.system.keystore2.IKeystoreService/default";
+static AUTH_SERVICE_NAME: &str = "android.security.authorization";
 
 /// Represents the lifecycle of a temporary directory for testing.
 #[derive(Debug)]
@@ -114,4 +117,9 @@ impl Deref for PathBuilder {
 /// Get Keystore2 service.
 pub fn get_keystore_service() -> binder::Strong<dyn IKeystoreService> {
     binder::get_interface(KS2_SERVICE_NAME).unwrap()
+}
+
+/// Get Keystore auth service.
+pub fn get_keystore_auth_service() -> binder::Strong<dyn IKeystoreAuthorization> {
+    binder::get_interface(AUTH_SERVICE_NAME).unwrap()
 }

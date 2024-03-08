@@ -14,28 +14,29 @@
 
 //! This module implements IKeystoreAuthorization AIDL interface.
 
-use crate::ks_err;
-use crate::error::Error as KeystoreError;
 use crate::error::anyhow_error_to_cstring;
-use crate::globals::{ENFORCEMENTS, SUPER_KEY, DB, LEGACY_IMPORTER};
+use crate::error::Error as KeystoreError;
+use crate::globals::{DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY};
+use crate::ks_err;
 use crate::permission::KeystorePerm;
-use crate::super_key::UserState;
 use crate::utils::{check_keystore_permission, watchdog as wd};
+use aconfig_android_hardware_biometrics_rust;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    HardwareAuthToken::HardwareAuthToken,
+    HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
 };
-use android_security_authorization::binder::{BinderFeatures, ExceptionCode, Interface, Result as BinderResult,
-    Strong, Status as BinderStatus};
 use android_security_authorization::aidl::android::security::authorization::{
-    IKeystoreAuthorization::BnKeystoreAuthorization, IKeystoreAuthorization::IKeystoreAuthorization,
-    LockScreenEvent::LockScreenEvent, AuthorizationTokens::AuthorizationTokens,
-    ResponseCode::ResponseCode,
+    AuthorizationTokens::AuthorizationTokens, IKeystoreAuthorization::BnKeystoreAuthorization,
+    IKeystoreAuthorization::IKeystoreAuthorization, ResponseCode::ResponseCode,
 };
-use android_system_keystore2::aidl::android::system::keystore2::{
-    ResponseCode::ResponseCode as KsResponseCode};
+use android_security_authorization::binder::{
+    BinderFeatures, ExceptionCode, Interface, Result as BinderResult, Status as BinderStatus,
+    Strong,
+};
+use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode as KsResponseCode;
 use anyhow::{Context, Result};
 use keystore2_crypto::Password;
 use keystore2_selinux as selinux;
+use std::ffi::CString;
 
 /// This is the Authorization error type, it wraps binder exceptions and the
 /// Authorization ResponseCode
@@ -129,90 +130,54 @@ impl AuthorizationManager {
         // Check keystore permission.
         check_keystore_permission(KeystorePerm::AddAuth).context(ks_err!())?;
 
+        log::info!(
+            "add_auth_token(challenge={}, userId={}, authId={}, authType={:#x}, timestamp={}ms)",
+            auth_token.challenge,
+            auth_token.userId,
+            auth_token.authenticatorId,
+            auth_token.authenticatorType.0,
+            auth_token.timestamp.milliSeconds,
+        );
+
         ENFORCEMENTS.add_auth_token(auth_token.clone());
         Ok(())
     }
 
-    fn on_lock_screen_event(
-        &self,
-        lock_screen_event: LockScreenEvent,
-        user_id: i32,
-        password: Option<Password>,
-        unlocking_sids: Option<&[i64]>,
-    ) -> Result<()> {
+    fn on_device_unlocked(&self, user_id: i32, password: Option<Password>) -> Result<()> {
         log::info!(
-            "on_lock_screen_event({:?}, user_id={:?}, password.is_some()={}, unlocking_sids={:?})",
-            lock_screen_event,
+            "on_device_unlocked(user_id={}, password.is_some()={})",
             user_id,
             password.is_some(),
-            unlocking_sids
         );
-        match (lock_screen_event, password) {
-            (LockScreenEvent::UNLOCK, Some(password)) => {
-                // This corresponds to the unlock() method in legacy keystore API.
-                // check permission
-                check_keystore_permission(KeystorePerm::Unlock)
-                    .context(ks_err!("Unlock with password."))?;
-                ENFORCEMENTS.set_device_locked(user_id, false);
+        check_keystore_permission(KeystorePerm::Unlock).context(ks_err!("Unlock."))?;
+        ENFORCEMENTS.set_device_locked(user_id, false);
 
-                let mut skm = SUPER_KEY.write().unwrap();
-
-                DB.with(|db| {
-                    skm.unlock_screen_lock_bound_key(
-                        &mut db.borrow_mut(),
-                        user_id as u32,
-                        &password,
-                    )
-                })
-                .context(ks_err!("unlock_screen_lock_bound_key failed"))?;
-
-                // Unlock super key.
-                if let UserState::Uninitialized = DB
-                    .with(|db| {
-                        skm.unlock_and_get_user_state(
-                            &mut db.borrow_mut(),
-                            &LEGACY_IMPORTER,
-                            user_id as u32,
-                            &password,
-                        )
-                    })
-                    .context(ks_err!("Unlock with password."))?
-                {
-                    log::info!(
-                        "In on_lock_screen_event. Trying to unlock when LSKF is uninitialized."
-                    );
-                }
-
-                Ok(())
-            }
-            (LockScreenEvent::UNLOCK, None) => {
-                check_keystore_permission(KeystorePerm::Unlock).context(ks_err!("Unlock."))?;
-                ENFORCEMENTS.set_device_locked(user_id, false);
-                let mut skm = SUPER_KEY.write().unwrap();
-                DB.with(|db| {
-                    skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32)
-                })
-                .context(ks_err!("try_unlock_user_with_biometric failed"))?;
-                Ok(())
-            }
-            (LockScreenEvent::LOCK, None) => {
-                check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
-                ENFORCEMENTS.set_device_locked(user_id, true);
-                let mut skm = SUPER_KEY.write().unwrap();
-                DB.with(|db| {
-                    skm.lock_screen_lock_bound_key(
-                        &mut db.borrow_mut(),
-                        user_id as u32,
-                        unlocking_sids.unwrap_or(&[]),
-                    );
-                });
-                Ok(())
-            }
-            _ => {
-                // Any other combination is not supported.
-                Err(Error::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!("Unknown event."))
-            }
+        let mut skm = SUPER_KEY.write().unwrap();
+        if let Some(password) = password {
+            DB.with(|db| {
+                skm.unlock_user(&mut db.borrow_mut(), &LEGACY_IMPORTER, user_id as u32, &password)
+            })
+            .context(ks_err!("Unlock with password."))
+        } else {
+            DB.with(|db| skm.try_unlock_user_with_biometric(&mut db.borrow_mut(), user_id as u32))
+                .context(ks_err!("try_unlock_user_with_biometric failed"))
         }
+    }
+
+    fn on_device_locked(&self, user_id: i32, unlocking_sids: &[i64]) -> Result<()> {
+        log::info!("on_device_locked(user_id={}, unlocking_sids={:?})", user_id, unlocking_sids);
+
+        check_keystore_permission(KeystorePerm::Lock).context(ks_err!("Lock"))?;
+        ENFORCEMENTS.set_device_locked(user_id, true);
+        let mut skm = SUPER_KEY.write().unwrap();
+        DB.with(|db| {
+            skm.lock_unlocked_device_required_keys(
+                &mut db.borrow_mut(),
+                user_id as u32,
+                unlocking_sids,
+            );
+        });
+        Ok(())
     }
 
     fn get_auth_tokens_for_credstore(
@@ -235,6 +200,31 @@ impl AuthorizationManager {
             ENFORCEMENTS.get_auth_tokens(challenge, secure_user_id, auth_token_max_age_millis)?;
         Ok(AuthorizationTokens { authToken: auth_token, timestampToken: ts_token })
     }
+
+    fn get_last_auth_time(
+        &self,
+        secure_user_id: i64,
+        auth_types: &[HardwareAuthenticatorType],
+    ) -> Result<i64> {
+        // Check keystore permission.
+        check_keystore_permission(KeystorePerm::GetLastAuthTime).context(ks_err!())?;
+
+        let mut max_time: i64 = -1;
+        for auth_type in auth_types.iter() {
+            if let Some(time) = ENFORCEMENTS.get_last_auth_time(secure_user_id, *auth_type) {
+                if time.milliseconds() > max_time {
+                    max_time = time.milliseconds();
+                }
+            }
+        }
+
+        if max_time >= 0 {
+            Ok(max_time)
+        } else {
+            Err(Error::Rc(ResponseCode::NO_AUTH_TOKEN_FOUND))
+                .context(ks_err!("No auth token found"))
+        }
+    }
 }
 
 impl Interface for AuthorizationManager {}
@@ -245,26 +235,14 @@ impl IKeystoreAuthorization for AuthorizationManager {
         map_or_log_err(self.add_auth_token(auth_token), Ok)
     }
 
-    fn onLockScreenEvent(
-        &self,
-        lock_screen_event: LockScreenEvent,
-        user_id: i32,
-        password: Option<&[u8]>,
-        unlocking_sids: Option<&[i64]>,
-    ) -> BinderResult<()> {
-        let _wp =
-            wd::watch_millis_with("IKeystoreAuthorization::onLockScreenEvent", 500, move || {
-                format!("lock event: {}", lock_screen_event.0)
-            });
-        map_or_log_err(
-            self.on_lock_screen_event(
-                lock_screen_event,
-                user_id,
-                password.map(|pw| pw.into()),
-                unlocking_sids,
-            ),
-            Ok,
-        )
+    fn onDeviceUnlocked(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceUnlocked", 500);
+        map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())), Ok)
+    }
+
+    fn onDeviceLocked(&self, user_id: i32, unlocking_sids: &[i64]) -> BinderResult<()> {
+        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceLocked", 500);
+        map_or_log_err(self.on_device_locked(user_id, unlocking_sids), Ok)
     }
 
     fn getAuthTokensForCredStore(
@@ -282,5 +260,20 @@ impl IKeystoreAuthorization for AuthorizationManager {
             ),
             Ok,
         )
+    }
+
+    fn getLastAuthTime(
+        &self,
+        secure_user_id: i64,
+        auth_types: &[HardwareAuthenticatorType],
+    ) -> binder::Result<i64> {
+        if aconfig_android_hardware_biometrics_rust::last_authentication_time() {
+            map_or_log_err(self.get_last_auth_time(secure_user_id, auth_types), Ok)
+        } else {
+            Err(BinderStatus::new_service_specific_error(
+                ResponseCode::PERMISSION_DENIED.0,
+                Some(CString::new("Feature is not enabled.").unwrap().as_c_str()),
+            ))
+        }
     }
 }

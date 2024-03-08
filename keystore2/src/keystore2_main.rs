@@ -68,6 +68,8 @@ fn main() {
     fn sqlite_log_handler(err: c_int, message: &str) {
         log::error!("[SQLITE3] {}: {}", err, message);
     }
+    // SAFETY: There are no other threads yet, `sqlite_log_handler` is threadsafe, and it doesn't
+    // invoke any SQLite calls.
     unsafe { sqlite_trace::config_log(Some(sqlite_log_handler)) }
         .expect("Error setting sqlite log callback.");
 

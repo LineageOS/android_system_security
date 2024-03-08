@@ -22,14 +22,14 @@
 #include <keymaster/logger.h>
 #include <keystore/keystore_attestation_id.h>
 
-#include <keystore/KeyAttestationApplicationId.h>
-#include <keystore/KeyAttestationPackageInfo.h>
-#include <keystore/Signature.h>
+#include <android/security/keystore/KeyAttestationApplicationId.h>
+#include <android/security/keystore/KeyAttestationPackageInfo.h>
+#include <android/security/keystore/Signature.h>
 
 using ::android::String16;
 using ::android::security::KEY_ATTESTATION_APPLICATION_ID_MAX_SIZE;
-using ::android::security::keymaster::KeyAttestationApplicationId;
-using ::android::security::keymaster::KeyAttestationPackageInfo;
+using ::android::security::keystore::KeyAttestationApplicationId;
+using ::android::security::keystore::KeyAttestationPackageInfo;
 using std::vector;
 
 namespace keystore {
@@ -72,24 +72,27 @@ constexpr const size_t kTooManySignatures = 35;
 
 }  // namespace
 
-using ::android::content::pm::Signature;
 using ::android::security::build_attestation_application_id;
+using ::android::security::keystore::Signature;
 
-std::optional<KeyAttestationPackageInfo>
-make_package_info_with_signatures(const char* package_name,
-                                  KeyAttestationPackageInfo::SignaturesVector signatures) {
-    return std::make_optional<KeyAttestationPackageInfo>(
-        String16(package_name), 1 /* version code */,
-        std::make_shared<KeyAttestationPackageInfo::SignaturesVector>(std::move(signatures)));
+KeyAttestationPackageInfo make_package_info_with_signatures(const char* package_name,
+                                                            std::vector<Signature> signatures) {
+    auto pInfo = KeyAttestationPackageInfo();
+    pInfo.packageName = String16(package_name);
+    pInfo.versionCode = 1;
+    std::move(signatures.begin(), signatures.end(), std::back_inserter(pInfo.signatures));
+
+    return pInfo;
 }
 
-std::optional<KeyAttestationPackageInfo> make_package_info(const char* package_name) {
-    return make_package_info_with_signatures(package_name,
-                                             KeyAttestationPackageInfo::SignaturesVector());
+KeyAttestationPackageInfo make_package_info(const char* package_name) {
+    return make_package_info_with_signatures(package_name, std::vector<Signature>());
 }
 
 TEST(AaidTruncationTest, shortPackageInfoTest) {
-    KeyAttestationApplicationId app_id(make_package_info(kDummyPackageName));
+    KeyAttestationApplicationId app_id;
+    auto pInfo = make_package_info(kDummyPackageName);
+    app_id.packageInfos.push_back(std::move(pInfo));
 
     auto result = build_attestation_application_id(app_id);
     ASSERT_TRUE(result.isOk());
@@ -98,7 +101,9 @@ TEST(AaidTruncationTest, shortPackageInfoTest) {
 }
 
 TEST(AaidTruncationTest, tooLongPackageNameTest) {
-    KeyAttestationApplicationId app_id(make_package_info(kLongPackageName));
+    KeyAttestationApplicationId app_id;
+    auto pInfo = make_package_info(kLongPackageName);
+    app_id.packageInfos.push_back(std::move(pInfo));
 
     auto result = build_attestation_application_id(app_id);
     ASSERT_TRUE(result.isOk());
@@ -108,14 +113,17 @@ TEST(AaidTruncationTest, tooLongPackageNameTest) {
 
 TEST(AaidTruncationTest, tooManySignaturesTest) {
     std::vector<uint8_t> dummy_sig_data(kDummySignature, kDummySignature + 32);
-    KeyAttestationPackageInfo::SignaturesVector signatures;
+    std::vector<Signature> signatures;
     // Add 35 signatures which will surely exceed the 1K limit.
     for (size_t i = 0; i < kTooManySignatures; ++i) {
-        signatures.push_back(std::make_optional<Signature>(dummy_sig_data));
+        auto sign = Signature();
+        sign.data = dummy_sig_data;
+        signatures.push_back(std::move(sign));
     }
 
-    KeyAttestationApplicationId app_id(
-        make_package_info_with_signatures(kDummyPackageName, std::move(signatures)));
+    auto pInfo = make_package_info_with_signatures(kDummyPackageName, std::move(signatures));
+    KeyAttestationApplicationId app_id;
+    app_id.packageInfos.push_back(std::move(pInfo));
 
     auto result = build_attestation_application_id(app_id);
     ASSERT_TRUE(result.isOk());
@@ -125,19 +133,22 @@ TEST(AaidTruncationTest, tooManySignaturesTest) {
 
 TEST(AaidTruncationTest, combinedPackagesAndSignaturesTest) {
     std::vector<uint8_t> dummy_sig_data(kDummySignature, kDummySignature + 32);
-    KeyAttestationApplicationId::PackageInfoVector packages;
+    ::std::vector<KeyAttestationPackageInfo> packages;
 
     for (size_t i = 0; i < kTooManyPackages; ++i) {
-        KeyAttestationPackageInfo::SignaturesVector signatures;
+        std::vector<Signature> signatures;
         // Add a few signatures for each package
         for (int j = 0; j < 3; ++j) {
-            signatures.push_back(std::make_optional<Signature>(dummy_sig_data));
+            auto sign = Signature();
+            sign.data = dummy_sig_data;
+            signatures.push_back(std::move(sign));
         }
-        packages.push_back(
-            make_package_info_with_signatures(kReasonablePackageName, std::move(signatures)));
+        packages.push_back(std::move(
+            make_package_info_with_signatures(kReasonablePackageName, std::move(signatures))));
     }
+    KeyAttestationApplicationId app_id;
+    std::move(packages.begin(), packages.end(), std::back_inserter(app_id.packageInfos));
 
-    KeyAttestationApplicationId app_id(std::move(packages));
     auto result = build_attestation_application_id(app_id);
     ASSERT_TRUE(result.isOk());
     std::vector<uint8_t>& encoded_app_id = result;

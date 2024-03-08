@@ -29,9 +29,7 @@ use keystore2::{
     legacy_blob::LegacyBlobLoader, maintenance::DeleteListener, maintenance::Domain,
     utils::uid_to_android_user, utils::watchdog as wd,
 };
-use rusqlite::{
-    params, Connection, OptionalExtension, Transaction, TransactionBehavior, NO_PARAMS,
-};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::sync::Arc;
 use std::{
     collections::HashSet,
@@ -48,6 +46,12 @@ impl DB {
             conn: Connection::open(db_file).context("Failed to initialize SQLite connection.")?,
         };
 
+        if keystore2_flags::wal_db_journalmode_v2() {
+            // Update journal mode to WAL
+            db.conn
+                .pragma_update(None, "journal_mode", "WAL")
+                .context("Failed to connect in WAL mode for persistent db")?;
+        }
         db.init_tables().context("Trying to initialize legacy keystore db.")?;
         Ok(db)
     }
@@ -95,7 +99,7 @@ impl DB {
                      alias BLOB,
                      profile BLOB,
                      UNIQUE(owner, alias));",
-                NO_PARAMS,
+                [],
             )
             .context("Failed to initialize \"profiles\" table.")?;
             Ok(())
@@ -123,6 +127,7 @@ impl DB {
     }
 
     fn put(&mut self, caller_uid: u32, alias: &str, entry: &[u8]) -> Result<()> {
+        ensure_keystore_put_is_enabled()?;
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO profiles (owner, alias, profile) values (?, ?, ?)",
@@ -203,6 +208,11 @@ impl Error {
     pub fn perm() -> Self {
         Error::Error(ERROR_PERMISSION_DENIED)
     }
+
+    /// Short hand for `Error::Error(ERROR_SYSTEM_ERROR)`
+    pub fn deprecated() -> Self {
+        Error::Error(ERROR_SYSTEM_ERROR)
+    }
 }
 
 /// This function should be used by legacykeystore service calls to translate error conditions
@@ -240,6 +250,17 @@ where
         },
         handle_ok,
     )
+}
+
+fn ensure_keystore_put_is_enabled() -> Result<()> {
+    if keystore2_flags::disable_legacy_keystore_put_v2() {
+        Err(Error::deprecated()).context(concat!(
+            "Storing into Keystore's legacy database is ",
+            "no longer supported, store in an app-specific database instead"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 struct LegacyKeystoreDeleteListener {
@@ -334,6 +355,7 @@ impl LegacyKeystore {
     }
 
     fn put(&self, alias: &str, uid: i32, entry: &[u8]) -> Result<()> {
+        ensure_keystore_put_is_enabled()?;
         let uid = Self::get_effective_uid(uid).context("In put.")?;
         let mut db = self.open_db().context("In put.")?;
         db.put(uid, alias, entry).context("In put: Trying to insert entry into DB.")?;
@@ -502,8 +524,10 @@ impl LegacyKeystore {
     ) -> Result<bool> {
         let blob = legacy_loader
             .read_legacy_keystore_entry(uid, alias, |ciphertext, iv, tag, _salt, _key_size| {
-                if let Some(key) =
-                    SUPER_KEY.read().unwrap().get_per_boot_key_by_user_id(uid_to_android_user(uid))
+                if let Some(key) = SUPER_KEY
+                    .read()
+                    .unwrap()
+                    .get_after_first_unlock_key_by_user_id(uid_to_android_user(uid))
                 {
                     key.decrypt(ciphertext, iv, tag)
                 } else {

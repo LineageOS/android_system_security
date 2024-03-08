@@ -23,44 +23,26 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
-aidl_interface {
-    name: "android.security.provisioner",
-    unstable: true,
-    local_include_dir: "binder",
-    srcs: [
-        "binder/android/security/provisioner/*.aidl",
-    ],
-    backend: {
-        java: {
-            platform_apis: true,
-        },
-        cpp: {
-            enabled: false,
-        },
-        ndk: {
-            enabled: false,
-        },
-    },
-}
-
 cc_defaults {
     name: "rkp_factory_extraction_defaults",
     defaults: [
         "keymint_use_latest_hal_aidl_ndk_static",
     ],
     shared_libs: [
-        "libbinder",
         "libbinder_ndk",
         "libcrypto",
         "liblog",
     ],
     static_libs: [
+        "android.hardware.common-V2-ndk",
+        "android.hardware.drm-V1-ndk",
         "android.hardware.security.rkp-V3-ndk",
         "libbase",
         "libcppbor_external",
         "libcppcose_rkp",
         "libjsoncpp",
         "libkeymint_remote_prov_support",
+        "libmediadrmrkp",
     ],
 }
 
@@ -97,4 +79,39 @@ cc_binary {
         "libgflags",
         "librkp_factory_extraction",
     ],
+    dist: {
+        targets: [
+            "dist_files",
+            "rkp_factory_extraction_tool",
+        ],
+        dest: "rkp_factory_extraction_tool"
+    },
+    compile_multilib: "both",
+    multilib: {
+        lib64: {
+            suffix: "64",
+        },
+    },
+    target: {
+        android_arm: {
+            dist: {
+                dir: "rkp/arm",
+            },
+        },
+        android_arm64: {
+            dist: {
+                dir: "rkp/arm64",
+            },
+        },
+        android_x86: {
+            dist: {
+                dir: "rkp/x86",
+            },
+        },
+        android_x86_64: {
+            dist: {
+                dir: "rkp/x86_64",
+            },
+        },
+    },
 }

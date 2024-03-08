@@ -24,6 +24,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
     KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue, SecurityLevel::SecurityLevel,
     Tag::Tag,
 };
+use android_security_rkp_aidl::aidl::android::security::rkp::RemotelyProvisionedKey::RemotelyProvisionedKey;
 use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
@@ -31,9 +32,11 @@ use anyhow::{Context, Result};
 use keystore2_crypto::parse_subject_from_certificate;
 
 use crate::database::Uuid;
+use crate::error::wrapped_rkpd_error_to_ks_error;
+use crate::globals::get_remotely_provisioned_component_name;
 use crate::ks_err;
 use crate::metrics_store::log_rkp_error_stats;
-use crate::rkpd_client::get_rkpd_attestation_key;
+use crate::watchdog_helper::watchdog as wd;
 use android_security_metrics::aidl::android::security::metrics::RkpError::RkpError as MetricsRkpError;
 
 /// Contains helper functions to check if remote provisioning is enabled on the system and, if so,
@@ -97,7 +100,7 @@ impl RemProvState {
                 Err(e) => {
                     if self.is_rkp_only() {
                         log::error!("Error occurred: {:?}", e);
-                        return Err(e);
+                        return Err(wrapped_rkpd_error_to_ks_error(&e)).context(format!("{e:?}"));
                     }
                     log::warn!("Error occurred: {:?}", e);
                     log_rkp_error_stats(
@@ -121,4 +124,18 @@ impl RemProvState {
             }
         }
     }
+}
+
+fn get_rkpd_attestation_key(
+    security_level: &SecurityLevel,
+    caller_uid: u32,
+) -> Result<RemotelyProvisionedKey> {
+    // Depending on the Android release, RKP may not have been mandatory for the
+    // TEE or StrongBox KM instances. In such cases, lookup failure for the IRPC
+    // HAL service is WAI and should not cause a failure. The error should be caught
+    // by the calling function and allow for natural fallback to the factory key.
+    let rpc_name = get_remotely_provisioned_component_name(security_level)
+        .context(ks_err!("Trying to get IRPC name."))?;
+    let _wd = wd::watch_millis("Calling get_rkpd_attestation_key()", 500);
+    rkpd_client::get_rkpd_attestation_key(&rpc_name, caller_uid)
 }

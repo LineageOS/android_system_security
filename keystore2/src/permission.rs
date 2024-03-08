@@ -109,9 +109,6 @@ implement_class!(
         /// Checked when an app is uninstalled or wiped.
         #[selinux(name = clear_ns)]
         ClearNs,
-        /// Checked when the user state is queried from Keystore 2.0.
-        #[selinux(name = get_state)]
-        GetState,
         /// Checked when Keystore 2.0 is asked to list a namespace that the caller
         /// does not have the get_info permission for.
         #[selinux(name = list)]
@@ -152,6 +149,9 @@ implement_class!(
         /// Checked on calls to IRemotelyProvisionedKeyPool::getAttestationKey
         #[selinux(name = get_attestation_key)]
         GetAttestationKey,
+        /// Checked on IKeystoreAuthorization::getLastAuthTime() is called.
+        #[selinux(name = get_last_auth_time)]
+        GetLastAuthTime,
     }
 );
 
@@ -500,7 +500,6 @@ mod tests {
         let system_server_ctx = Context::new("u:r:system_server:s0")?;
         assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::AddAuth).is_ok());
         assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::ClearNs).is_ok());
-        assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::GetState).is_ok());
         assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Lock).is_ok());
         assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Reset).is_ok());
         assert!(check_keystore_permission(&system_server_ctx, KeystorePerm::Unlock).is_ok());
@@ -510,7 +509,6 @@ mod tests {
         let shell_ctx = Context::new("u:r:shell:s0")?;
         assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::AddAuth));
         assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::ClearNs));
-        assert!(check_keystore_permission(&shell_ctx, KeystorePerm::GetState).is_ok());
         assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::List));
         assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::Lock));
         assert_perm_failed!(check_keystore_permission(&shell_ctx, KeystorePerm::Reset));
