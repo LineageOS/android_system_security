@@ -20,7 +20,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor,
 };
 use libc::uid_t;
-use log_event_list::{LogContext, LogContextError, LogIdSecurity};
+use structured_log::{structured_log, LOG_ID_SECURITY};
 
 const TAG_KEY_GENERATED: u32 = 210024;
 const TAG_KEY_IMPORTED: u32 = 210025;
@@ -58,30 +58,19 @@ pub fn log_key_deleted(key: &KeyDescriptor, calling_app: uid_t, success: bool) {
 
 /// Logs key integrity violation to NIAP audit log.
 pub fn log_key_integrity_violation(key: &KeyDescriptor) {
-    with_log_context(TAG_KEY_INTEGRITY_VIOLATION, |ctx| {
-        let owner = key_owner(key.domain, key.nspace, key.nspace as i32);
-        ctx.append_str(key.alias.as_ref().map_or("none", String::as_str))?.append_i32(owner)
-    })
+    let owner = key_owner(key.domain, key.nspace, key.nspace as i32);
+    let alias = String::from(key.alias.as_ref().map_or("none", String::as_str));
+    LOGS_HANDLER.queue_lo(move |_| {
+        let _result =
+            structured_log!(log_id: LOG_ID_SECURITY, TAG_KEY_INTEGRITY_VIOLATION, alias, owner);
+    });
 }
 
 fn log_key_event(tag: u32, key: &KeyDescriptor, calling_app: uid_t, success: bool) {
-    with_log_context(tag, |ctx| {
-        let owner = key_owner(key.domain, key.nspace, calling_app as i32);
-        ctx.append_i32(i32::from(success))?
-            .append_str(key.alias.as_ref().map_or("none", String::as_str))?
-            .append_i32(owner)
-    })
-}
-
-fn with_log_context<F>(tag: u32, f: F)
-where
-    F: Fn(LogContext) -> Result<LogContext, LogContextError>,
-{
-    if let Some(ctx) = LogContext::new(LogIdSecurity, tag) {
-        if let Ok(event) = f(ctx) {
-            LOGS_HANDLER.queue_lo(move |_| {
-                let _result = event.write();
-            });
-        }
-    }
+    let owner = key_owner(key.domain, key.nspace, calling_app as i32);
+    let alias = String::from(key.alias.as_ref().map_or("none", String::as_str));
+    LOGS_HANDLER.queue_lo(move |_| {
+        let _result =
+            structured_log!(log_id: LOG_ID_SECURITY, tag, i32::from(success), alias, owner);
+    });
 }
