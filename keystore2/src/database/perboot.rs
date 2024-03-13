@@ -13,15 +13,14 @@
 // limitations under the License.
 
 //! This module implements a per-boot, shared, in-memory storage of auth tokens
-//! and last-time-on-body for the main Keystore 2.0 database module.
+//! for the main Keystore 2.0 database module.
 
-use super::{AuthTokenEntry, BootTime};
+use super::AuthTokenEntry;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
 };
 use lazy_static::lazy_static;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -62,17 +61,13 @@ impl PartialEq<AuthTokenEntryWrap> for AuthTokenEntryWrap {
 
 impl Eq for AuthTokenEntryWrap {}
 
-/// Per-boot state structure. Currently only used to track auth tokens and
-/// last-off-body.
+/// Per-boot state structure. Currently only used to track auth tokens.
 #[derive(Default)]
 pub struct PerbootDB {
     // We can use a .unwrap() discipline on this lock, because only panicking
     // while holding a .write() lock will poison it. The only write usage is
     // an insert call which inserts a pre-constructed pair.
     auth_tokens: RwLock<HashSet<AuthTokenEntryWrap>>,
-    // Ordering::Relaxed is appropriate for accessing this atomic, since it
-    // does not currently need to be synchronized with anything else.
-    last_off_body: AtomicI64,
 }
 
 lazy_static! {
@@ -101,14 +96,6 @@ impl PerbootDB {
         let mut matches: Vec<_> = reader.iter().filter(|x| p(&x.0)).collect();
         matches.sort_by_key(|x| x.0.time_received);
         matches.last().map(|x| x.0.clone())
-    }
-    /// Get the last time the device was off the user's body
-    pub fn get_last_off_body(&self) -> BootTime {
-        BootTime(self.last_off_body.load(Ordering::Relaxed))
-    }
-    /// Set the last time the device was off the user's body
-    pub fn set_last_off_body(&self, last_off_body: BootTime) {
-        self.last_off_body.store(last_off_body.0, Ordering::Relaxed)
     }
     /// Return how many auth tokens are currently tracked.
     pub fn auth_tokens_len(&self) -> usize {

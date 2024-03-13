@@ -912,7 +912,8 @@ pub enum KeyParameterValue {
     /// The time in seconds for which the key is authorized for use, after user authentication
     #[key_param(tag = AUTH_TIMEOUT, field = Integer)]
     AuthTimeout(i32),
-    /// The key may be used after authentication timeout if device is still on-body
+    /// The key's authentication timeout, if it has one, is automatically expired when the device is
+    /// removed from the user's body. No longer implemented; this tag is no longer enforced.
     #[key_param(tag = ALLOW_WHILE_ON_BODY, field = BoolValue)]
     AllowWhileOnBody,
     /// The key must be unusable except when the user has provided proof of physical presence

@@ -476,7 +476,6 @@ impl Enforcements {
         let mut user_id: i32 = -1;
         let mut user_secure_ids = Vec::<i64>::new();
         let mut key_time_out: Option<i64> = None;
-        let mut allow_while_on_body = false;
         let mut unlocked_device_required = false;
         let mut key_usage_limited: Option<i64> = None;
         let mut confirmation_token_receiver: Option<Arc<Mutex<Option<Receiver<Vec<u8>>>>>> = None;
@@ -532,9 +531,6 @@ impl Enforcements {
                 }
                 KeyParameterValue::UnlockedDeviceRequired => {
                     unlocked_device_required = true;
-                }
-                KeyParameterValue::AllowWhileOnBody => {
-                    allow_while_on_body = true;
                 }
                 KeyParameterValue::UsageCountLimit(_) => {
                     // We don't examine the limit here because this is enforced on finish.
@@ -607,13 +603,12 @@ impl Enforcements {
             let (hat, state) = if user_secure_ids.is_empty() {
                 (None, DeferredAuthState::NoAuthRequired)
             } else if let Some(key_time_out) = key_time_out {
-                let (hat, last_off_body) =
-                    Self::find_auth_token(|hat: &AuthTokenEntry| match user_auth_type {
-                        Some(auth_type) => hat.satisfies(&user_secure_ids, auth_type),
-                        None => false, // not reachable due to earlier check
-                    })
-                    .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
-                    .context(ks_err!("No suitable auth token found."))?;
+                let hat = Self::find_auth_token(|hat: &AuthTokenEntry| match user_auth_type {
+                    Some(auth_type) => hat.satisfies(&user_secure_ids, auth_type),
+                    None => false, // not reachable due to earlier check
+                })
+                .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                .context(ks_err!("No suitable auth token found."))?;
                 let now = BootTime::now();
                 let token_age = now
                     .checked_sub(&hat.time_received())
@@ -623,9 +618,7 @@ impl Enforcements {
                     Validity cannot be established."
                     ))?;
 
-                let on_body_extended = allow_while_on_body && last_off_body < hat.time_received();
-
-                if token_age.seconds() > key_time_out && !on_body_extended {
+                if token_age.seconds() > key_time_out {
                     return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
                         .context(ks_err!("matching auth token is expired."));
                 }
@@ -660,8 +653,8 @@ impl Enforcements {
 
         let need_auth_token = timeout_bound || unlocked_device_required;
 
-        let hat_and_last_off_body = if need_auth_token {
-            let hat_and_last_off_body = Self::find_auth_token(|hat: &AuthTokenEntry| {
+        let hat = if need_auth_token {
+            let hat = Self::find_auth_token(|hat: &AuthTokenEntry| {
                 if let (Some(auth_type), true) = (user_auth_type, timeout_bound) {
                     hat.satisfies(&user_secure_ids, auth_type)
                 } else {
@@ -669,8 +662,7 @@ impl Enforcements {
                 }
             });
             Some(
-                hat_and_last_off_body
-                    .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
+                hat.ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
                     .context(ks_err!("No suitable auth token found."))?,
             )
         } else {
@@ -678,8 +670,8 @@ impl Enforcements {
         };
 
         // Now check the validity of the auth token if the key is timeout bound.
-        let hat = match (hat_and_last_off_body, key_time_out) {
-            (Some((hat, last_off_body)), Some(key_time_out)) => {
+        let hat = match (hat, key_time_out) {
+            (Some(hat), Some(key_time_out)) => {
                 let now = BootTime::now();
                 let token_age = now
                     .checked_sub(&hat.time_received())
@@ -689,15 +681,13 @@ impl Enforcements {
                     Validity cannot be established."
                     ))?;
 
-                let on_body_extended = allow_while_on_body && last_off_body < hat.time_received();
-
-                if token_age.seconds() > key_time_out && !on_body_extended {
+                if token_age.seconds() > key_time_out {
                     return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
                         .context(ks_err!("matching auth token is expired."));
                 }
                 Some(hat)
             }
-            (Some((hat, _)), None) => Some(hat),
+            (Some(hat), None) => Some(hat),
             // If timeout_bound is true, above code must have retrieved a HAT or returned with
             // KEY_USER_NOT_AUTHENTICATED. This arm should not be reachable.
             (None, Some(_)) => panic!("Logical error."),
@@ -728,7 +718,7 @@ impl Enforcements {
         })
     }
 
-    fn find_auth_token<F>(p: F) -> Option<(AuthTokenEntry, BootTime)>
+    fn find_auth_token<F>(p: F) -> Option<AuthTokenEntry>
     where
         F: Fn(&AuthTokenEntry) -> bool,
     {
@@ -848,7 +838,7 @@ impl Enforcements {
             (challenge == hat.challenge()) && hat.satisfies(&sids, auth_type)
         });
 
-        let auth_token = if let Some((auth_token_entry, _)) = result {
+        let auth_token = if let Some(auth_token_entry) = result {
             auth_token_entry.take_auth_token()
         } else {
             // Filter the matching auth tokens by age.
@@ -863,7 +853,7 @@ impl Enforcements {
                     token_valid && auth_token_entry.satisfies(&sids, auth_type)
                 });
 
-                if let Some((auth_token_entry, _)) = result {
+                if let Some(auth_token_entry) = result {
                     auth_token_entry.take_auth_token()
                 } else {
                     return Err(AuthzError::Rc(AuthzResponseCode::NO_AUTH_TOKEN_FOUND))
@@ -895,11 +885,7 @@ impl Enforcements {
         let result =
             Self::find_auth_token(|entry: &AuthTokenEntry| entry.satisfies(&sids, auth_type));
 
-        if let Some((auth_token_entry, _)) = result {
-            Some(auth_token_entry.time_received())
-        } else {
-            None
-        }
+        result.map(|auth_token_entry| auth_token_entry.time_received())
     }
 }
 
