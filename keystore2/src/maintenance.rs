@@ -14,7 +14,7 @@
 
 //! This module implements IKeystoreMaintenance AIDL interface.
 
-use crate::database::{BootTime, KeyEntryLoadBits, KeyType};
+use crate::database::{KeyEntryLoadBits, KeyType};
 use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
@@ -224,14 +224,6 @@ impl Maintenance {
         Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded())
     }
 
-    fn on_device_off_body() -> Result<()> {
-        // Security critical permission check. This statement must return on fail.
-        check_keystore_permission(KeystorePerm::ReportOffBody).context(ks_err!())?;
-
-        DB.with(|db| db.borrow_mut().update_last_off_body(BootTime::now()));
-        Ok(())
-    }
-
     fn migrate_key_namespace(source: &KeyDescriptor, destination: &KeyDescriptor) -> Result<()> {
         let calling_uid = ThreadState::get_calling_uid();
 
@@ -353,12 +345,6 @@ impl IKeystoreMaintenance for Maintenance {
         log::info!("earlyBootEnded()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::earlyBootEnded", 500);
         map_or_log_err(Self::early_boot_ended(), Ok)
-    }
-
-    fn onDeviceOffBody(&self) -> BinderResult<()> {
-        log::info!("onDeviceOffBody()");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::onDeviceOffBody", 500);
-        map_or_log_err(Self::on_device_off_body(), Ok)
     }
 
     fn migrateKeyNamespace(
