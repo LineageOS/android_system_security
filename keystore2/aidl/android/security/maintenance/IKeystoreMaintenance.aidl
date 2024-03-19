@@ -112,16 +112,6 @@ interface IKeystoreMaintenance {
      void earlyBootEnded();
 
     /**
-     * Informs Keystore 2.0 that the an off body event was detected.
-     *
-     * ## Error conditions:
-     * `ResponseCode::PERMISSION_DENIED` - if the caller does not have the `ReportOffBody`
-     *                                     permission.
-     * `ResponseCode::SYSTEM_ERROR` - if an unexpected error occurred.
-     */
-    void onDeviceOffBody();
-
-    /**
      * Migrate a key from one namespace to another. The caller must have use, grant, and delete
      * permissions on the source namespace and rebind permissions on the destination namespace.
      * The source may be specified by Domain::APP, Domain::SELINUX, or Domain::KEY_ID. The target

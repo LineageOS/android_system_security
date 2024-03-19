@@ -2864,26 +2864,11 @@ impl KeystoreDB {
     }
 
     /// Find the newest auth token matching the given predicate.
-    pub fn find_auth_token_entry<F>(&self, p: F) -> Option<(AuthTokenEntry, BootTime)>
+    pub fn find_auth_token_entry<F>(&self, p: F) -> Option<AuthTokenEntry>
     where
         F: Fn(&AuthTokenEntry) -> bool,
     {
-        self.perboot.find_auth_token_entry(p).map(|entry| (entry, self.get_last_off_body()))
-    }
-
-    /// Insert last_off_body into the metadata table at the initialization of auth token table
-    pub fn insert_last_off_body(&self, last_off_body: BootTime) {
-        self.perboot.set_last_off_body(last_off_body)
-    }
-
-    /// Update last_off_body when on_device_off_body is called
-    pub fn update_last_off_body(&self, last_off_body: BootTime) {
-        self.perboot.set_last_off_body(last_off_body)
-    }
-
-    /// Get last_off_body time when finding auth tokens
-    fn get_last_off_body(&self) -> BootTime {
-        self.perboot.get_last_off_body()
+        self.perboot.find_auth_token_entry(p)
     }
 
     /// Load descriptor of a key by key id
@@ -5051,23 +5036,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_last_off_body() -> Result<()> {
-        let mut db = new_test_db()?;
-        db.insert_last_off_body(BootTime::now());
-        let tx = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.commit()?;
-        let last_off_body_1 = db.get_last_off_body();
-        let one_second = Duration::from_secs(1);
-        thread::sleep(one_second);
-        db.update_last_off_body(BootTime::now());
-        let tx2 = db.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx2.commit()?;
-        let last_off_body_2 = db.get_last_off_body();
-        assert!(last_off_body_1 < last_off_body_2);
-        Ok(())
-    }
-
-    #[test]
     fn test_unbind_keys_for_user() -> Result<()> {
         let mut db = new_test_db()?;
         db.unbind_keys_for_user(1, false)?;
@@ -5491,7 +5459,7 @@ pub mod tests {
         // All three entries are in the database
         assert_eq!(db.perboot.auth_tokens_len(), 3);
         // It selected the most recent timestamp
-        assert_eq!(db.find_auth_token_entry(|_| true).unwrap().0.auth_token.mac, b"mac2".to_vec());
+        assert_eq!(db.find_auth_token_entry(|_| true).unwrap().auth_token.mac, b"mac2".to_vec());
         Ok(())
     }
 
