@@ -137,10 +137,7 @@ implement_class!(
         /// Checked when earlyBootEnded() is called.
         #[selinux(name = early_boot_ended)]
         EarlyBootEnded,
-        /// Checked when IKeystoreMaintenance::onDeviceOffBody is called.
-        #[selinux(name = report_off_body)]
-        ReportOffBody,
-        /// Checked when IkeystoreMetrics::pullMetrics is called.
+        /// Checked when IKeystoreMetrics::pullMetrics is called.
         #[selinux(name = pull_metrics)]
         PullMetrics,
         /// Checked when IKeystoreMaintenance::deleteAllKeys is called.

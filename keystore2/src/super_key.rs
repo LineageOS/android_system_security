@@ -1011,7 +1011,7 @@ impl SuperKeyManager {
             let mut errs = vec![];
             for sid in &biometric.sids {
                 let sid = *sid;
-                if let Some((auth_token_entry, _)) = db.find_auth_token_entry(|entry| {
+                if let Some(auth_token_entry) = db.find_auth_token_entry(|entry| {
                     entry.auth_token().userId == sid || entry.auth_token().authenticatorId == sid
                 }) {
                     let res: Result<(Arc<SuperKey>, Arc<SuperKey>)> = (|| {
