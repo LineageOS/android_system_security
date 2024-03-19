@@ -16,6 +16,7 @@
 //! database connections and connections to services that Keystore needs
 //! to talk to.
 
+use crate::async_task::AsyncTask;
 use crate::gc::Gc;
 use crate::km_compat::{BacklevelKeyMintWrapper, KeyMintV1};
 use crate::ks_err;
@@ -23,7 +24,6 @@ use crate::legacy_blob::LegacyBlobLoader;
 use crate::legacy_importer::LegacyImporter;
 use crate::super_key::SuperKeyManager;
 use crate::utils::watchdog as wd;
-use crate::{async_task::AsyncTask, database::BootTime};
 use crate::{
     database::KeystoreDB,
     database::Uuid,
@@ -68,7 +68,6 @@ pub fn create_thread_local_db() -> KeystoreDB {
 
     DB_INIT.call_once(|| {
         log::info!("Touching Keystore 2.0 database for this first time since boot.");
-        db.insert_last_off_body(BootTime::now());
         log::info!("Calling cleanup leftovers.");
         let n = db.cleanup_leftovers().expect("Failed to cleanup database on startup.");
         if n != 0 {
