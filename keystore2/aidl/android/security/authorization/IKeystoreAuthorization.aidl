@@ -18,8 +18,6 @@ import android.hardware.security.keymint.HardwareAuthToken;
 import android.hardware.security.keymint.HardwareAuthenticatorType;
 import android.security.authorization.AuthorizationTokens;
 
-// TODO: mark the interface with @SensitiveData when the annotation is ready (b/176110256).
-
 /**
  * IKeystoreAuthorization interface exposes the methods for other system components to
  * provide keystore with the information required to enforce authorizations on key usage.
