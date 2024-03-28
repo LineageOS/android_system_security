@@ -845,6 +845,7 @@ impl AuthTokenEntry {
 /// Shared in-memory databases get destroyed as soon as the last connection to them gets closed.
 /// This object does not allow access to the database connection. But it keeps a database
 /// connection alive in order to keep the in memory per boot database alive.
+#[allow(dead_code)]
 pub struct PerBootDbKeepAlive(Connection);
 
 impl KeystoreDB {
