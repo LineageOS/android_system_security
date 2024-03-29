@@ -59,7 +59,7 @@ cc_defaults {
         "android.hardware.identity-support-lib",
         "android.hardware.security.rkp-V3-cpp",
         "android.security.rkp_aidl-cpp",
-        "libcppbor_external",
+        "libcppbor",
         "libcredstore_aidl",
         "libkeymaster4support",
         "librkp_support",
