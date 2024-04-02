@@ -35,7 +35,7 @@ def _digest(fsverity_path, input_file):
   return bytes(bytearray.fromhex(out))
 
 if __name__ == '__main__':
-  p = argparse.ArgumentParser()
+  p = argparse.ArgumentParser(fromfile_prefix_chars='@')
   p.add_argument(
       '--output',
       help='Path to the output manifest',
@@ -52,7 +52,7 @@ if __name__ == '__main__':
       'inputs',
       nargs='*',
       help='input file for the build manifest')
-  args = p.parse_args(sys.argv[1:])
+  args = p.parse_args()
 
   digests = FSVerityDigests()
   for f in sorted(args.inputs):
