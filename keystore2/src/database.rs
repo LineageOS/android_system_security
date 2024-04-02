@@ -5019,7 +5019,7 @@ pub mod tests {
     // This allows us to test repeated elements.
 
     thread_local! {
-        static RANDOM_COUNTER: RefCell<i64> = RefCell::new(0);
+        static RANDOM_COUNTER: RefCell<i64> = const { RefCell::new(0) };
     }
 
     fn reset_random() {
