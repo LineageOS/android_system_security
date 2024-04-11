@@ -20,6 +20,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::ptr::write_volatile;
+use std::ptr::NonNull;
 
 /// A semi fixed size u8 vector that is zeroed when dropped.  It can shrink in
 /// size but cannot grow larger than the original size (and if it shrinks it
@@ -46,7 +47,7 @@ impl ZVec {
         let b = v.into_boxed_slice();
         if size > 0 {
             // SAFETY: The address range is part of our address space.
-            unsafe { mlock(b.as_ptr() as *const std::ffi::c_void, b.len()) }?;
+            unsafe { mlock(NonNull::from(&b).cast(), b.len()) }?;
         }
         Ok(Self { elems: b, len: size })
     }
@@ -79,9 +80,7 @@ impl Drop for ZVec {
             if let Err(e) =
                 // SAFETY: The address range is part of our address space, and was previously locked
                 // by `mlock` in `ZVec::new` or the `TryFrom<Vec<u8>>` implementation.
-                unsafe {
-                    munlock(self.elems.as_ptr() as *const std::ffi::c_void, self.elems.len())
-                }
+                unsafe { munlock(NonNull::from(&self.elems).cast(), self.elems.len()) }
             {
                 log::error!("In ZVec::drop: `munlock` failed: {:?}.", e);
             }
@@ -137,7 +136,7 @@ impl TryFrom<Vec<u8>> for ZVec {
         let b = v.into_boxed_slice();
         if !b.is_empty() {
             // SAFETY: The address range is part of our address space.
-            unsafe { mlock(b.as_ptr() as *const std::ffi::c_void, b.len()) }?;
+            unsafe { mlock(NonNull::from(&b).cast(), b.len()) }?;
         }
         Ok(Self { elems: b, len })
     }
