@@ -29,13 +29,14 @@
 use keystore2_selinux as selinux;
 use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{
-    close, fork, pipe as nix_pipe, read as nix_read, setgid, setuid, write as nix_write,
-    ForkResult, Gid, Pid, Uid,
+    fork, pipe as nix_pipe, read as nix_read, setgid, setuid, write as nix_write, ForkResult, Gid,
+    Pid, Uid,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::os::unix::io::RawFd;
+use std::os::fd::AsRawFd;
+use std::os::fd::OwnedFd;
 
 fn transition(se_context: selinux::Context, uid: Uid, gid: Gid) {
     setgid(gid).expect("Failed to set GID. This test might need more privileges.");
@@ -48,35 +49,23 @@ fn transition(se_context: selinux::Context, uid: Uid, gid: Gid) {
 /// PipeReader is a simple wrapper around raw pipe file descriptors.
 /// It takes ownership of the file descriptor and closes it on drop. It provides `read_all`, which
 /// reads from the pipe into an expending vector, until no more data can be read.
-struct PipeReader(RawFd);
+struct PipeReader(OwnedFd);
 
 impl Read for PipeReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let bytes = nix_read(self.0, buf)?;
+        let bytes = nix_read(self.0.as_raw_fd(), buf)?;
         Ok(bytes)
-    }
-}
-
-impl Drop for PipeReader {
-    fn drop(&mut self) {
-        close(self.0).expect("Failed to close reader pipe fd.");
     }
 }
 
 /// PipeWriter is a simple wrapper around raw pipe file descriptors.
 /// It takes ownership of the file descriptor and closes it on drop. It provides `write`, which
 /// writes the given buffer into the pipe, returning the number of bytes written.
-struct PipeWriter(RawFd);
-
-impl Drop for PipeWriter {
-    fn drop(&mut self) {
-        close(self.0).expect("Failed to close writer pipe fd.");
-    }
-}
+struct PipeWriter(OwnedFd);
 
 impl Write for PipeWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let written = nix_write(self.0, buf)?;
+        let written = nix_write(&self.0, buf)?;
         Ok(written)
     }
 
