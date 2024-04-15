@@ -95,6 +95,24 @@ use std::{
 #[cfg(test)]
 use tests::random;
 
+/// If the database returns a busy error code, retry after this interval.
+const DB_BUSY_RETRY_INTERVAL: Duration = Duration::from_micros(500);
+/// If the database returns a busy error code, keep retrying for this long.
+const MAX_DB_BUSY_RETRY_PERIOD: Duration = Duration::from_secs(15);
+
+/// Check whether a database lock has timed out.
+fn check_lock_timeout(start: &std::time::Instant, timeout: Duration) -> Result<()> {
+    if keystore2_flags::database_loop_timeout() {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            error!("Abandon locked DB after {elapsed:?}");
+            return Err(&KsError::Rc(ResponseCode::BACKEND_BUSY))
+                .context(ks_err!("Abandon locked DB after {elapsed:?}",));
+        }
+    }
+    Ok(())
+}
+
 impl_metadata!(
     /// A set of metadata for key entries.
     #[derive(Debug, Default, Eq, PartialEq)]
@@ -1030,7 +1048,7 @@ impl KeystoreDB {
                 .context("Failed to attach database persistent.")
             {
                 if Self::is_locked_error(&e) {
-                    std::thread::sleep(std::time::Duration::from_micros(500));
+                    std::thread::sleep(DB_BUSY_RETRY_INTERVAL);
                     continue;
                 } else {
                     return Err(e);
@@ -1461,6 +1479,18 @@ impl KeystoreDB {
     where
         F: Fn(&Transaction) -> Result<(bool, T)>,
     {
+        self.with_transaction_timeout(behavior, MAX_DB_BUSY_RETRY_PERIOD, f)
+    }
+    fn with_transaction_timeout<T, F>(
+        &mut self,
+        behavior: TransactionBehavior,
+        timeout: Duration,
+        f: F,
+    ) -> Result<T>
+    where
+        F: Fn(&Transaction) -> Result<(bool, T)>,
+    {
+        let start = std::time::Instant::now();
         loop {
             let result = self
                 .conn
@@ -1475,7 +1505,8 @@ impl KeystoreDB {
                 Ok(result) => break Ok(result),
                 Err(e) => {
                     if Self::is_locked_error(&e) {
-                        std::thread::sleep(std::time::Duration::from_micros(500));
+                        check_lock_timeout(&start, timeout)?;
+                        std::thread::sleep(DB_BUSY_RETRY_INTERVAL);
                         continue;
                     } else {
                         return Err(e).context(ks_err!());
@@ -2224,6 +2255,7 @@ impl KeystoreDB {
         check_permission: impl Fn(&KeyDescriptor, Option<KeyPermSet>) -> Result<()>,
     ) -> Result<(KeyIdGuard, KeyEntry)> {
         let _wp = wd::watch_millis("KeystoreDB::load_key_entry", 500);
+        let start = std::time::Instant::now();
 
         loop {
             match self.load_key_entry_internal(
@@ -2236,7 +2268,8 @@ impl KeystoreDB {
                 Ok(result) => break Ok(result),
                 Err(e) => {
                     if Self::is_locked_error(&e) {
-                        std::thread::sleep(std::time::Duration::from_micros(500));
+                        check_lock_timeout(&start, MAX_DB_BUSY_RETRY_PERIOD)?;
+                        std::thread::sleep(DB_BUSY_RETRY_INTERVAL);
                         continue;
                     } else {
                         return Err(e).context(ks_err!());
@@ -5578,6 +5611,87 @@ pub mod tests {
 
         let third_sid_apps = db.get_app_uids_affected_by_sid(uid, third_sid)?;
         assert_eq!(third_sid_apps, vec![second_app_id]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_key_id_guard_immediate() -> Result<()> {
+        if !keystore2_flags::database_loop_timeout() {
+            eprintln!("Skipping test as loop timeout flag disabled");
+            return Ok(());
+        }
+        // Emit logging from test.
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_tag("keystore_database_tests")
+                .with_max_level(log::LevelFilter::Debug),
+        );
+
+        // Preparation: put a single entry into a test DB.
+        let temp_dir = Arc::new(TempDir::new("key_id_guard_immediate")?);
+        let temp_dir_clone_a = temp_dir.clone();
+        let temp_dir_clone_b = temp_dir.clone();
+        let mut db = KeystoreDB::new(temp_dir.path(), None)?;
+        let key_id = make_test_key_entry(&mut db, Domain::APP, 1, TEST_ALIAS, None)?.0;
+
+        let (a_sender, b_receiver) = std::sync::mpsc::channel();
+        let (b_sender, a_receiver) = std::sync::mpsc::channel();
+
+        // First thread starts an immediate transaction, then waits on a synchronization channel
+        // before trying to get the `KeyIdGuard`.
+        let handle_a = thread::spawn(move || {
+            let temp_dir = temp_dir_clone_a;
+            let mut db = KeystoreDB::new(temp_dir.path(), None).unwrap();
+
+            // Make sure the other thread has initialized its database access before we lock it out.
+            a_receiver.recv().unwrap();
+
+            let _result = db.with_transaction_timeout(
+                TransactionBehavior::Immediate,
+                Duration::from_secs(3),
+                |_tx| {
+                    // Notify the other thread that we're inside the immediate transaction...
+                    a_sender.send(()).unwrap();
+                    // ...then wait to be sure that the other thread has the `KeyIdGuard` before
+                    // this thread also tries to get it.
+                    a_receiver.recv().unwrap();
+
+                    let _guard = KEY_ID_LOCK.get(key_id);
+                    Ok(()).no_gc()
+                },
+            );
+        });
+
+        // Second thread gets the `KeyIdGuard`, then waits before trying to perform an immediate
+        // transaction.
+        let handle_b = thread::spawn(move || {
+            let temp_dir = temp_dir_clone_b;
+            let mut db = KeystoreDB::new(temp_dir.path(), None).unwrap();
+            // Notify the other thread that we are initialized (so it can lock the immediate
+            // transaction).
+            b_sender.send(()).unwrap();
+
+            let _guard = KEY_ID_LOCK.get(key_id);
+            // Notify the other thread that we have the `KeyIdGuard`...
+            b_sender.send(()).unwrap();
+            // ...then wait to be sure that the other thread is in the immediate transaction before
+            // this thread also tries to do one.
+            b_receiver.recv().unwrap();
+
+            let result = db.with_transaction_timeout(
+                TransactionBehavior::Immediate,
+                Duration::from_secs(3),
+                |_tx| Ok(()).no_gc(),
+            );
+            // Expect the attempt to get an immediate transaction to fail, and then this thread will
+            // exit and release the `KeyIdGuard`, allowing the other thread to complete.
+            assert!(result.is_err());
+            check_result_is_error_containing_string(result, "BACKEND_BUSY");
+        });
+
+        let _ = handle_a.join();
+        let _ = handle_b.join();
+
         Ok(())
     }
 }
