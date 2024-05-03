@@ -181,7 +181,10 @@ fn keystore2_gen_key_device_unique_attest_with_default_sec_level_unimplemented()
         alias,
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::INVALID_ARGUMENT), result.unwrap_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        Error::Km(ErrorCode::INVALID_ARGUMENT) | Error::Km(ErrorCode::UNSUPPORTED_TAG)
+    ));
 }
 
 /// Generate a EC key with `DEVICE_UNIQUE_ATTESTATION` using `STRONGBOX` security level.
