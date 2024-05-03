@@ -30,8 +30,8 @@ use keystore2_test_utils::{
 };
 
 use crate::keystore2_client_test_utils::{
-    delete_app_key, execute_op_run_as_child, perform_sample_sign_operation, BarrierReached,
-    ForcedOp, TestOutcome,
+    delete_app_key, execute_op_run_as_child, get_vsr_api_level, perform_sample_sign_operation,
+    BarrierReached, ForcedOp, TestOutcome,
 };
 
 macro_rules! test_ec_sign_key_op_success {
@@ -374,13 +374,18 @@ fn keystore2_ec_25519_generate_key_fail() {
         )
         .unwrap();
 
-        let result = key_generations::map_ks_error(sec_level.createOperation(
-            &key_metadata.key,
-            &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(digest),
-            false,
-        ));
-        assert!(result.is_err());
-        assert_eq!(Error::Km(ErrorCode::UNSUPPORTED_DIGEST), result.unwrap_err());
+        // The KeyMint v2 API added `CURVE_25519` and specified that "Ed25519 keys only support
+        // Digest::NONE".  However, this was not checked at the time so we can only be strict about
+        // checking this for more recent implementations.
+        if get_vsr_api_level() >= 35 {
+            let result = key_generations::map_ks_error(sec_level.createOperation(
+                &key_metadata.key,
+                &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(digest),
+                false,
+            ));
+            assert!(result.is_err(), "unexpected success for digest {digest:?}");
+            assert_eq!(Error::Km(ErrorCode::UNSUPPORTED_DIGEST), result.unwrap_err());
+        }
     }
 }
 
