@@ -37,9 +37,9 @@ use keystore2_test_utils::ffi_test_utils::{
 };
 
 use crate::keystore2_client_test_utils::{
-    encrypt_secure_key, encrypt_transport_key, perform_sample_asym_sign_verify_op,
-    perform_sample_hmac_sign_verify_op, perform_sample_sym_key_decrypt_op,
-    perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
+    encrypt_secure_key, encrypt_transport_key, get_vsr_api_level,
+    perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
+    perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op, SAMPLE_PLAIN_TEXT,
 };
 
 pub fn import_rsa_sign_key_and_perform_sample_operation(
@@ -306,6 +306,13 @@ fn keystore2_import_ec_key_success() {
 
     let alias = format!("ks_ec_key_test_import_1_{}{}", getuid(), 256);
 
+    if get_vsr_api_level() < 35 {
+        // The KeyMint spec was previously not clear as to whether EC_CURVE was optional on import
+        // of EC keys. However, this was not checked at the time so we can only be strict about
+        // checking this for implementations at VSR-V or later.
+        println!("Skipping EC_CURVE on import only strict >= VSR-V");
+        return;
+    }
     // Don't specify ec-curve.
     let import_params = authorizations::AuthSetBuilder::new()
         .no_auth_required()

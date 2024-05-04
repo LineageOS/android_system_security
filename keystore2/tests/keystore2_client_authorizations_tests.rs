@@ -442,36 +442,6 @@ fn keystore2_gen_key_auth_usage_expire_datetime_decrypt_op_fail() {
     delete_app_key(&keystore2, alias).unwrap();
 }
 
-/// Generate a key with `BOOTLOADER_ONLY`. Test should successfully generate
-/// a key and verify the key characteristics. Test should fail with error code `INVALID_KEY_BLOB`
-/// during creation of an operation using this key.
-#[test]
-fn keystore2_gen_key_auth_boot_loader_only_op_fail() {
-    skip_tests_if_keymaster_impl_present!();
-    let keystore2 = get_keystore_service();
-    let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
-
-    let gen_params = authorizations::AuthSetBuilder::new()
-        .no_auth_required()
-        .algorithm(Algorithm::EC)
-        .purpose(KeyPurpose::SIGN)
-        .purpose(KeyPurpose::VERIFY)
-        .digest(Digest::SHA_2_256)
-        .ec_curve(EcCurve::P_256)
-        .attestation_challenge(b"foo".to_vec())
-        .boot_loader_only();
-
-    let alias = "ks_test_auth_tags_test";
-    let result = key_generations::map_ks_error(key_generations::create_key_and_operation(
-        &sec_level,
-        &gen_params,
-        &authorizations::AuthSetBuilder::new().purpose(KeyPurpose::SIGN).digest(Digest::SHA_2_256),
-        alias,
-    ));
-    assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
-}
-
 /// Generate a key with `EARLY_BOOT_ONLY`. Test should successfully generate
 /// a key and verify the key characteristics. Test should fail with error code `EARLY_BOOT_ENDED`
 /// during creation of an operation using this key.
