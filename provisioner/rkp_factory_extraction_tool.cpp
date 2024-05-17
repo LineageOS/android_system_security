@@ -24,6 +24,7 @@
 #include <remote_prov/remote_prov_utils.h>
 #include <sys/random.h>
 
+#include <future>
 #include <string>
 #include <vector>
 
@@ -91,7 +92,13 @@ void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisione
 // for every IRemotelyProvisionedComponent.
 void getCsrForInstance(const char* name, void* /*context*/) {
     auto fullName = getFullServiceName(IRemotelyProvisionedComponent::descriptor, name);
-    AIBinder* rkpAiBinder = AServiceManager_getService(fullName.c_str());
+    std::future<AIBinder*> wait_for_service_func =
+        std::async(std::launch::async, AServiceManager_waitForService, fullName.c_str());
+    if (wait_for_service_func.wait_for(std::chrono::seconds(10)) == std::future_status::timeout) {
+        std::cerr << "Wait for service timed out after 10 seconds: " << fullName;
+        exit(-1);
+    }
+    AIBinder* rkpAiBinder = wait_for_service_func.get();
     ::ndk::SpAIBinder rkp_binder(rkpAiBinder);
     auto rkp_service = IRemotelyProvisionedComponent::fromBinder(rkp_binder);
     if (!rkp_service) {
