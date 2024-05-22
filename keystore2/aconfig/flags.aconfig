@@ -24,3 +24,11 @@ flag {
   bug: "283077822"
   is_fixed_read_only: true
 }
+
+flag {
+  name: "database_loop_timeout"
+  namespace: "hardware_backed_security"
+  description: "Abandon Keystore database retry loop after an interval"
+  bug: "319563050"
+  is_fixed_read_only: true
+}
