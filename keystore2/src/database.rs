@@ -857,7 +857,7 @@ impl KeystoreDB {
     /// KeystoreDB cannot be used by multiple threads.
     /// Each thread should open their own connection using `thread_local!`.
     pub fn new(db_root: &Path, gc: Option<Arc<Gc>>) -> Result<Self> {
-        let _wp = wd::watch_millis("KeystoreDB::new", 500);
+        let _wp = wd::watch("KeystoreDB::new");
 
         let persistent_path = Self::make_persistent_path(db_root)?;
         let conn = Self::make_connection(&persistent_path)?;
@@ -1092,7 +1092,7 @@ impl KeystoreDB {
     /// types that map to a table, information about the table's storage is
     /// returned. Requests for storage types that are not DB tables return None.
     pub fn get_storage_stat(&mut self, storage_type: MetricsStorage) -> Result<StorageStats> {
-        let _wp = wd::watch_millis("KeystoreDB::get_storage_stat", 500);
+        let _wp = wd::watch("KeystoreDB::get_storage_stat");
 
         match storage_type {
             MetricsStorage::DATABASE => self.get_total_size(),
@@ -1155,7 +1155,7 @@ impl KeystoreDB {
         blob_ids_to_delete: &[i64],
         max_blobs: usize,
     ) -> Result<Vec<(i64, Vec<u8>, BlobMetaData)>> {
-        let _wp = wd::watch_millis("KeystoreDB::handle_next_superseded_blob", 500);
+        let _wp = wd::watch("KeystoreDB::handle_next_superseded_blob");
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             // Delete the given blobs.
             for blob_id in blob_ids_to_delete {
@@ -1243,7 +1243,7 @@ impl KeystoreDB {
     /// Unlike with `mark_unreferenced`, we don't need to purge grants, because only keys that made
     /// it to `KeyLifeCycle::Live` may have grants.
     pub fn cleanup_leftovers(&mut self) -> Result<usize> {
-        let _wp = wd::watch_millis("KeystoreDB::cleanup_leftovers", 500);
+        let _wp = wd::watch("KeystoreDB::cleanup_leftovers");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             tx.execute(
@@ -1264,7 +1264,7 @@ impl KeystoreDB {
         alias: &str,
         key_type: KeyType,
     ) -> Result<bool> {
-        let _wp = wd::watch_millis("KeystoreDB::key_exists", 500);
+        let _wp = wd::watch("KeystoreDB::key_exists");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_descriptor =
@@ -1291,7 +1291,7 @@ impl KeystoreDB {
         blob_metadata: &BlobMetaData,
         key_metadata: &KeyMetaData,
     ) -> Result<KeyEntry> {
-        let _wp = wd::watch_millis("KeystoreDB::store_super_key", 500);
+        let _wp = wd::watch("KeystoreDB::store_super_key");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_id = Self::insert_with_retry(|id| {
@@ -1336,7 +1336,7 @@ impl KeystoreDB {
         key_type: &SuperKeyType,
         user_id: u32,
     ) -> Result<Option<(KeyIdGuard, KeyEntry)>> {
-        let _wp = wd::watch_millis("KeystoreDB::load_super_key", 500);
+        let _wp = wd::watch("KeystoreDB::load_super_key");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let key_descriptor = KeyDescriptor {
@@ -1470,7 +1470,7 @@ impl KeystoreDB {
         blob: Option<&[u8]>,
         blob_metadata: Option<&BlobMetaData>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::set_blob", 500);
+        let _wp = wd::watch("KeystoreDB::set_blob");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             Self::set_blob_internal(tx, key_id.0, sc_type, blob, blob_metadata).need_gc()
@@ -1483,7 +1483,7 @@ impl KeystoreDB {
     /// We use this to insert key blobs into the database which can then be garbage collected
     /// lazily by the key garbage collector.
     pub fn set_deleted_blob(&mut self, blob: &[u8], blob_metadata: &BlobMetaData) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::set_deleted_blob", 500);
+        let _wp = wd::watch("KeystoreDB::set_deleted_blob");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             Self::set_blob_internal(
@@ -1645,7 +1645,7 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::migrate_key_namespace", 500);
+        let _wp = wd::watch("KeystoreDB::migrate_key_namespace");
 
         let destination = match destination.domain {
             Domain::APP => KeyDescriptor { nspace: caller_uid as i64, ..(*destination).clone() },
@@ -1716,7 +1716,7 @@ impl KeystoreDB {
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
     ) -> Result<KeyIdGuard> {
-        let _wp = wd::watch_millis("KeystoreDB::store_new_key", 500);
+        let _wp = wd::watch("KeystoreDB::store_new_key");
 
         let (alias, domain, namespace) = match key {
             KeyDescriptor { alias: Some(alias), domain: Domain::APP, nspace, blob: None }
@@ -1795,7 +1795,7 @@ impl KeystoreDB {
         cert: &[u8],
         km_uuid: &Uuid,
     ) -> Result<KeyIdGuard> {
-        let _wp = wd::watch_millis("KeystoreDB::store_new_certificate", 500);
+        let _wp = wd::watch("KeystoreDB::store_new_certificate");
 
         let (alias, domain, namespace) = match key {
             KeyDescriptor { alias: Some(alias), domain: Domain::APP, nspace, blob: None }
@@ -2075,7 +2075,7 @@ impl KeystoreDB {
     /// zero, the key also gets marked unreferenced and scheduled for deletion.
     /// Returns Ok(true) if the key was marked unreferenced as a hint to the garbage collector.
     pub fn check_and_update_key_usage_count(&mut self, key_id: i64) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::check_and_update_key_usage_count", 500);
+        let _wp = wd::watch("KeystoreDB::check_and_update_key_usage_count");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let limit: Option<i32> = tx
@@ -2123,7 +2123,7 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor, Option<KeyPermSet>) -> Result<()>,
     ) -> Result<(KeyIdGuard, KeyEntry)> {
-        let _wp = wd::watch_millis("KeystoreDB::load_key_entry", 500);
+        let _wp = wd::watch("KeystoreDB::load_key_entry");
         let start = std::time::Instant::now();
 
         loop {
@@ -2253,7 +2253,7 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor, Option<KeyPermSet>) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_key", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_key");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let (key_id, access_key_descriptor, access_vector) =
@@ -2284,7 +2284,7 @@ impl KeystoreDB {
     /// Delete all artifacts belonging to the namespace given by the domain-namespace tuple.
     /// This leaves all of the blob entries orphaned for subsequent garbage collection.
     pub fn unbind_keys_for_namespace(&mut self, domain: Domain, namespace: i64) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_keys_for_namespace", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_keys_for_namespace");
 
         if !(domain == Domain::APP || domain == Domain::SELINUX) {
             return Err(KsError::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!());
@@ -2329,7 +2329,7 @@ impl KeystoreDB {
     }
 
     fn cleanup_unreferenced(tx: &Transaction) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::cleanup_unreferenced", 500);
+        let _wp = wd::watch("KeystoreDB::cleanup_unreferenced");
         {
             tx.execute(
                 "DELETE FROM persistent.keymetadata
@@ -2378,7 +2378,7 @@ impl KeystoreDB {
         user_id: u32,
         keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_keys_for_user", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_keys_for_user");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let mut stmt = tx
@@ -2455,7 +2455,7 @@ impl KeystoreDB {
     /// be unlocked should remain usable when the lock screen is set to Swipe or None, as the device
     /// is always considered "unlocked" in that case.
     pub fn unbind_auth_bound_keys_for_user(&mut self, user_id: u32) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_auth_bound_keys_for_user", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_auth_bound_keys_for_user");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let mut stmt = tx
@@ -2550,7 +2550,7 @@ impl KeystoreDB {
         key_type: KeyType,
         start_past_alias: Option<&str>,
     ) -> Result<Vec<KeyDescriptor>> {
-        let _wp = wd::watch_millis("KeystoreDB::list_past_alias", 500);
+        let _wp = wd::watch("KeystoreDB::list_past_alias");
 
         let query = format!(
             "SELECT DISTINCT alias FROM persistent.keyentry
@@ -2605,7 +2605,7 @@ impl KeystoreDB {
         namespace: i64,
         key_type: KeyType,
     ) -> Result<usize> {
-        let _wp = wd::watch_millis("KeystoreDB::countKeys", 500);
+        let _wp = wd::watch("KeystoreDB::countKeys");
 
         let num_keys = self.with_transaction(TransactionBehavior::Deferred, |tx| {
             tx.query_row(
@@ -2638,7 +2638,7 @@ impl KeystoreDB {
         access_vector: KeyPermSet,
         check_permission: impl Fn(&KeyDescriptor, &KeyPermSet) -> Result<()>,
     ) -> Result<KeyDescriptor> {
-        let _wp = wd::watch_millis("KeystoreDB::grant", 500);
+        let _wp = wd::watch("KeystoreDB::grant");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             // Load the key_id and complete the access control tuple.
@@ -2704,7 +2704,7 @@ impl KeystoreDB {
         grantee_uid: u32,
         check_permission: impl Fn(&KeyDescriptor) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::ungrant", 500);
+        let _wp = wd::watch("KeystoreDB::ungrant");
 
         self.with_transaction(TransactionBehavior::Immediate, |tx| {
             // Load the key_id and complete the access control tuple.
@@ -2770,7 +2770,7 @@ impl KeystoreDB {
 
     /// Load descriptor of a key by key id
     pub fn load_key_descriptor(&mut self, key_id: i64) -> Result<Option<KeyDescriptor>> {
-        let _wp = wd::watch_millis("KeystoreDB::load_key_descriptor", 500);
+        let _wp = wd::watch("KeystoreDB::load_key_descriptor");
 
         self.with_transaction(TransactionBehavior::Deferred, |tx| {
             tx.query_row(
@@ -2801,7 +2801,7 @@ impl KeystoreDB {
         user_id: i32,
         secure_user_id: i64,
     ) -> Result<Vec<i64>> {
-        let _wp = wd::watch_millis("KeystoreDB::get_app_uids_affected_by_sid", 500);
+        let _wp = wd::watch("KeystoreDB::get_app_uids_affected_by_sid");
 
         let key_ids_and_app_uids = self.with_transaction(TransactionBehavior::Immediate, |tx| {
             let mut stmt = tx

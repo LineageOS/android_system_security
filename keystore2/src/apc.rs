@@ -363,11 +363,11 @@ impl IProtectedConfirmation for ApcManager {
         &self,
         listener: &binder::Strong<dyn IConfirmationCallback>,
     ) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IProtectedConfirmation::cancelPrompt", 500);
+        let _wp = wd::watch("IProtectedConfirmation::cancelPrompt");
         map_or_log_err(self.cancel_prompt(listener), Ok)
     }
     fn isSupported(&self) -> BinderResult<bool> {
-        let _wp = wd::watch_millis("IProtectedConfirmation::isSupported", 500);
+        let _wp = wd::watch("IProtectedConfirmation::isSupported");
         map_or_log_err(Self::is_supported(), Ok)
     }
 }

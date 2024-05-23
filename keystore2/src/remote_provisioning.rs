@@ -129,6 +129,6 @@ fn get_rkpd_attestation_key(
     // by the calling function and allow for natural fallback to the factory key.
     let rpc_name = get_remotely_provisioned_component_name(security_level)
         .context(ks_err!("Trying to get IRPC name."))?;
-    let _wd = wd::watch_millis("Calling get_rkpd_attestation_key()", 500);
+    let _wd = wd::watch("Calling get_rkpd_attestation_key()");
     rkpd_client::get_rkpd_attestation_key(&rpc_name, caller_uid)
 }

@@ -271,12 +271,12 @@ impl Interface for AuthorizationManager {}
 
 impl IKeystoreAuthorization for AuthorizationManager {
     fn addAuthToken(&self, auth_token: &HardwareAuthToken) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::addAuthToken", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::addAuthToken");
         map_or_log_err(self.add_auth_token(auth_token), Ok)
     }
 
     fn onDeviceUnlocked(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceUnlocked", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::onDeviceUnlocked");
         map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())), Ok)
     }
 
@@ -286,17 +286,17 @@ impl IKeystoreAuthorization for AuthorizationManager {
         unlocking_sids: &[i64],
         weak_unlock_enabled: bool,
     ) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::onDeviceLocked", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::onDeviceLocked");
         map_or_log_err(self.on_device_locked(user_id, unlocking_sids, weak_unlock_enabled), Ok)
     }
 
     fn onWeakUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::onWeakUnlockMethodsExpired", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::onWeakUnlockMethodsExpired");
         map_or_log_err(self.on_weak_unlock_methods_expired(user_id), Ok)
     }
 
     fn onNonLskfUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::onNonLskfUnlockMethodsExpired", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::onNonLskfUnlockMethodsExpired");
         map_or_log_err(self.on_non_lskf_unlock_methods_expired(user_id), Ok)
     }
 
@@ -306,7 +306,7 @@ impl IKeystoreAuthorization for AuthorizationManager {
         secure_user_id: i64,
         auth_token_max_age_millis: i64,
     ) -> binder::Result<AuthorizationTokens> {
-        let _wp = wd::watch_millis("IKeystoreAuthorization::getAuthTokensForCredStore", 500);
+        let _wp = wd::watch("IKeystoreAuthorization::getAuthTokensForCredStore");
         map_or_log_err(
             self.get_auth_tokens_for_credstore(
                 challenge,
