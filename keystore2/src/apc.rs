@@ -62,16 +62,6 @@ impl Error {
         Error::Rc(ResponseCode::OPERATION_PENDING)
     }
 
-    /// Short hand for `Error::Rc(ResponseCode::CANCELLED)`
-    pub fn cancelled() -> Self {
-        Error::Rc(ResponseCode::CANCELLED)
-    }
-
-    /// Short hand for `Error::Rc(ResponseCode::ABORTED)`
-    pub fn aborted() -> Self {
-        Error::Rc(ResponseCode::ABORTED)
-    }
-
     /// Short hand for `Error::Rc(ResponseCode::IGNORED)`
     pub fn ignored() -> Self {
         Error::Rc(ResponseCode::IGNORED)
