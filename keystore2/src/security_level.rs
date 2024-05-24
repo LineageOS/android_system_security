@@ -99,7 +99,7 @@ impl KeystoreSecurityLevel {
                 hw_info,
                 km_uuid,
                 operation_db: OperationDb::new(),
-                rem_prov_state: RemProvState::new(security_level, km_uuid),
+                rem_prov_state: RemProvState::new(security_level),
                 id_rotation_state,
             },
             BinderFeatures { set_requesting_sid: true, ..BinderFeatures::default() },
