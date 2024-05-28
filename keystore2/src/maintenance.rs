@@ -302,13 +302,13 @@ impl IKeystoreMaintenance for Maintenance {
             user_id,
             password.is_some()
         );
-        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserPasswordChanged", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::onUserPasswordChanged");
         map_or_log_err(Self::on_user_password_changed(user_id, password.map(|pw| pw.into())), Ok)
     }
 
     fn onUserAdded(&self, user_id: i32) -> BinderResult<()> {
         log::info!("onUserAdded(user={user_id})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserAdded", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::onUserAdded");
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
@@ -319,31 +319,31 @@ impl IKeystoreMaintenance for Maintenance {
         allow_existing: bool,
     ) -> BinderResult<()> {
         log::info!("initUserSuperKeys(user={user_id}, allow_existing={allow_existing})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::initUserSuperKeys", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::initUserSuperKeys");
         map_or_log_err(self.init_user_super_keys(user_id, password.into(), allow_existing), Ok)
     }
 
     fn onUserRemoved(&self, user_id: i32) -> BinderResult<()> {
         log::info!("onUserRemoved(user={user_id})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserRemoved", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::onUserRemoved");
         map_or_log_err(self.add_or_remove_user(user_id), Ok)
     }
 
     fn onUserLskfRemoved(&self, user_id: i32) -> BinderResult<()> {
         log::info!("onUserLskfRemoved(user={user_id})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::onUserLskfRemoved", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::onUserLskfRemoved");
         map_or_log_err(Self::on_user_lskf_removed(user_id), Ok)
     }
 
     fn clearNamespace(&self, domain: Domain, nspace: i64) -> BinderResult<()> {
         log::info!("clearNamespace({domain:?}, nspace={nspace})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::clearNamespace", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::clearNamespace");
         map_or_log_err(self.clear_namespace(domain, nspace), Ok)
     }
 
     fn earlyBootEnded(&self) -> BinderResult<()> {
         log::info!("earlyBootEnded()");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::earlyBootEnded", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::earlyBootEnded");
         map_or_log_err(Self::early_boot_ended(), Ok)
     }
 
@@ -353,13 +353,13 @@ impl IKeystoreMaintenance for Maintenance {
         destination: &KeyDescriptor,
     ) -> BinderResult<()> {
         log::info!("migrateKeyNamespace(src={source:?}, dest={destination:?})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::migrateKeyNamespace", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::migrateKeyNamespace");
         map_or_log_err(Self::migrate_key_namespace(source, destination), Ok)
     }
 
     fn deleteAllKeys(&self) -> BinderResult<()> {
         log::warn!("deleteAllKeys()");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::deleteAllKeys");
         map_or_log_err(Self::delete_all_keys(), Ok)
     }
 
@@ -369,7 +369,7 @@ impl IKeystoreMaintenance for Maintenance {
         secure_user_id: i64,
     ) -> BinderResult<std::vec::Vec<i64>> {
         log::info!("getAppUidsAffectedBySid(secure_user_id={secure_user_id:?})");
-        let _wp = wd::watch_millis("IKeystoreMaintenance::getAppUidsAffectedBySid", 500);
+        let _wp = wd::watch("IKeystoreMaintenance::getAppUidsAffectedBySid");
         map_or_log_err(Self::get_app_uids_affected_by_sid(user_id, secure_user_id), Ok)
     }
 }

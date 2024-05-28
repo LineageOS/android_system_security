@@ -202,7 +202,7 @@ impl LegacyImporter {
 
     /// List all aliases for uid in the legacy database.
     pub fn list_uid(&self, domain: Domain, namespace: i64) -> Result<Vec<KeyDescriptor>> {
-        let _wp = wd::watch_millis("LegacyImporter::list_uid", 500);
+        let _wp = wd::watch("LegacyImporter::list_uid");
 
         let uid = match (domain, namespace) {
             (Domain::APP, namespace) => namespace as u32,
@@ -299,7 +299,7 @@ impl LegacyImporter {
     where
         F: Fn() -> Result<T>,
     {
-        let _wp = wd::watch_millis("LegacyImporter::with_try_import", 500);
+        let _wp = wd::watch("LegacyImporter::with_try_import");
 
         // Access the key and return on success.
         match key_accessor() {
@@ -355,7 +355,7 @@ impl LegacyImporter {
     where
         F: FnMut() -> Result<Option<T>>,
     {
-        let _wp = wd::watch_millis("LegacyImporter::with_try_import_super_key", 500);
+        let _wp = wd::watch("LegacyImporter::with_try_import_super_key");
 
         match key_accessor() {
             Ok(Some(result)) => return Ok(Some(result)),
@@ -379,7 +379,7 @@ impl LegacyImporter {
     /// Deletes all keys belonging to the given namespace, importing them into the database
     /// for subsequent garbage collection if necessary.
     pub fn bulk_delete_uid(&self, domain: Domain, nspace: i64) -> Result<()> {
-        let _wp = wd::watch_millis("LegacyImporter::bulk_delete_uid", 500);
+        let _wp = wd::watch("LegacyImporter::bulk_delete_uid");
 
         let uid = match (domain, nspace) {
             (Domain::APP, nspace) => nspace as u32,
@@ -402,7 +402,7 @@ impl LegacyImporter {
         user_id: u32,
         keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("LegacyImporter::bulk_delete_user", 500);
+        let _wp = wd::watch("LegacyImporter::bulk_delete_user");
 
         let result = self.do_serialized(move |importer_state| {
             importer_state
@@ -923,7 +923,7 @@ fn get_key_characteristics_without_app_data(
         blob,
         &[],
         |blob| {
-            let _wd = wd::watch_millis("Calling GetKeyCharacteristics.", 500);
+            let _wd = wd::watch("Calling GetKeyCharacteristics.");
             map_km_error(km_dev.getKeyCharacteristics(blob, &[], &[]))
         },
         |_| Ok(()),

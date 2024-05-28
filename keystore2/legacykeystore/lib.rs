@@ -551,19 +551,19 @@ impl binder::Interface for LegacyKeystoreService {}
 
 impl ILegacyKeystore for LegacyKeystoreService {
     fn get(&self, alias: &str, uid: i32) -> BinderResult<Vec<u8>> {
-        let _wp = wd::watch_millis("ILegacyKeystore::get", 500);
+        let _wp = wd::watch("ILegacyKeystore::get");
         map_or_log_err(self.legacy_keystore.get(alias, uid), Ok)
     }
     fn put(&self, alias: &str, uid: i32, entry: &[u8]) -> BinderResult<()> {
-        let _wp = wd::watch_millis("ILegacyKeystore::put", 500);
+        let _wp = wd::watch("ILegacyKeystore::put");
         map_or_log_err(self.legacy_keystore.put(alias, uid, entry), Ok)
     }
     fn remove(&self, alias: &str, uid: i32) -> BinderResult<()> {
-        let _wp = wd::watch_millis("ILegacyKeystore::remove", 500);
+        let _wp = wd::watch("ILegacyKeystore::remove");
         map_or_log_err(self.legacy_keystore.remove(alias, uid), Ok)
     }
     fn list(&self, prefix: &str, uid: i32) -> BinderResult<Vec<String>> {
-        let _wp = wd::watch_millis("ILegacyKeystore::list", 500);
+        let _wp = wd::watch("ILegacyKeystore::list");
         map_or_log_err(self.legacy_keystore.list(prefix, uid), Ok)
     }
 }

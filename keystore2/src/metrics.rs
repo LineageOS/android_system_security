@@ -51,7 +51,7 @@ impl Interface for Metrics {}
 
 impl IKeystoreMetrics for Metrics {
     fn pullMetrics(&self, atom_id: AtomID) -> BinderResult<Vec<KeystoreAtom>> {
-        let _wp = wd::watch_millis("IKeystoreMetrics::pullMetrics", 500);
+        let _wp = wd::watch("IKeystoreMetrics::pullMetrics");
         map_or_log_err(self.pull_metrics(atom_id), Ok)
     }
 }
