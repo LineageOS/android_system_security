@@ -82,7 +82,7 @@ use rusqlite::{
     types::FromSqlResult,
     types::ToSqlOutput,
     types::{FromSqlError, Value, ValueRef},
-    Connection, OptionalExtension, ToSql, Transaction, TransactionBehavior,
+    Connection, OptionalExtension, ToSql, Transaction,
 };
 
 use std::{
@@ -92,8 +92,36 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use TransactionBehavior::Immediate;
+
 #[cfg(test)]
 use tests::random;
+
+/// Wrapper for `rusqlite::TransactionBehavior` which includes information about the transaction
+/// being performed.
+#[derive(Clone, Copy)]
+enum TransactionBehavior {
+    Deferred,
+    Immediate(&'static str),
+}
+
+impl From<TransactionBehavior> for rusqlite::TransactionBehavior {
+    fn from(val: TransactionBehavior) -> Self {
+        match val {
+            TransactionBehavior::Deferred => rusqlite::TransactionBehavior::Deferred,
+            TransactionBehavior::Immediate(_) => rusqlite::TransactionBehavior::Immediate,
+        }
+    }
+}
+
+impl TransactionBehavior {
+    fn name(&self) -> Option<&'static str> {
+        match self {
+            TransactionBehavior::Deferred => None,
+            TransactionBehavior::Immediate(v) => Some(v),
+        }
+    }
+}
 
 /// If the database returns a busy error code, retry after this interval.
 const DB_BUSY_RETRY_INTERVAL: Duration = Duration::from_micros(500);
@@ -857,13 +885,13 @@ impl KeystoreDB {
     /// KeystoreDB cannot be used by multiple threads.
     /// Each thread should open their own connection using `thread_local!`.
     pub fn new(db_root: &Path, gc: Option<Arc<Gc>>) -> Result<Self> {
-        let _wp = wd::watch_millis("KeystoreDB::new", 500);
+        let _wp = wd::watch("KeystoreDB::new");
 
         let persistent_path = Self::make_persistent_path(db_root)?;
         let conn = Self::make_connection(&persistent_path)?;
 
         let mut db = Self { conn, gc, perboot: perboot::PERBOOT_DB.clone() };
-        db.with_transaction(TransactionBehavior::Immediate, |tx| {
+        db.with_transaction(Immediate("TX_new"), |tx| {
             versioning::upgrade_database(tx, Self::CURRENT_DB_VERSION, Self::UPGRADERS)
                 .context(ks_err!("KeystoreDB::new: trying to upgrade database."))?;
             Self::init_tables(tx).context("Trying to initialize tables.").no_gc()
@@ -1092,7 +1120,7 @@ impl KeystoreDB {
     /// types that map to a table, information about the table's storage is
     /// returned. Requests for storage types that are not DB tables return None.
     pub fn get_storage_stat(&mut self, storage_type: MetricsStorage) -> Result<StorageStats> {
-        let _wp = wd::watch_millis("KeystoreDB::get_storage_stat", 500);
+        let _wp = wd::watch("KeystoreDB::get_storage_stat");
 
         match storage_type {
             MetricsStorage::DATABASE => self.get_total_size(),
@@ -1155,8 +1183,8 @@ impl KeystoreDB {
         blob_ids_to_delete: &[i64],
         max_blobs: usize,
     ) -> Result<Vec<(i64, Vec<u8>, BlobMetaData)>> {
-        let _wp = wd::watch_millis("KeystoreDB::handle_next_superseded_blob", 500);
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        let _wp = wd::watch("KeystoreDB::handle_next_superseded_blob");
+        self.with_transaction(Immediate("TX_handle_next_superseded_blob"), |tx| {
             // Delete the given blobs.
             for blob_id in blob_ids_to_delete {
                 tx.execute(
@@ -1243,9 +1271,9 @@ impl KeystoreDB {
     /// Unlike with `mark_unreferenced`, we don't need to purge grants, because only keys that made
     /// it to `KeyLifeCycle::Live` may have grants.
     pub fn cleanup_leftovers(&mut self) -> Result<usize> {
-        let _wp = wd::watch_millis("KeystoreDB::cleanup_leftovers", 500);
+        let _wp = wd::watch("KeystoreDB::cleanup_leftovers");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_cleanup_leftovers"), |tx| {
             tx.execute(
                 "UPDATE persistent.keyentry SET state = ? WHERE state = ?;",
                 params![KeyLifeCycle::Unreferenced, KeyLifeCycle::Existing],
@@ -1264,9 +1292,9 @@ impl KeystoreDB {
         alias: &str,
         key_type: KeyType,
     ) -> Result<bool> {
-        let _wp = wd::watch_millis("KeystoreDB::key_exists", 500);
+        let _wp = wd::watch("KeystoreDB::key_exists");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_key_exists"), |tx| {
             let key_descriptor =
                 KeyDescriptor { domain, nspace, alias: Some(alias.to_string()), blob: None };
             let result = Self::load_key_entry_id(tx, &key_descriptor, key_type);
@@ -1291,9 +1319,9 @@ impl KeystoreDB {
         blob_metadata: &BlobMetaData,
         key_metadata: &KeyMetaData,
     ) -> Result<KeyEntry> {
-        let _wp = wd::watch_millis("KeystoreDB::store_super_key", 500);
+        let _wp = wd::watch("KeystoreDB::store_super_key");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_store_super_key"), |tx| {
             let key_id = Self::insert_with_retry(|id| {
                 tx.execute(
                     "INSERT into persistent.keyentry
@@ -1336,9 +1364,9 @@ impl KeystoreDB {
         key_type: &SuperKeyType,
         user_id: u32,
     ) -> Result<Option<(KeyIdGuard, KeyEntry)>> {
-        let _wp = wd::watch_millis("KeystoreDB::load_super_key", 500);
+        let _wp = wd::watch("KeystoreDB::load_super_key");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_load_super_key"), |tx| {
             let key_descriptor = KeyDescriptor {
                 domain: Domain::APP,
                 nspace: user_id as i64,
@@ -1381,12 +1409,16 @@ impl KeystoreDB {
         F: Fn(&Transaction) -> Result<(bool, T)>,
     {
         let start = std::time::Instant::now();
+        let name = behavior.name();
         loop {
             let result = self
                 .conn
-                .transaction_with_behavior(behavior)
+                .transaction_with_behavior(behavior.into())
                 .context(ks_err!())
-                .and_then(|tx| f(&tx).map(|result| (result, tx)))
+                .and_then(|tx| {
+                    let _wp = name.map(wd::watch);
+                    f(&tx).map(|result| (result, tx))
+                })
                 .and_then(|(result, tx)| {
                     tx.commit().context(ks_err!("Failed to commit transaction."))?;
                     Ok(result)
@@ -1470,9 +1502,9 @@ impl KeystoreDB {
         blob: Option<&[u8]>,
         blob_metadata: Option<&BlobMetaData>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::set_blob", 500);
+        let _wp = wd::watch("KeystoreDB::set_blob");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_set_blob"), |tx| {
             Self::set_blob_internal(tx, key_id.0, sc_type, blob, blob_metadata).need_gc()
         })
         .context(ks_err!())
@@ -1483,9 +1515,9 @@ impl KeystoreDB {
     /// We use this to insert key blobs into the database which can then be garbage collected
     /// lazily by the key garbage collector.
     pub fn set_deleted_blob(&mut self, blob: &[u8], blob_metadata: &BlobMetaData) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::set_deleted_blob", 500);
+        let _wp = wd::watch("KeystoreDB::set_deleted_blob");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_set_deleted_blob"), |tx| {
             Self::set_blob_internal(
                 tx,
                 Self::UNASSIGNED_KEY_ID,
@@ -1544,7 +1576,7 @@ impl KeystoreDB {
     /// and associates them with the given `key_id`.
     #[cfg(test)]
     fn insert_keyparameter(&mut self, key_id: &KeyIdGuard, params: &[KeyParameter]) -> Result<()> {
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_insert_keyparameter"), |tx| {
             Self::insert_keyparameter_internal(tx, key_id, params).no_gc()
         })
         .context(ks_err!())
@@ -1577,7 +1609,7 @@ impl KeystoreDB {
     /// Insert a set of key entry specific metadata into the database.
     #[cfg(test)]
     fn insert_key_metadata(&mut self, key_id: &KeyIdGuard, metadata: &KeyMetaData) -> Result<()> {
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_insert_key_metadata"), |tx| {
             metadata.store_in_db(key_id.0, tx).no_gc()
         })
         .context(ks_err!())
@@ -1645,7 +1677,7 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::migrate_key_namespace", 500);
+        let _wp = wd::watch("KeystoreDB::migrate_key_namespace");
 
         let destination = match destination.domain {
             Domain::APP => KeyDescriptor { nspace: caller_uid as i64, ..(*destination).clone() },
@@ -1665,7 +1697,7 @@ impl KeystoreDB {
             .ok_or(KsError::Rc(ResponseCode::INVALID_ARGUMENT))
             .context(ks_err!("Alias must be specified."))?;
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_migrate_key_namespace"), |tx| {
             // Query the destination location. If there is a key, the migration request fails.
             if tx
                 .query_row(
@@ -1716,7 +1748,7 @@ impl KeystoreDB {
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
     ) -> Result<KeyIdGuard> {
-        let _wp = wd::watch_millis("KeystoreDB::store_new_key", 500);
+        let _wp = wd::watch("KeystoreDB::store_new_key");
 
         let (alias, domain, namespace) = match key {
             KeyDescriptor { alias: Some(alias), domain: Domain::APP, nspace, blob: None }
@@ -1728,7 +1760,7 @@ impl KeystoreDB {
                     .context(ks_err!("Need alias and domain must be APP or SELINUX."));
             }
         };
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_store_new_key"), |tx| {
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
             let BlobInfo { blob, metadata: blob_metadata, superseded_blob } = *blob_info;
@@ -1795,7 +1827,7 @@ impl KeystoreDB {
         cert: &[u8],
         km_uuid: &Uuid,
     ) -> Result<KeyIdGuard> {
-        let _wp = wd::watch_millis("KeystoreDB::store_new_certificate", 500);
+        let _wp = wd::watch("KeystoreDB::store_new_certificate");
 
         let (alias, domain, namespace) = match key {
             KeyDescriptor { alias: Some(alias), domain: Domain::APP, nspace, blob: None }
@@ -1807,7 +1839,7 @@ impl KeystoreDB {
                     .context(ks_err!("Need alias and domain must be APP or SELINUX."));
             }
         };
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_store_new_certificate"), |tx| {
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
 
@@ -2075,9 +2107,9 @@ impl KeystoreDB {
     /// zero, the key also gets marked unreferenced and scheduled for deletion.
     /// Returns Ok(true) if the key was marked unreferenced as a hint to the garbage collector.
     pub fn check_and_update_key_usage_count(&mut self, key_id: i64) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::check_and_update_key_usage_count", 500);
+        let _wp = wd::watch("KeystoreDB::check_and_update_key_usage_count");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_check_and_update_key_usage_count"), |tx| {
             let limit: Option<i32> = tx
                 .query_row(
                     "SELECT data FROM persistent.keyparameter WHERE keyentryid = ? AND tag = ?;",
@@ -2123,7 +2155,7 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor, Option<KeyPermSet>) -> Result<()>,
     ) -> Result<(KeyIdGuard, KeyEntry)> {
-        let _wp = wd::watch_millis("KeystoreDB::load_key_entry", 500);
+        let _wp = wd::watch("KeystoreDB::load_key_entry");
         let start = std::time::Instant::now();
 
         loop {
@@ -2253,9 +2285,9 @@ impl KeystoreDB {
         caller_uid: u32,
         check_permission: impl Fn(&KeyDescriptor, Option<KeyPermSet>) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_key", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_key");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_unbind_key"), |tx| {
             let (key_id, access_key_descriptor, access_vector) =
                 Self::load_access_tuple(tx, key, key_type, caller_uid)
                     .context("Trying to get access tuple.")?;
@@ -2284,12 +2316,12 @@ impl KeystoreDB {
     /// Delete all artifacts belonging to the namespace given by the domain-namespace tuple.
     /// This leaves all of the blob entries orphaned for subsequent garbage collection.
     pub fn unbind_keys_for_namespace(&mut self, domain: Domain, namespace: i64) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_keys_for_namespace", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_keys_for_namespace");
 
         if !(domain == Domain::APP || domain == Domain::SELINUX) {
             return Err(KsError::Rc(ResponseCode::INVALID_ARGUMENT)).context(ks_err!());
         }
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_unbind_keys_for_namespace"), |tx| {
             tx.execute(
                 "DELETE FROM persistent.keymetadata
                 WHERE keyentryid IN (
@@ -2329,7 +2361,7 @@ impl KeystoreDB {
     }
 
     fn cleanup_unreferenced(tx: &Transaction) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::cleanup_unreferenced", 500);
+        let _wp = wd::watch("KeystoreDB::cleanup_unreferenced");
         {
             tx.execute(
                 "DELETE FROM persistent.keymetadata
@@ -2378,9 +2410,9 @@ impl KeystoreDB {
         user_id: u32,
         keep_non_super_encrypted_keys: bool,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_keys_for_user", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_keys_for_user");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_unbind_keys_for_user"), |tx| {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT id from persistent.keyentry
@@ -2455,9 +2487,9 @@ impl KeystoreDB {
     /// be unlocked should remain usable when the lock screen is set to Swipe or None, as the device
     /// is always considered "unlocked" in that case.
     pub fn unbind_auth_bound_keys_for_user(&mut self, user_id: u32) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::unbind_auth_bound_keys_for_user", 500);
+        let _wp = wd::watch("KeystoreDB::unbind_auth_bound_keys_for_user");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_unbind_auth_bound_keys_for_user"), |tx| {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT id from persistent.keyentry
@@ -2550,7 +2582,7 @@ impl KeystoreDB {
         key_type: KeyType,
         start_past_alias: Option<&str>,
     ) -> Result<Vec<KeyDescriptor>> {
-        let _wp = wd::watch_millis("KeystoreDB::list_past_alias", 500);
+        let _wp = wd::watch("KeystoreDB::list_past_alias");
 
         let query = format!(
             "SELECT DISTINCT alias FROM persistent.keyentry
@@ -2605,7 +2637,7 @@ impl KeystoreDB {
         namespace: i64,
         key_type: KeyType,
     ) -> Result<usize> {
-        let _wp = wd::watch_millis("KeystoreDB::countKeys", 500);
+        let _wp = wd::watch("KeystoreDB::countKeys");
 
         let num_keys = self.with_transaction(TransactionBehavior::Deferred, |tx| {
             tx.query_row(
@@ -2638,9 +2670,9 @@ impl KeystoreDB {
         access_vector: KeyPermSet,
         check_permission: impl Fn(&KeyDescriptor, &KeyPermSet) -> Result<()>,
     ) -> Result<KeyDescriptor> {
-        let _wp = wd::watch_millis("KeystoreDB::grant", 500);
+        let _wp = wd::watch("KeystoreDB::grant");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_grant"), |tx| {
             // Load the key_id and complete the access control tuple.
             // We ignore the access vector here because grants cannot be granted.
             // The access vector returned here expresses the permissions the
@@ -2704,9 +2736,9 @@ impl KeystoreDB {
         grantee_uid: u32,
         check_permission: impl Fn(&KeyDescriptor) -> Result<()>,
     ) -> Result<()> {
-        let _wp = wd::watch_millis("KeystoreDB::ungrant", 500);
+        let _wp = wd::watch("KeystoreDB::ungrant");
 
-        self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        self.with_transaction(Immediate("TX_ungrant"), |tx| {
             // Load the key_id and complete the access control tuple.
             // We ignore the access vector here because grants cannot be granted.
             let (key_id, access_key_descriptor, _) =
@@ -2770,7 +2802,7 @@ impl KeystoreDB {
 
     /// Load descriptor of a key by key id
     pub fn load_key_descriptor(&mut self, key_id: i64) -> Result<Option<KeyDescriptor>> {
-        let _wp = wd::watch_millis("KeystoreDB::load_key_descriptor", 500);
+        let _wp = wd::watch("KeystoreDB::load_key_descriptor");
 
         self.with_transaction(TransactionBehavior::Deferred, |tx| {
             tx.query_row(
@@ -2801,9 +2833,9 @@ impl KeystoreDB {
         user_id: i32,
         secure_user_id: i64,
     ) -> Result<Vec<i64>> {
-        let _wp = wd::watch_millis("KeystoreDB::get_app_uids_affected_by_sid", 500);
+        let _wp = wd::watch("KeystoreDB::get_app_uids_affected_by_sid");
 
-        let key_ids_and_app_uids = self.with_transaction(TransactionBehavior::Immediate, |tx| {
+        let ids = self.with_transaction(Immediate("TX_get_app_uids_affected_by_sid"), |tx| {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT id, namespace from persistent.keyentry
@@ -2832,13 +2864,13 @@ impl KeystoreDB {
             Ok(key_ids_and_app_uids).no_gc()
         })?;
         let mut app_uids_affected_by_sid: HashSet<i64> = Default::default();
-        for (key_id, app_uid) in key_ids_and_app_uids {
+        for (key_id, app_uid) in ids {
             // Read the key parameters for each key in its own transaction. It is OK to ignore
             // an error to get the properties of a particular key since it might have been deleted
             // under our feet after the previous transaction concluded. If the key was deleted
             // then it is no longer applicable if it was auth-bound or not.
             if let Ok(is_key_bound_to_sid) =
-                self.with_transaction(TransactionBehavior::Immediate, |tx| {
+                self.with_transaction(Immediate("TX_get_app_uids_affects_by_sid 2"), |tx| {
                     let params = Self::load_key_parameters(key_id, tx)
                         .context("Failed to load key parameters.")?;
                     // Check if the key is bound to this secure user ID.
@@ -2881,7 +2913,6 @@ pub mod tests {
     use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
         Timestamp::Timestamp,
     };
-    use rusqlite::TransactionBehavior;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::fmt::Write;
@@ -2897,7 +2928,7 @@ pub mod tests {
         let conn = KeystoreDB::make_connection("file::memory:")?;
 
         let mut db = KeystoreDB { conn, gc: None, perboot: Arc::new(perboot::PerbootDB::new()) };
-        db.with_transaction(TransactionBehavior::Immediate, |tx| {
+        db.with_transaction(Immediate("TX_new_test_db"), |tx| {
             KeystoreDB::init_tables(tx).context("Failed to initialize tables.").no_gc()
         })?;
         Ok(db)
@@ -2910,7 +2941,7 @@ pub mod tests {
         domain: Domain,
         namespace: i64,
     ) -> Result<bool> {
-        db.with_transaction(TransactionBehavior::Immediate, |tx| {
+        db.with_transaction(Immediate("TX_rebind_alias"), |tx| {
             KeystoreDB::rebind_alias(tx, newid, alias, &domain, &namespace, KeyType::Client).no_gc()
         })
         .context(ks_err!())
@@ -3037,7 +3068,7 @@ pub mod tests {
         key_type: KeyType,
         km_uuid: &Uuid,
     ) -> Result<KeyIdGuard> {
-        db.with_transaction(TransactionBehavior::Immediate, |tx| {
+        db.with_transaction(Immediate("TX_create_key_entry"), |tx| {
             KeystoreDB::create_key_entry_internal(tx, domain, namespace, key_type, km_uuid).no_gc()
         })
     }
@@ -3352,7 +3383,7 @@ pub mod tests {
         drop(stmt);
 
         assert_eq!(
-            db.with_transaction(TransactionBehavior::Immediate, |tx| {
+            db.with_transaction(Immediate("TX_test"), |tx| {
                 BlobMetaData::load_from_db(id, tx).no_gc()
             })
             .expect("Should find blob metadata."),
@@ -4027,10 +4058,8 @@ pub mod tests {
             .unwrap();
         assert_eq!(key_entry, make_bootlevel_test_key_entry_test_vector(key_id_deleted, true));
 
-        db.with_transaction(TransactionBehavior::Immediate, |tx| {
-            KeystoreDB::from_0_to_1(tx).no_gc()
-        })
-        .unwrap();
+        db.with_transaction(Immediate("TX_test"), |tx| KeystoreDB::from_0_to_1(tx).no_gc())
+            .unwrap();
 
         let (_, key_entry) = db
             .load_key_entry(
@@ -4183,12 +4212,12 @@ pub mod tests {
 
         let _tx1 = db1
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .expect("Failed to create first transaction.");
 
         let error = db2
             .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .context("Transaction begin failed.")
             .expect_err("This should fail.");
         let root_cause = error.root_cause();
@@ -5527,10 +5556,8 @@ pub mod tests {
             // Make sure the other thread has initialized its database access before we lock it out.
             a_receiver.recv().unwrap();
 
-            let _result = db.with_transaction_timeout(
-                TransactionBehavior::Immediate,
-                Duration::from_secs(3),
-                |_tx| {
+            let _result =
+                db.with_transaction_timeout(Immediate("TX_test"), Duration::from_secs(3), |_tx| {
                     // Notify the other thread that we're inside the immediate transaction...
                     a_sender.send(()).unwrap();
                     // ...then wait to be sure that the other thread has the `KeyIdGuard` before
@@ -5539,8 +5566,7 @@ pub mod tests {
 
                     let _guard = KEY_ID_LOCK.get(key_id);
                     Ok(()).no_gc()
-                },
-            );
+                });
         });
 
         // Second thread gets the `KeyIdGuard`, then waits before trying to perform an immediate
@@ -5559,11 +5585,10 @@ pub mod tests {
             // this thread also tries to do one.
             b_receiver.recv().unwrap();
 
-            let result = db.with_transaction_timeout(
-                TransactionBehavior::Immediate,
-                Duration::from_secs(3),
-                |_tx| Ok(()).no_gc(),
-            );
+            let result =
+                db.with_transaction_timeout(Immediate("TX_test"), Duration::from_secs(3), |_tx| {
+                    Ok(()).no_gc()
+                });
             // Expect the attempt to get an immediate transaction to fail, and then this thread will
             // exit and release the `KeyIdGuard`, allowing the other thread to complete.
             assert!(result.is_err());
