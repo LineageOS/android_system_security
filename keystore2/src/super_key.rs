@@ -919,10 +919,8 @@ impl SuperKeyManager {
                     &key_desc,
                     KeyType::Client, /* TODO Should be Super b/189470584 */
                     |dev| {
-                        let _wp = wd::watch_millis(
-                            "In lock_unlocked_device_required_keys: calling importKey.",
-                            500,
-                        );
+                        let _wp =
+                            wd::watch("In lock_unlocked_device_required_keys: calling importKey.");
                         dev.importKey(key_params.as_slice(), KeyFormat::RAW, &encrypting_key, None)
                     },
                 )?;
