@@ -23,6 +23,11 @@ pub mod watchdog {
     pub use watchdog_rs::WatchPoint;
     use watchdog_rs::Watchdog;
 
+    /// Default timeout interval, in milliseconds.
+    pub const DEFAULT_TIMEOUT_MS: u64 = 500;
+
+    const DEFAULT_TIMEOUT: Duration = Duration::from_millis(DEFAULT_TIMEOUT_MS);
+
     lazy_static! {
         /// A Watchdog thread, that can be used to create watch points.
         static ref WD: Arc<Watchdog> = Watchdog::new(Duration::from_secs(10));
@@ -31,6 +36,11 @@ pub mod watchdog {
     /// Sets a watch point with `id` and a timeout of `millis` milliseconds.
     pub fn watch_millis(id: &'static str, millis: u64) -> Option<WatchPoint> {
         Watchdog::watch(&WD, id, Duration::from_millis(millis))
+    }
+
+    /// Sets a watch point with `id` and a default timeout of [`DEFAULT_TIMEOUT_MS`] milliseconds.
+    pub fn watch(id: &'static str) -> Option<WatchPoint> {
+        Watchdog::watch(&WD, id, DEFAULT_TIMEOUT)
     }
 
     /// Like `watch_millis` but with a callback that is called every time a report
@@ -51,6 +61,10 @@ pub mod watchdog {
     pub struct WatchPoint();
     /// Sets a Noop watch point.
     fn watch_millis(_: &'static str, _: u64) -> Option<WatchPoint> {
+        None
+    }
+    /// Sets a Noop watch point.
+    fn watch(_: &'static str) -> Option<WatchPoint> {
         None
     }
 

@@ -211,13 +211,10 @@ impl KeyMintDevice {
                         KeyBlob::NonSensitive(key_blob_vec),
                         |key_blob| {
                             map_km_error({
-                                let _wp = wd::watch_millis(
-                                    concat!(
-                                        "In KeyMintDevice::lookup_or_generate_key: ",
-                                        "calling getKeyCharacteristics."
-                                    ),
-                                    500,
-                                );
+                                let _wp = wd::watch(concat!(
+                                    "In KeyMintDevice::lookup_or_generate_key: ",
+                                    "calling getKeyCharacteristics."
+                                ));
                                 self.km_dev.getKeyCharacteristics(key_blob, &[], &[])
                             })
                         },
@@ -308,7 +305,7 @@ impl KeyMintDevice {
         let (begin_result, _) = self
             .upgrade_keyblob_if_required_with(db, key_id_guard, key_blob, |blob| {
                 map_km_error({
-                    let _wp = wd::watch_millis("In use_key_in_one_step: calling: begin", 500);
+                    let _wp = wd::watch("In use_key_in_one_step: calling: begin");
                     self.km_dev.begin(purpose, blob, operation_parameters, auth_token)
                 })
             })
@@ -316,7 +313,7 @@ impl KeyMintDevice {
         let operation: Strong<dyn IKeyMintOperation> =
             begin_result.operation.ok_or_else(Error::sys).context(ks_err!("Operation missing"))?;
         map_km_error({
-            let _wp = wd::watch_millis("In use_key_in_one_step: calling: finish", 500);
+            let _wp = wd::watch("In use_key_in_one_step: calling: finish");
             operation.finish(Some(input), None, None, None, None)
         })
         .context(ks_err!("Failed to finish operation."))
