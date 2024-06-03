@@ -26,6 +26,7 @@
 #include <android/binder_manager.h>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -215,6 +216,14 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
         return nullptr;
     }
 
+    class DeathRecipientCookie {
+      public:
+        DeathRecipientCookie(std::weak_ptr<ConfuiAidlCompatSession> session)
+            : mAidlSession(session) {}
+        DeathRecipientCookie() = delete;
+        std::weak_ptr<ConfuiAidlCompatSession> mAidlSession;
+    };
+
     uint32_t promptUserConfirmation(ApcCompatCallback callback, const char* prompt_text,
                                     const uint8_t* extra_data, size_t extra_data_size,
                                     const char* locale, ApcCompatUiOptions ui_options) {
@@ -235,12 +244,19 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
         if (!aidlService_) {
             return APC_COMPAT_ERROR_SYSTEM_ERROR;
         }
-        auto linkRet =
-            AIBinder_linkToDeath(aidlService_->asBinder().get(), death_recipient_.get(), this);
-        if (linkRet != STATUS_OK) {
-            LOG(ERROR) << "Communication error: promptUserConfirmation: "
-                          "Trying to register death recipient: ";
-            return APC_COMPAT_ERROR_SYSTEM_ERROR;
+
+        {
+            auto cookieLock = std::lock_guard(deathRecipientCookie_lock_);
+            void* cookie = new DeathRecipientCookie(this->ref<ConfuiAidlCompatSession>());
+            auto linkRet = AIBinder_linkToDeath(aidlService_->asBinder().get(),
+                                                death_recipient_.get(), cookie);
+            if (linkRet != STATUS_OK) {
+                LOG(ERROR) << "Communication error: promptUserConfirmation: "
+                              "Trying to register death recipient: ";
+                delete static_cast<DeathRecipientCookie*>(cookie);
+                return APC_COMPAT_ERROR_SYSTEM_ERROR;
+            }
+            deathRecipientCookie_.insert(cookie);
         }
 
         auto rc = aidlService_->promptUserConfirmation(ref<ConfuiAidlCompatSession>(), aidl_prompt,
@@ -276,8 +292,21 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
 
         if (callback.result != nullptr) {
             if (aidlService_) {
-                AIBinder_unlinkToDeath(aidlService_->asBinder().get(), death_recipient_.get(),
-                                       this);
+                // unlink all of the registered death recipients in case there
+                // were multiple calls to promptUserConfirmation before a call
+                // to finalize
+                std::set<void*> cookiesToUnlink;
+                {
+                    auto cookieLock = std::lock_guard(deathRecipientCookie_lock_);
+                    cookiesToUnlink = deathRecipientCookie_;
+                    deathRecipientCookie_.clear();
+                }
+
+                // Unlink these outside of the lock
+                for (void* cookie : cookiesToUnlink) {
+                    AIBinder_unlinkToDeath(aidlService_->asBinder().get(), death_recipient_.get(),
+                                           cookie);
+                }
             }
             CompatSessionCB::finalize(responseCode2Compat(responseCode), callback, dataConfirmed,
                                       confirmationToken);
@@ -294,17 +323,46 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
     void serviceDied() {
         aidlService_.reset();
         aidlService_ = nullptr;
+        {
+            std::lock_guard lock(deathRecipientCookie_lock_);
+            deathRecipientCookie_.clear();
+        }
         finalize(AidlConfirmationUI::SYSTEM_ERROR, {}, {});
     }
 
-    static void binderDiedCallbackAidl(void* ptr) {
-        LOG(ERROR) << __func__ << " : ConfuiAidlCompatSession Service died.";
-        auto aidlSession = static_cast<ConfuiAidlCompatSession*>(ptr);
-        if (aidlSession == nullptr) {
-            LOG(ERROR) << __func__ << ": Null ConfuiAidlCompatSession HAL died.";
-            return;
+    void serviceUnlinked(void* cookie) {
+        {
+            std::lock_guard lock(deathRecipientCookie_lock_);
+            deathRecipientCookie_.erase(cookie);
         }
-        aidlSession->serviceDied();
+    }
+
+    static void binderDiedCallbackAidl(void* ptr) {
+        auto aidlSessionCookie = static_cast<ConfuiAidlCompatSession::DeathRecipientCookie*>(ptr);
+        if (aidlSessionCookie == nullptr) {
+            LOG(ERROR) << __func__ << ": Null cookie for binderDiedCallbackAidl when HAL died!";
+            return;
+        } else if (auto aidlSession = aidlSessionCookie->mAidlSession.lock();
+                   aidlSession != nullptr) {
+            LOG(WARNING) << __func__ << " : Notififying ConfuiAidlCompatSession Service died.";
+            aidlSession->serviceDied();
+        } else {
+            LOG(ERROR) << __func__
+                       << " : ConfuiAidlCompatSession Service died but object is no longer around "
+                          "to be able to notify.";
+        }
+    }
+
+    static void binderUnlinkedCallbackAidl(void* ptr) {
+        auto aidlSessionCookie = static_cast<ConfuiAidlCompatSession::DeathRecipientCookie*>(ptr);
+        if (aidlSessionCookie == nullptr) {
+            LOG(ERROR) << __func__ << ": Null cookie!";
+            return;
+        } else if (auto aidlSession = aidlSessionCookie->mAidlSession.lock();
+                   aidlSession != nullptr) {
+            aidlSession->serviceUnlinked(ptr);
+        }
+        delete aidlSessionCookie;
     }
 
     int getReturnCode(const ::ndk::ScopedAStatus& result) {
@@ -344,6 +402,7 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
         : aidlService_(service), callback_{nullptr, nullptr} {
         death_recipient_ = ::ndk::ScopedAIBinder_DeathRecipient(
             AIBinder_DeathRecipient_new(binderDiedCallbackAidl));
+        AIBinder_DeathRecipient_setOnUnlinked(death_recipient_.get(), binderUnlinkedCallbackAidl);
     }
 
     virtual ~ConfuiAidlCompatSession() = default;
@@ -352,6 +411,8 @@ class ConfuiAidlCompatSession : public AidlBnConfirmationResultCb, public Compat
 
   private:
     std::shared_ptr<AidlConfirmationUI> aidlService_;
+    std::mutex deathRecipientCookie_lock_;
+    std::set<void*> deathRecipientCookie_;
 
     // The callback_lock_ protects the callback_ field against concurrent modification.
     // IMPORTANT: It must never be held while calling the call back.
