@@ -1,0 +1,17 @@
+[package]
+name = "mls-rs-crypto-boringssl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bssl-crypto = { path = "../../../../external/boringssl/src/rust/bssl-crypto" }
+mls-rs-codec = "0.5.3"
+mls-rs-core = "0.18.0"
+mls-rs-crypto-traits = "0.10.0"
+thiserror = "1.0.49"
+zeroize = { version = "1.6.0", features = ["zeroize_derive"] }
+maybe-async = "0.2.10"
+
+[target.'cfg(mls_build_async)'.dependencies]
+async-trait = "0.1.74"
+
