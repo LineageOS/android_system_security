@@ -1,0 +1,4 @@
+{
+    "extra_cfg": ["mls_build_async"],
+    "run_cargo": false
+}
