@@ -822,24 +822,18 @@ impl binder::Interface for KeystoreOperation {}
 impl IKeystoreOperation for KeystoreOperation {
     fn updateAad(&self, aad_input: &[u8]) -> binder::Result<()> {
         let _wp = wd::watch("IKeystoreOperation::updateAad");
-        map_or_log_err(
-            self.with_locked_operation(
-                |op| op.update_aad(aad_input).context(ks_err!("KeystoreOperation::updateAad")),
-                false,
-            ),
-            Ok,
-        )
+        map_or_log_err(self.with_locked_operation(
+            |op| op.update_aad(aad_input).context(ks_err!("KeystoreOperation::updateAad")),
+            false,
+        ))
     }
 
     fn update(&self, input: &[u8]) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch("IKeystoreOperation::update");
-        map_or_log_err(
-            self.with_locked_operation(
-                |op| op.update(input).context(ks_err!("KeystoreOperation::update")),
-                false,
-            ),
-            Ok,
-        )
+        map_or_log_err(self.with_locked_operation(
+            |op| op.update(input).context(ks_err!("KeystoreOperation::update")),
+            false,
+        ))
     }
     fn finish(
         &self,
@@ -847,13 +841,10 @@ impl IKeystoreOperation for KeystoreOperation {
         signature: Option<&[u8]>,
     ) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch("IKeystoreOperation::finish");
-        map_or_log_err(
-            self.with_locked_operation(
-                |op| op.finish(input, signature).context(ks_err!("KeystoreOperation::finish")),
-                true,
-            ),
-            Ok,
-        )
+        map_or_log_err(self.with_locked_operation(
+            |op| op.finish(input, signature).context(ks_err!("KeystoreOperation::finish")),
+            true,
+        ))
     }
 
     fn abort(&self) -> binder::Result<()> {
@@ -873,7 +864,6 @@ impl IKeystoreOperation for KeystoreOperation {
                 };
                 e
             },
-            Ok,
         )
     }
 }
