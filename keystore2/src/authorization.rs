@@ -64,38 +64,27 @@ pub enum Error {
 /// `selinux::Error::perm()` is mapped on `ResponseCode::PERMISSION_DENIED`.
 ///
 /// All non `Error` error conditions get mapped onto ResponseCode::SYSTEM_ERROR`.
-///
-/// `handle_ok` will be called if `result` is `Ok(value)` where `value` will be passed
-/// as argument to `handle_ok`. `handle_ok` must generate a `BinderResult<T>`, but it
-/// typically returns Ok(value).
-pub fn map_or_log_err<T, U, F>(result: Result<U>, handle_ok: F) -> BinderResult<T>
-where
-    F: FnOnce(U) -> BinderResult<T>,
-{
-    result.map_or_else(
-        |e| {
-            log::error!("{:#?}", e);
-            let root_cause = e.root_cause();
-            if let Some(KeystoreError::Rc(ks_rcode)) = root_cause.downcast_ref::<KeystoreError>() {
-                let rc = match *ks_rcode {
-                    // Although currently keystore2/ResponseCode.aidl and
-                    // authorization/ResponseCode.aidl share the same integer values for the
-                    // common response codes, this may deviate in the future, hence the
-                    // conversion here.
-                    KsResponseCode::SYSTEM_ERROR => ResponseCode::SYSTEM_ERROR.0,
-                    KsResponseCode::KEY_NOT_FOUND => ResponseCode::KEY_NOT_FOUND.0,
-                    KsResponseCode::VALUE_CORRUPTED => ResponseCode::VALUE_CORRUPTED.0,
-                    KsResponseCode::INVALID_ARGUMENT => ResponseCode::INVALID_ARGUMENT.0,
-                    // If the code paths of IKeystoreAuthorization aidl's methods happen to return
-                    // other error codes from KsResponseCode in the future, they should be converted
-                    // as well.
-                    _ => ResponseCode::SYSTEM_ERROR.0,
-                };
-                return Err(BinderStatus::new_service_specific_error(
-                    rc,
-                    anyhow_error_to_cstring(&e).as_deref(),
-                ));
-            }
+pub fn map_or_log_err<T>(result: Result<T>) -> BinderResult<T> {
+    result.map_err(|e| {
+        log::error!("{:#?}", e);
+        let root_cause = e.root_cause();
+        if let Some(KeystoreError::Rc(ks_rcode)) = root_cause.downcast_ref::<KeystoreError>() {
+            let rc = match *ks_rcode {
+                // Although currently keystore2/ResponseCode.aidl and
+                // authorization/ResponseCode.aidl share the same integer values for the
+                // common response codes, this may deviate in the future, hence the
+                // conversion here.
+                KsResponseCode::SYSTEM_ERROR => ResponseCode::SYSTEM_ERROR.0,
+                KsResponseCode::KEY_NOT_FOUND => ResponseCode::KEY_NOT_FOUND.0,
+                KsResponseCode::VALUE_CORRUPTED => ResponseCode::VALUE_CORRUPTED.0,
+                KsResponseCode::INVALID_ARGUMENT => ResponseCode::INVALID_ARGUMENT.0,
+                // If the code paths of IKeystoreAuthorization aidl's methods happen to return
+                // other error codes from KsResponseCode in the future, they should be converted
+                // as well.
+                _ => ResponseCode::SYSTEM_ERROR.0,
+            };
+            BinderStatus::new_service_specific_error(rc, anyhow_error_to_cstring(&e).as_deref())
+        } else {
             let rc = match root_cause.downcast_ref::<Error>() {
                 Some(Error::Rc(rcode)) => rcode.0,
                 Some(Error::Binder(_, _)) => ResponseCode::SYSTEM_ERROR.0,
@@ -104,13 +93,9 @@ where
                     _ => ResponseCode::SYSTEM_ERROR.0,
                 },
             };
-            Err(BinderStatus::new_service_specific_error(
-                rc,
-                anyhow_error_to_cstring(&e).as_deref(),
-            ))
-        },
-        handle_ok,
-    )
+            BinderStatus::new_service_specific_error(rc, anyhow_error_to_cstring(&e).as_deref())
+        }
+    })
 }
 
 /// This struct is defined to implement the aforementioned AIDL interface.
@@ -272,12 +257,12 @@ impl Interface for AuthorizationManager {}
 impl IKeystoreAuthorization for AuthorizationManager {
     fn addAuthToken(&self, auth_token: &HardwareAuthToken) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::addAuthToken");
-        map_or_log_err(self.add_auth_token(auth_token), Ok)
+        map_or_log_err(self.add_auth_token(auth_token))
     }
 
     fn onDeviceUnlocked(&self, user_id: i32, password: Option<&[u8]>) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::onDeviceUnlocked");
-        map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())), Ok)
+        map_or_log_err(self.on_device_unlocked(user_id, password.map(|pw| pw.into())))
     }
 
     fn onDeviceLocked(
@@ -287,17 +272,17 @@ impl IKeystoreAuthorization for AuthorizationManager {
         weak_unlock_enabled: bool,
     ) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::onDeviceLocked");
-        map_or_log_err(self.on_device_locked(user_id, unlocking_sids, weak_unlock_enabled), Ok)
+        map_or_log_err(self.on_device_locked(user_id, unlocking_sids, weak_unlock_enabled))
     }
 
     fn onWeakUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::onWeakUnlockMethodsExpired");
-        map_or_log_err(self.on_weak_unlock_methods_expired(user_id), Ok)
+        map_or_log_err(self.on_weak_unlock_methods_expired(user_id))
     }
 
     fn onNonLskfUnlockMethodsExpired(&self, user_id: i32) -> BinderResult<()> {
         let _wp = wd::watch("IKeystoreAuthorization::onNonLskfUnlockMethodsExpired");
-        map_or_log_err(self.on_non_lskf_unlock_methods_expired(user_id), Ok)
+        map_or_log_err(self.on_non_lskf_unlock_methods_expired(user_id))
     }
 
     fn getAuthTokensForCredStore(
@@ -307,14 +292,11 @@ impl IKeystoreAuthorization for AuthorizationManager {
         auth_token_max_age_millis: i64,
     ) -> binder::Result<AuthorizationTokens> {
         let _wp = wd::watch("IKeystoreAuthorization::getAuthTokensForCredStore");
-        map_or_log_err(
-            self.get_auth_tokens_for_credstore(
-                challenge,
-                secure_user_id,
-                auth_token_max_age_millis,
-            ),
-            Ok,
-        )
+        map_or_log_err(self.get_auth_tokens_for_credstore(
+            challenge,
+            secure_user_id,
+            auth_token_max_age_millis,
+        ))
     }
 
     fn getLastAuthTime(
@@ -323,7 +305,7 @@ impl IKeystoreAuthorization for AuthorizationManager {
         auth_types: &[HardwareAuthenticatorType],
     ) -> binder::Result<i64> {
         if aconfig_android_hardware_biometrics_rust::last_authentication_time() {
-            map_or_log_err(self.get_last_auth_time(secure_user_id, auth_types), Ok)
+            map_or_log_err(self.get_last_auth_time(secure_user_id, auth_types))
         } else {
             Err(BinderStatus::new_service_specific_error(
                 ResponseCode::PERMISSION_DENIED.0,

@@ -167,42 +167,17 @@ pub fn map_binder_status_code<T>(r: Result<T, StatusCode>) -> Result<T, Error> {
 /// into service specific exceptions.
 ///
 /// All error conditions get logged by this function, except for KEY_NOT_FOUND error.
-///
-/// `handle_ok` will be called if `result` is `Ok(value)` where `value` will be passed
-/// as argument to `handle_ok`. `handle_ok` must generate a `BinderResult<T>`, but it
-/// typically returns Ok(value).
-///
-/// # Examples
-///
-/// ```
-/// fn loadKey() -> anyhow::Result<Vec<u8>> {
-///     if (good_but_auth_required) {
-///         Ok(vec!['k', 'e', 'y'])
-///     } else {
-///         Err(anyhow!(Error::Rc(ResponseCode::KEY_NOT_FOUND)))
-///     }
-/// }
-///
-/// map_or_log_err(loadKey(), Ok)
-/// ```
-pub fn map_or_log_err<T, U, F>(result: anyhow::Result<U>, handle_ok: F) -> BinderResult<T>
-where
-    F: FnOnce(U) -> BinderResult<T>,
-{
-    map_err_with(
-        result,
-        |e| {
-            // Make the key not found errors silent.
-            if !matches!(
-                e.root_cause().downcast_ref::<Error>(),
-                Some(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-            ) {
-                log::error!("{:?}", e);
-            }
-            e
-        },
-        handle_ok,
-    )
+pub fn map_or_log_err<T>(result: anyhow::Result<T>) -> BinderResult<T> {
+    map_err_with(result, |e| {
+        // Make the key not found errors silent.
+        if !matches!(
+            e.root_cause().downcast_ref::<Error>(),
+            Some(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+        ) {
+            log::error!("{:?}", e);
+        }
+        e
+    })
 }
 
 /// This function turns an anyhow error into an optional CString.
@@ -222,26 +197,15 @@ pub fn anyhow_error_to_cstring(e: &anyhow::Error) -> Option<CString> {
 /// This function behaves similar to map_or_log_error, but it does not log the errors, instead
 /// it calls map_err on the error before mapping it to a binder result allowing callers to
 /// log or transform the error before mapping it.
-pub fn map_err_with<T, U, F1, F2>(
-    result: anyhow::Result<U>,
-    map_err: F1,
-    handle_ok: F2,
-) -> BinderResult<T>
+pub fn map_err_with<T, F1>(result: anyhow::Result<T>, map_err: F1) -> BinderResult<T>
 where
     F1: FnOnce(anyhow::Error) -> anyhow::Error,
-    F2: FnOnce(U) -> BinderResult<T>,
 {
-    result.map_or_else(
-        |e| {
-            let e = map_err(e);
-            let rc = anyhow_error_to_serialized_error(&e);
-            Err(BinderStatus::new_service_specific_error(
-                rc.0,
-                anyhow_error_to_cstring(&e).as_deref(),
-            ))
-        },
-        handle_ok,
-    )
+    result.map_err(|e| {
+        let e = map_err(e);
+        let rc = anyhow_error_to_serialized_error(&e);
+        BinderStatus::new_service_specific_error(rc.0, anyhow_error_to_cstring(&e).as_deref())
+    })
 }
 
 /// This type is used to send error codes on the wire.
@@ -359,8 +323,7 @@ pub mod tests {
         for rc in ResponseCode::LOCKED.0..ResponseCode::BACKEND_BUSY.0 {
             assert_eq!(
                 Result::<(), i32>::Err(rc),
-                map_or_log_err(nested_rc(ResponseCode(rc)), |_| Err(BinderStatus::ok()))
-                    .map_err(|s| s.service_specific_error())
+                map_or_log_err(nested_rc(ResponseCode(rc))).map_err(|s| s.service_specific_error())
             );
         }
 
@@ -369,8 +332,7 @@ pub mod tests {
         for ec in ErrorCode::UNKNOWN_ERROR.0..ErrorCode::ROOT_OF_TRUST_ALREADY_SET.0 {
             assert_eq!(
                 Result::<(), i32>::Err(ec),
-                map_or_log_err(nested_ec(ErrorCode(ec)), |_| Err(BinderStatus::ok()))
-                    .map_err(|s| s.service_specific_error())
+                map_or_log_err(nested_ec(ErrorCode(ec))).map_err(|s| s.service_specific_error())
             );
         }
 
@@ -381,8 +343,7 @@ pub mod tests {
                 Result::<(), i32>::Err(ec),
                 map_or_log_err(
                     map_km_error(binder_sse_error(ec))
-                        .with_context(|| format!("Km error code: {}.", ec)),
-                    |_| Err(BinderStatus::ok())
+                        .with_context(|| format!("Km error code: {}.", ec))
                 )
                 .map_err(|s| s.service_specific_error())
             );
@@ -396,10 +357,8 @@ pub mod tests {
         // map_or_log_err then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(sse.context("Non negative service specific error."), |_| Err(
-                BinderStatus::ok()
-            ))
-            .map_err(|s| ResponseCode(s.service_specific_error()))
+            map_or_log_err(sse.context("Non negative service specific error."))
+                .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // map_km_error creates a Error::Binder variant storing the given exception code.
@@ -408,31 +367,29 @@ pub mod tests {
         // map_or_log_err then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(binder_exception.context("Binder Exception."), |_| Err(
-                BinderStatus::ok()
-            ))
-            .map_err(|s| ResponseCode(s.service_specific_error()))
+            map_or_log_err(binder_exception.context("Binder Exception."))
+                .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // selinux::Error::Perm() needs to be mapped to ResponseCode::PERMISSION_DENIED
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::PERMISSION_DENIED),
-            map_or_log_err(nested_selinux_perm(), |_| Err(BinderStatus::ok()))
+            map_or_log_err(nested_selinux_perm())
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // All other errors get mapped on System Error.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(nested_other_error(), |_| Err(BinderStatus::ok()))
+            map_or_log_err(nested_other_error())
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // Result::Ok variants get passed to the ok handler.
-        assert_eq!(Ok(ResponseCode::LOCKED), map_or_log_err(nested_ok(ResponseCode::LOCKED), Ok));
+        assert_eq!(Ok(ResponseCode::LOCKED), map_or_log_err(nested_ok(ResponseCode::LOCKED)));
         assert_eq!(
             Ok(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(nested_ok(ResponseCode::SYSTEM_ERROR), Ok)
+            map_or_log_err(nested_ok(ResponseCode::SYSTEM_ERROR))
         );
 
         Ok(())

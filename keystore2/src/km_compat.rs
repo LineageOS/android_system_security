@@ -226,7 +226,7 @@ where
     ) -> binder::Result<KeyCreationResult> {
         if self.emu.emulation_required(key_params, &KeyImportData::None) {
             let mut result = self.soft.generateKey(key_params, attestation_key)?;
-            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob), Ok)?;
+            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob))?;
             Ok(result)
         } else {
             self.real.generateKey(key_params, attestation_key)
@@ -242,7 +242,7 @@ where
         if self.emu.emulation_required(key_params, &KeyImportData::new(key_format, key_data)?) {
             let mut result =
                 self.soft.importKey(key_params, key_format, key_data, attestation_key)?;
-            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob), Ok)?;
+            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob))?;
             Ok(result)
         } else {
             self.real.importKey(key_params, key_format, key_data, attestation_key)
@@ -281,7 +281,7 @@ where
             KeyBlob::Wrapped(keyblob) => {
                 // Re-wrap the upgraded keyblob.
                 let upgraded_keyblob = self.soft.upgradeKey(keyblob, upgrade_params)?;
-                map_or_log_err(wrap_keyblob(&upgraded_keyblob), Ok)
+                map_or_log_err(wrap_keyblob(&upgraded_keyblob))
             }
         }
     }
