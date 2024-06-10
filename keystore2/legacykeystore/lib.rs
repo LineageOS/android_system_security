@@ -210,41 +210,25 @@ impl Error {
     }
 }
 
-/// This function should be used by legacykeystore service calls to translate error conditions
-/// into service specific exceptions.
+/// Translate errors into service specific exceptions.
 ///
-/// All error conditions get logged by this function, except for ERROR_ENTRY_NOT_FOUND error.
-///
-/// `Error::Error(x)` variants get mapped onto a service specific error code of `x`.
-///
-/// All non `Error` error conditions get mapped onto `ERROR_SYSTEM_ERROR`.
-///
-/// `handle_ok` will be called if `result` is `Ok(value)` where `value` will be passed
-/// as argument to `handle_ok`. `handle_ok` must generate a `BinderResult<T>`, but it
-/// typically returns Ok(value).
-fn map_or_log_err<T, U, F>(result: Result<U>, handle_ok: F) -> BinderResult<T>
-where
-    F: FnOnce(U) -> BinderResult<T>,
-{
-    result.map_or_else(
-        |e| {
-            let root_cause = e.root_cause();
-            let (rc, log_error) = match root_cause.downcast_ref::<Error>() {
-                // Make the entry not found errors silent.
-                Some(Error::Error(ERROR_ENTRY_NOT_FOUND)) => (ERROR_ENTRY_NOT_FOUND, false),
-                Some(Error::Error(e)) => (*e, true),
-                Some(Error::Binder(_, _)) | None => (ERROR_SYSTEM_ERROR, true),
-            };
-            if log_error {
-                log::error!("{:?}", e);
-            }
-            Err(BinderStatus::new_service_specific_error(
-                rc,
-                anyhow_error_to_cstring(&e).as_deref(),
-            ))
-        },
-        handle_ok,
-    )
+/// All errors are logged, except for ERROR_ENTRY_NOT_FOUND error.  `Error::Error(x)` variants get
+/// mapped onto a service specific error code of `x`, other errors are mapped to
+/// `ERROR_SYSTEM_ERROR`.
+fn map_or_log_err<T>(result: Result<T>) -> BinderResult<T> {
+    result.map_err(|e| {
+        let root_cause = e.root_cause();
+        let (rc, log_error) = match root_cause.downcast_ref::<Error>() {
+            // Make the entry not found errors silent.
+            Some(Error::Error(ERROR_ENTRY_NOT_FOUND)) => (ERROR_ENTRY_NOT_FOUND, false),
+            Some(Error::Error(e)) => (*e, true),
+            Some(Error::Binder(_, _)) | None => (ERROR_SYSTEM_ERROR, true),
+        };
+        if log_error {
+            log::error!("{:?}", e);
+        }
+        BinderStatus::new_service_specific_error(rc, anyhow_error_to_cstring(&e).as_deref())
+    })
 }
 
 fn ensure_keystore_put_is_enabled() -> Result<()> {
@@ -552,19 +536,19 @@ impl binder::Interface for LegacyKeystoreService {}
 impl ILegacyKeystore for LegacyKeystoreService {
     fn get(&self, alias: &str, uid: i32) -> BinderResult<Vec<u8>> {
         let _wp = wd::watch("ILegacyKeystore::get");
-        map_or_log_err(self.legacy_keystore.get(alias, uid), Ok)
+        map_or_log_err(self.legacy_keystore.get(alias, uid))
     }
     fn put(&self, alias: &str, uid: i32, entry: &[u8]) -> BinderResult<()> {
         let _wp = wd::watch("ILegacyKeystore::put");
-        map_or_log_err(self.legacy_keystore.put(alias, uid, entry), Ok)
+        map_or_log_err(self.legacy_keystore.put(alias, uid, entry))
     }
     fn remove(&self, alias: &str, uid: i32) -> BinderResult<()> {
         let _wp = wd::watch("ILegacyKeystore::remove");
-        map_or_log_err(self.legacy_keystore.remove(alias, uid), Ok)
+        map_or_log_err(self.legacy_keystore.remove(alias, uid))
     }
     fn list(&self, prefix: &str, uid: i32) -> BinderResult<Vec<String>> {
         let _wp = wd::watch("ILegacyKeystore::list");
-        map_or_log_err(self.legacy_keystore.list(prefix, uid), Ok)
+        map_or_log_err(self.legacy_keystore.list(prefix, uid))
     }
 }
 
