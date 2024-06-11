@@ -85,10 +85,6 @@ cc_library {
     "VerityUtils.cpp",
   ],
 
-  static_libs: [
-    "libc++fs",
-  ],
-
   shared_libs: [
     "libbase",
     "libcrypto",
@@ -128,7 +124,6 @@ cc_binary {
   header_libs: ["odrefresh_headers"],
 
   static_libs: [
-    "libc++fs",
     "libsigningutils",
     "lib_odsign_proto",
   ],
