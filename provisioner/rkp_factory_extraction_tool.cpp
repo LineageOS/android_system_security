@@ -78,6 +78,11 @@ void writeOutput(const std::string instance_name, const Array& csr) {
 }
 
 void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisionedComponent* irpc) {
+    // AVF RKP HAL is not always supported, so we need to check if it is supported before
+    // generating the CSR.
+    if (std::string(name) == "avf" && !isRemoteProvisioningSupported(irpc)) {
+        return;
+    }
     auto [request, errMsg] = getCsr(name, irpc, FLAGS_self_test);
     auto fullName = getFullServiceName(descriptor, name);
     if (!request) {
