@@ -267,3 +267,17 @@ CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedCom
         return getCsrV3(componentName, irpc, selfTest);
     }
 }
+
+bool isRemoteProvisioningSupported(IRemotelyProvisionedComponent* irpc) {
+    RpcHardwareInfo hwInfo;
+    auto status = irpc->getHardwareInfo(&hwInfo);
+    if (status.isOk()) {
+        return true;
+    }
+    if (status.getExceptionCode() == EX_UNSUPPORTED_OPERATION) {
+        return false;
+    }
+    std::cerr << "Unexpected error when getting hardware info. Description: "
+              << status.getDescription() << "." << std::endl;
+    exit(-1);
+}
