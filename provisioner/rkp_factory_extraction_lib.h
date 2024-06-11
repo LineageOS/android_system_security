@@ -53,3 +53,7 @@ getCsr(std::string_view componentName,
 void selfTestGetCsr(
     std::string_view componentName,
     aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent* irpc);
+
+// Returns true if the given IRemotelyProvisionedComponent supports remote provisioning.
+bool isRemoteProvisioningSupported(
+    aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent* irpc);
