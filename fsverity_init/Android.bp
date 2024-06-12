@@ -14,7 +14,6 @@ cc_binary {
     ],
     static_libs: [
         "aconfig_fsverity_init_c_lib",
-        "libc++fs",
         "libmini_keyctl_static",
     ],
     shared_libs: [
