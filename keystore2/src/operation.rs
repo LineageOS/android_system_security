@@ -127,7 +127,7 @@
 
 use crate::enforcements::AuthInfo;
 use crate::error::{
-    error_to_serialized_error, map_err_with, map_km_error, map_or_log_err, Error, ErrorCode,
+    error_to_serialized_error, into_binder, into_logged_binder, map_km_error, Error, ErrorCode,
     ResponseCode, SerializedError,
 };
 use crate::ks_err;
@@ -822,18 +822,20 @@ impl binder::Interface for KeystoreOperation {}
 impl IKeystoreOperation for KeystoreOperation {
     fn updateAad(&self, aad_input: &[u8]) -> binder::Result<()> {
         let _wp = wd::watch("IKeystoreOperation::updateAad");
-        map_or_log_err(self.with_locked_operation(
+        self.with_locked_operation(
             |op| op.update_aad(aad_input).context(ks_err!("KeystoreOperation::updateAad")),
             false,
-        ))
+        )
+        .map_err(into_logged_binder)
     }
 
     fn update(&self, input: &[u8]) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch("IKeystoreOperation::update");
-        map_or_log_err(self.with_locked_operation(
+        self.with_locked_operation(
             |op| op.update(input).context(ks_err!("KeystoreOperation::update")),
             false,
-        ))
+        )
+        .map_err(into_logged_binder)
     }
     fn finish(
         &self,
@@ -841,29 +843,28 @@ impl IKeystoreOperation for KeystoreOperation {
         signature: Option<&[u8]>,
     ) -> binder::Result<Option<Vec<u8>>> {
         let _wp = wd::watch("IKeystoreOperation::finish");
-        map_or_log_err(self.with_locked_operation(
+        self.with_locked_operation(
             |op| op.finish(input, signature).context(ks_err!("KeystoreOperation::finish")),
             true,
-        ))
+        )
+        .map_err(into_logged_binder)
     }
 
     fn abort(&self) -> binder::Result<()> {
         let _wp = wd::watch("IKeystoreOperation::abort");
-        map_err_with(
-            self.with_locked_operation(
-                |op| op.abort(Outcome::Abort).context(ks_err!("KeystoreOperation::abort")),
-                true,
-            ),
-            |e| {
-                match e.root_cause().downcast_ref::<Error>() {
-                    // Calling abort on expired operations is something very common.
-                    // There is no reason to clutter the log with it. It is never the cause
-                    // for a true problem.
-                    Some(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE)) => {}
-                    _ => log::error!("{:?}", e),
-                };
-                e
-            },
-        )
+        let result = self.with_locked_operation(
+            |op| op.abort(Outcome::Abort).context(ks_err!("KeystoreOperation::abort")),
+            true,
+        );
+        result.map_err(|e| {
+            match e.root_cause().downcast_ref::<Error>() {
+                // Calling abort on expired operations is something very common.
+                // There is no reason to clutter the log with it. It is never the cause
+                // for a true problem.
+                Some(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE)) => {}
+                _ => log::error!("{:?}", e),
+            };
+            into_binder(e)
+        })
     }
 }

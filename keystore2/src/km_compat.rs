@@ -16,7 +16,7 @@
 //! be emulated on back-level devices.
 
 use crate::ks_err;
-use crate::error::{map_binder_status, map_binder_status_code, map_or_log_err, Error, ErrorCode};
+use crate::error::{map_binder_status, map_binder_status_code, into_logged_binder, Error, ErrorCode};
 use android_hardware_security_keymint::binder::{BinderFeatures, StatusCode, Strong};
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::TimeStampToken::TimeStampToken;
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
@@ -226,7 +226,7 @@ where
     ) -> binder::Result<KeyCreationResult> {
         if self.emu.emulation_required(key_params, &KeyImportData::None) {
             let mut result = self.soft.generateKey(key_params, attestation_key)?;
-            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob))?;
+            result.keyBlob = wrap_keyblob(&result.keyBlob).map_err(into_logged_binder)?;
             Ok(result)
         } else {
             self.real.generateKey(key_params, attestation_key)
@@ -242,7 +242,7 @@ where
         if self.emu.emulation_required(key_params, &KeyImportData::new(key_format, key_data)?) {
             let mut result =
                 self.soft.importKey(key_params, key_format, key_data, attestation_key)?;
-            result.keyBlob = map_or_log_err(wrap_keyblob(&result.keyBlob))?;
+            result.keyBlob = wrap_keyblob(&result.keyBlob).map_err(into_logged_binder)?;
             Ok(result)
         } else {
             self.real.importKey(key_params, key_format, key_data, attestation_key)
@@ -281,7 +281,7 @@ where
             KeyBlob::Wrapped(keyblob) => {
                 // Re-wrap the upgraded keyblob.
                 let upgraded_keyblob = self.soft.upgradeKey(keyblob, upgrade_params)?;
-                map_or_log_err(wrap_keyblob(&upgraded_keyblob))
+                wrap_keyblob(&upgraded_keyblob).map_err(into_logged_binder)
             }
         }
     }
