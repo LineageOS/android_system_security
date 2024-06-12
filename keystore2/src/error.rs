@@ -21,8 +21,8 @@
 //!
 //! `SerializedError` is used send error codes on the wire.
 //!
-//! `map_or_log_err` is a convenience method used to convert `anyhow::Error` into `SerializedError`
-//! wire type.
+//! `into_[logged_]binder` is a convenience method used to convert `anyhow::Error` into
+//! `SerializedError` wire type.
 //!
 //! Keystore functions should use `anyhow::Result` to return error conditions, and context should
 //! be added every time an error is forwarded.
@@ -128,14 +128,11 @@ pub fn map_km_error<T>(r: BinderResult<T>) -> Result<T, Error> {
                     // Non negative error codes cannot be KM error codes.
                     // So we create an `Error::Binder` variant to preserve
                     // the service specific error code for logging.
-                    // `map_or_log_err` will map this on a system error,
-                    // but not before logging the details to logcat.
                     Error::Binder(ExceptionCode::SERVICE_SPECIFIC, se)
                 }
             }
             // We create `Error::Binder` to preserve the exception code
             // for logging.
-            // `map_or_log_err` will map this on a system error.
             e_code => Error::Binder(e_code, 0),
         }
     })
@@ -163,21 +160,17 @@ pub fn map_binder_status_code<T>(r: Result<T, StatusCode>) -> Result<T, Error> {
     r.map_err(Error::BinderTransaction)
 }
 
-/// This function should be used by Keystore service calls to translate error conditions
-/// into service specific exceptions.
-///
-/// All error conditions get logged by this function, except for KEY_NOT_FOUND error.
-pub fn map_or_log_err<T>(result: anyhow::Result<T>) -> BinderResult<T> {
-    map_err_with(result, |e| {
-        // Make the key not found errors silent.
-        if !matches!(
-            e.root_cause().downcast_ref::<Error>(),
-            Some(Error::Rc(ResponseCode::KEY_NOT_FOUND))
-        ) {
-            log::error!("{:?}", e);
-        }
-        e
-    })
+/// Convert an [`anyhow::Error`] to a [`binder::Status`], logging the value
+/// along the way (except if it is `KEY_NOT_FOUND`).
+pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
+    // Log everything except key not found.
+    if !matches!(
+        e.root_cause().downcast_ref::<Error>(),
+        Some(Error::Rc(ResponseCode::KEY_NOT_FOUND))
+    ) {
+        log::error!("{:?}", e);
+    }
+    into_binder(e)
 }
 
 /// This function turns an anyhow error into an optional CString.
@@ -194,18 +187,10 @@ pub fn anyhow_error_to_cstring(e: &anyhow::Error) -> Option<CString> {
     }
 }
 
-/// This function behaves similar to map_or_log_error, but it does not log the errors, instead
-/// it calls map_err on the error before mapping it to a binder result allowing callers to
-/// log or transform the error before mapping it.
-pub fn map_err_with<T, F1>(result: anyhow::Result<T>, map_err: F1) -> BinderResult<T>
-where
-    F1: FnOnce(anyhow::Error) -> anyhow::Error,
-{
-    result.map_err(|e| {
-        let e = map_err(e);
-        let rc = anyhow_error_to_serialized_error(&e);
-        BinderStatus::new_service_specific_error(rc.0, anyhow_error_to_cstring(&e).as_deref())
-    })
+/// Convert an [`anyhow::Error`] to a [`binder::Status`].
+pub fn into_binder(e: anyhow::Error) -> binder::Status {
+    let rc = anyhow_error_to_serialized_error(&e);
+    BinderStatus::new_service_specific_error(rc.0, anyhow_error_to_cstring(&e).as_deref())
 }
 
 /// This type is used to send error codes on the wire.
@@ -323,7 +308,9 @@ pub mod tests {
         for rc in ResponseCode::LOCKED.0..ResponseCode::BACKEND_BUSY.0 {
             assert_eq!(
                 Result::<(), i32>::Err(rc),
-                map_or_log_err(nested_rc(ResponseCode(rc))).map_err(|s| s.service_specific_error())
+                nested_rc(ResponseCode(rc))
+                    .map_err(into_logged_binder)
+                    .map_err(|s| s.service_specific_error())
             );
         }
 
@@ -332,7 +319,9 @@ pub mod tests {
         for ec in ErrorCode::UNKNOWN_ERROR.0..ErrorCode::ROOT_OF_TRUST_ALREADY_SET.0 {
             assert_eq!(
                 Result::<(), i32>::Err(ec),
-                map_or_log_err(nested_ec(ErrorCode(ec))).map_err(|s| s.service_specific_error())
+                nested_ec(ErrorCode(ec))
+                    .map_err(into_logged_binder)
+                    .map_err(|s| s.service_specific_error())
             );
         }
 
@@ -341,11 +330,10 @@ pub mod tests {
         for ec in ErrorCode::UNKNOWN_ERROR.0..ErrorCode::ROOT_OF_TRUST_ALREADY_SET.0 {
             assert_eq!(
                 Result::<(), i32>::Err(ec),
-                map_or_log_err(
-                    map_km_error(binder_sse_error(ec))
-                        .with_context(|| format!("Km error code: {}.", ec))
-                )
-                .map_err(|s| s.service_specific_error())
+                map_km_error(binder_sse_error(ec))
+                    .with_context(|| format!("Km error code: {}.", ec))
+                    .map_err(into_logged_binder)
+                    .map_err(|s| s.service_specific_error())
             );
         }
 
@@ -354,42 +342,50 @@ pub mod tests {
         // service specific error.
         let sse = map_km_error(binder_sse_error(1));
         assert_eq!(Err(Error::Binder(ExceptionCode::SERVICE_SPECIFIC, 1)), sse);
-        // map_or_log_err then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
+        // into_binder then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(sse.context("Non negative service specific error."))
+            sse.context("Non negative service specific error.")
+                .map_err(into_logged_binder)
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // map_km_error creates a Error::Binder variant storing the given exception code.
         let binder_exception = map_km_error(binder_exception(ExceptionCode::TRANSACTION_FAILED));
         assert_eq!(Err(Error::Binder(ExceptionCode::TRANSACTION_FAILED, 0)), binder_exception);
-        // map_or_log_err then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
+        // into_binder then maps it on a service specific error of ResponseCode::SYSTEM_ERROR.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(binder_exception.context("Binder Exception."))
+            binder_exception
+                .context("Binder Exception.")
+                .map_err(into_logged_binder)
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // selinux::Error::Perm() needs to be mapped to ResponseCode::PERMISSION_DENIED
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::PERMISSION_DENIED),
-            map_or_log_err(nested_selinux_perm())
+            nested_selinux_perm()
+                .map_err(into_logged_binder)
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // All other errors get mapped on System Error.
         assert_eq!(
             Result::<(), ResponseCode>::Err(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(nested_other_error())
+            nested_other_error()
+                .map_err(into_logged_binder)
                 .map_err(|s| ResponseCode(s.service_specific_error()))
         );
 
         // Result::Ok variants get passed to the ok handler.
-        assert_eq!(Ok(ResponseCode::LOCKED), map_or_log_err(nested_ok(ResponseCode::LOCKED)));
+        assert_eq!(
+            Ok(ResponseCode::LOCKED),
+            nested_ok(ResponseCode::LOCKED).map_err(into_logged_binder)
+        );
         assert_eq!(
             Ok(ResponseCode::SYSTEM_ERROR),
-            map_or_log_err(nested_ok(ResponseCode::SYSTEM_ERROR))
+            nested_ok(ResponseCode::SYSTEM_ERROR).map_err(into_logged_binder)
         );
 
         Ok(())
