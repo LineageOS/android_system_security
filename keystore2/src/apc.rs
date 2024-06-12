@@ -73,29 +73,24 @@ impl Error {
     }
 }
 
-/// This function should be used by confirmation service calls to translate error conditions
-/// into service specific exceptions.
-///
-/// All error conditions get logged by this function.
+/// Translate an error into a service-specific exception, logging along the way.
 ///
 /// `Error::Rc(x)` variants get mapped onto a service specific error code of `x`.
 /// `selinux::Error::perm()` is mapped on `ResponseCode::PERMISSION_DENIED`.
 ///
 /// All non `Error` error conditions get mapped onto ResponseCode::SYSTEM_ERROR`.
-pub fn map_or_log_err<T>(result: Result<T>) -> BinderResult<T> {
-    result.map_err(|e| {
-        log::error!("{:#?}", e);
-        let root_cause = e.root_cause();
-        let rc = match root_cause.downcast_ref::<Error>() {
-            Some(Error::Rc(rcode)) => rcode.0,
-            Some(Error::Binder(_, _)) => ResponseCode::SYSTEM_ERROR.0,
-            None => match root_cause.downcast_ref::<selinux::Error>() {
-                Some(selinux::Error::PermissionDenied) => ResponseCode::PERMISSION_DENIED.0,
-                _ => ResponseCode::SYSTEM_ERROR.0,
-            },
-        };
-        BinderStatus::new_service_specific_error(rc, anyhow_error_to_cstring(&e).as_deref())
-    })
+pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
+    log::error!("{:#?}", e);
+    let root_cause = e.root_cause();
+    let rc = match root_cause.downcast_ref::<Error>() {
+        Some(Error::Rc(rcode)) => rcode.0,
+        Some(Error::Binder(_, _)) => ResponseCode::SYSTEM_ERROR.0,
+        None => match root_cause.downcast_ref::<selinux::Error>() {
+            Some(selinux::Error::PermissionDenied) => ResponseCode::PERMISSION_DENIED.0,
+            _ => ResponseCode::SYSTEM_ERROR.0,
+        },
+    };
+    BinderStatus::new_service_specific_error(rc, anyhow_error_to_cstring(&e).as_deref())
 }
 
 /// Rate info records how many failed attempts a client has made to display a protected
@@ -341,23 +336,18 @@ impl IProtectedConfirmation for ApcManager {
     ) -> BinderResult<()> {
         // presentPrompt can take more time than other operations.
         let _wp = wd::watch_millis("IProtectedConfirmation::presentPrompt", 3000);
-        map_or_log_err(self.present_prompt(
-            listener,
-            prompt_text,
-            extra_data,
-            locale,
-            ui_option_flags,
-        ))
+        self.present_prompt(listener, prompt_text, extra_data, locale, ui_option_flags)
+            .map_err(into_logged_binder)
     }
     fn cancelPrompt(
         &self,
         listener: &binder::Strong<dyn IConfirmationCallback>,
     ) -> BinderResult<()> {
         let _wp = wd::watch("IProtectedConfirmation::cancelPrompt");
-        map_or_log_err(self.cancel_prompt(listener))
+        self.cancel_prompt(listener).map_err(into_logged_binder)
     }
     fn isSupported(&self) -> BinderResult<bool> {
         let _wp = wd::watch("IProtectedConfirmation::isSupported");
-        map_or_log_err(Self::is_supported())
+        Self::is_supported().map_err(into_logged_binder)
     }
 }

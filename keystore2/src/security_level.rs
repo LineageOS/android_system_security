@@ -20,7 +20,7 @@ use crate::audit_log::{
 };
 use crate::database::{BlobInfo, CertificateInfo, KeyIdGuard};
 use crate::error::{
-    self, map_km_error, map_or_log_err, wrapped_rkpd_error_to_ks_error, Error, ErrorCode,
+    self, into_logged_binder, map_km_error, wrapped_rkpd_error_to_ks_error, Error, ErrorCode,
 };
 use crate::globals::{
     get_remotely_provisioned_component_name, DB, ENFORCEMENTS, LEGACY_IMPORTER, SUPER_KEY,
@@ -996,7 +996,7 @@ impl IKeystoreSecurityLevel for KeystoreSecurityLevel {
         forced: bool,
     ) -> binder::Result<CreateOperationResponse> {
         let _wp = self.watch("IKeystoreSecurityLevel::createOperation");
-        map_or_log_err(self.create_operation(key, operation_parameters, forced))
+        self.create_operation(key, operation_parameters, forced).map_err(into_logged_binder)
     }
     fn generateKey(
         &self,
@@ -1012,7 +1012,7 @@ impl IKeystoreSecurityLevel for KeystoreSecurityLevel {
         let result = self.generate_key(key, attestation_key, params, flags, entropy);
         log_key_creation_event_stats(self.security_level, params, &result);
         log_key_generated(key, ThreadState::get_calling_uid(), result.is_ok());
-        map_or_log_err(result)
+        result.map_err(into_logged_binder)
     }
     fn importKey(
         &self,
@@ -1026,7 +1026,7 @@ impl IKeystoreSecurityLevel for KeystoreSecurityLevel {
         let result = self.import_key(key, attestation_key, params, flags, key_data);
         log_key_creation_event_stats(self.security_level, params, &result);
         log_key_imported(key, ThreadState::get_calling_uid(), result.is_ok());
-        map_or_log_err(result)
+        result.map_err(into_logged_binder)
     }
     fn importWrappedKey(
         &self,
@@ -1041,20 +1041,20 @@ impl IKeystoreSecurityLevel for KeystoreSecurityLevel {
             self.import_wrapped_key(key, wrapping_key, masking_key, params, authenticators);
         log_key_creation_event_stats(self.security_level, params, &result);
         log_key_imported(key, ThreadState::get_calling_uid(), result.is_ok());
-        map_or_log_err(result)
+        result.map_err(into_logged_binder)
     }
     fn convertStorageKeyToEphemeral(
         &self,
         storage_key: &KeyDescriptor,
     ) -> binder::Result<EphemeralStorageKeyResponse> {
         let _wp = self.watch("IKeystoreSecurityLevel::convertStorageKeyToEphemeral");
-        map_or_log_err(self.convert_storage_key_to_ephemeral(storage_key))
+        self.convert_storage_key_to_ephemeral(storage_key).map_err(into_logged_binder)
     }
     fn deleteKey(&self, key: &KeyDescriptor) -> binder::Result<()> {
         let _wp = self.watch("IKeystoreSecurityLevel::deleteKey");
         let result = self.delete_key(key);
         log_key_deleted(key, ThreadState::get_calling_uid(), result.is_ok());
-        map_or_log_err(result)
+        result.map_err(into_logged_binder)
     }
 }
 
