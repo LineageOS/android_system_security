@@ -28,6 +28,7 @@ rust_defaults {
         "keystore2_use_latest_aidl_rust",
     ],
     rustlibs: [
+        "android.security.authorization-rust",
         "libanyhow",
         "libbinder_rs",
         "libcxx",
@@ -39,17 +40,17 @@ rust_defaults {
         "libserde",
         "libserde_cbor",
         "libthiserror",
-        "android.security.authorization-rust",
     ],
     static_libs: [
+        "libkeystore-engine",
         "libkeystore2_ffi_test_utils",
     ],
     shared_libs: [
+        "android.system.keystore2-V4-ndk",
         "libbase",
         "libcrypto",
         "libkeymaster_portable",
         "libkeymint_support",
-        "libkeystore-engine",
     ],
 }
 
@@ -75,17 +76,18 @@ cc_library_static {
     srcs: ["ffi_test_utils.cpp"],
     defaults: [
         "keymint_use_latest_hal_aidl_ndk_shared",
+        "keystore2_use_latest_aidl_ndk_shared",
     ],
     generated_headers: [
         "cxx-bridge-header",
         "libkeystore2_ffi_test_utils_bridge_header",
     ],
     generated_sources: ["libkeystore2_ffi_test_utils_bridge_code"],
+    static_libs: ["libkeystore-engine"],
     shared_libs: [
         "libbase",
         "libcrypto",
         "libkeymaster_portable",
-        "libkeystore-engine",
         "libkeymint_support",
     ],
 }

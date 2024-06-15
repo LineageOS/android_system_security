@@ -410,6 +410,11 @@ pub fn check_key_authorizations(
 ) {
     // Make sure key authorizations contains only `ALLOWED_TAGS_IN_KEY_AUTHS`
     authorizations.iter().all(|auth| {
+        // Ignore `INVALID` tag if the backend is Keymaster and not KeyMint.
+        // Keymaster allows INVALID tag for unsupported key parameters.
+        if !has_default_keymint() && auth.keyParameter.tag == Tag::INVALID {
+            return true;
+        }
         assert!(
             ALLOWED_TAGS_IN_KEY_AUTHS.contains(&auth.keyParameter.tag),
             "key authorization is not allowed: {:#?}",
@@ -427,6 +432,21 @@ pub fn check_key_authorizations(
         {
             return true;
         }
+
+        // Ignore below parameters if the backend is Keymaster and not KeyMint.
+        // Keymaster does not support these parameters. These key parameters are introduced in
+        // KeyMint1.0.
+        if !has_default_keymint() {
+            if matches!(key_param.tag, Tag::RSA_OAEP_MGF_DIGEST | Tag::USAGE_COUNT_LIMIT) {
+                return true;
+            }
+            if key_param.tag == Tag::PURPOSE
+                && key_param.value == KeyParameterValue::KeyPurpose(KeyPurpose::ATTEST_KEY)
+            {
+                return true;
+            }
+        }
+
         if ALLOWED_TAGS_IN_KEY_AUTHS.contains(&key_param.tag) {
             assert!(
                 check_key_param(authorizations, key_param),

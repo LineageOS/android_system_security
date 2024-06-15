@@ -27,6 +27,8 @@ use crate::keystore2_client_test_utils::{
     perform_sample_asym_sign_verify_op,
 };
 
+use crate::skip_tests_if_keymaster_impl_present;
+
 /// This macro is used for generating device unique attested EC key with device id attestation.
 macro_rules! test_ec_key_device_unique_attestation_id {
     ( $test_name:ident, $tag:expr, $prop_name:expr ) => {
@@ -158,6 +160,7 @@ fn generate_device_unique_attested_key_with_device_attest_ids(
 /// Test should fail to generate a key with error code `INVALID_ARGUMENT`
 #[test]
 fn keystore2_gen_key_device_unique_attest_with_default_sec_level_unimplemented() {
+    skip_tests_if_keymaster_impl_present!();
     let keystore2 = get_keystore_service();
     let sec_level = keystore2.getSecurityLevel(SecurityLevel::TRUSTED_ENVIRONMENT).unwrap();
 
@@ -324,32 +327,32 @@ fn keystore2_device_unique_attest_key_fails_with_invalid_attestation_id() {
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_brand,
     Tag::ATTESTATION_ID_BRAND,
-    "ro.product.brand_for_attestation"
+    "brand"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_device,
     Tag::ATTESTATION_ID_DEVICE,
-    "ro.product.device"
+    "device"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_product,
     Tag::ATTESTATION_ID_PRODUCT,
-    "ro.product.name_for_attestation"
+    "name"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_serial,
     Tag::ATTESTATION_ID_SERIAL,
-    "ro.serialno"
+    "serialno"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_manufacturer,
     Tag::ATTESTATION_ID_MANUFACTURER,
-    "ro.product.manufacturer"
+    "manufacturer"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_model,
     Tag::ATTESTATION_ID_MODEL,
-    "ro.product.model_for_attestation"
+    "model"
 );
 test_ec_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_ecdsa_attest_id_imei,
@@ -367,32 +370,32 @@ test_ec_key_device_unique_attestation_id!(
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_brand,
     Tag::ATTESTATION_ID_BRAND,
-    "ro.product.brand_for_attestation"
+    "brand"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_device,
     Tag::ATTESTATION_ID_DEVICE,
-    "ro.product.device"
+    "device"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_product,
     Tag::ATTESTATION_ID_PRODUCT,
-    "ro.product.name_for_attestation"
+    "name"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_serial,
     Tag::ATTESTATION_ID_SERIAL,
-    "ro.serialno"
+    "serialno"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_manufacturer,
     Tag::ATTESTATION_ID_MANUFACTURER,
-    "ro.product.manufacturer"
+    "manufacturer"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_model,
     Tag::ATTESTATION_ID_MODEL,
-    "ro.product.model_for_attestation"
+    "model"
 );
 test_rsa_key_device_unique_attestation_id!(
     keystore2_device_unique_attest_rsa_attest_id_imei,

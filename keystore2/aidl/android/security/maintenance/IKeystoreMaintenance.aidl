@@ -143,4 +143,23 @@ interface IKeystoreMaintenance {
      * Tag::ROLLBACK_RESISTANCE may or may not be rendered unusable.
      */
     void deleteAllKeys();
+
+    /**
+     * Returns a list of App UIDs that have keys associated with the given SID, under the
+     * given user ID.
+     * When a given user's LSKF is removed or biometric authentication methods are changed
+     * (addition of a fingerprint, for example), authentication-bound keys may be invalidated.
+     * This method allows the platform to find out which apps would be affected (for a given user)
+     * when a given user secure ID is removed.
+     * Callers require the `android.permission.MANAGE_USERS` Android permission
+     * (not SELinux policy).
+     *
+     * @param userId The affected user.
+     * @param sid The user secure ID - identifier of the authentication method.
+     *
+     * @return A list of APP UIDs, in the form of (AID + userId*AID_USER_OFFSET), that have
+     *         keys auth-bound to the given SID. These values can be passed into the
+     *         PackageManager for resolution.
+     */
+    long[] getAppUidsAffectedBySid(in int userId, in long sid);
 }

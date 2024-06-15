@@ -27,10 +27,10 @@ cc_library {
         "apc_compat.cpp",
     ],
     shared_libs: [
-        "libbinder_ndk",
-        "android.hardware.confirmationui@1.0",
         "android.hardware.confirmationui-V1-ndk",
+        "android.hardware.confirmationui@1.0",
         "libbase",
+        "libbinder_ndk",
         "libhidlbase",
         "libutils",
     ],
@@ -43,12 +43,12 @@ rust_bindgen {
     source_stem: "bindings",
 
     bindgen_flags: [
-        "--allowlist-function=tryGetUserConfirmationService",
-        "--allowlist-function=promptUserConfirmation",
         "--allowlist-function=abortUserConfirmation",
         "--allowlist-function=closeUserConfirmationService",
-        "--allowlist-var=INVALID_SERVICE_HANDLE",
+        "--allowlist-function=promptUserConfirmation",
+        "--allowlist-function=tryGetUserConfirmationService",
         "--allowlist-var=APC_COMPAT_.*",
+        "--allowlist-var=INVALID_SERVICE_HANDLE",
     ],
 }
 

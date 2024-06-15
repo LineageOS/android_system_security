@@ -216,7 +216,7 @@ impl KeyBlob {
     const KEY_BLOB_VERSION: u8 = 0;
 
     /// Hard-coded HMAC key used for keyblob authentication.
-    const LEGACY_HMAC_KEY: &[u8] = b"IntegrityAssuredBlob0\0";
+    const LEGACY_HMAC_KEY: &'static [u8] = b"IntegrityAssuredBlob0\0";
 
     /// Size (in bytes) of appended MAC.
     const MAC_LEN: usize = 8;

@@ -144,7 +144,7 @@ CborResult<Array> getCsrV1(std::string_view componentName, IRemotelyProvisionedC
     ::ndk::ScopedAStatus status = irpc->getHardwareInfo(&hwInfo);
     if (!status.isOk()) {
         std::cerr << "Failed to get hardware info for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
 
@@ -155,7 +155,7 @@ CborResult<Array> getCsrV1(std::string_view componentName, IRemotelyProvisionedC
         &keysToSignMac);
     if (!status.isOk()) {
         std::cerr << "Bundle extraction failed for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
     return composeCertificateRequestV1(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
@@ -171,7 +171,7 @@ void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedCompon
     ::ndk::ScopedAStatus status = irpc->getHardwareInfo(&hwInfo);
     if (!status.isOk()) {
         std::cerr << "Failed to get hardware info for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
 
@@ -187,7 +187,7 @@ void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedCompon
         &protectedData, &keysToSignMac);
     if (!status.isOk()) {
         std::cerr << "Error generating test cert chain for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
 
@@ -232,7 +232,7 @@ CborResult<cppbor::Array> getCsrV3(std::string_view componentName,
     auto status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
     if (!status.isOk()) {
         std::cerr << "Bundle extraction failed for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
 
@@ -254,7 +254,7 @@ CborResult<Array> getCsr(std::string_view componentName, IRemotelyProvisionedCom
     auto status = irpc->getHardwareInfo(&hwInfo);
     if (!status.isOk()) {
         std::cerr << "Failed to get hardware info for '" << componentName
-                  << "'. Error code: " << status.getServiceSpecificError() << "." << std::endl;
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
         exit(-1);
     }
 

@@ -1,7 +1,8 @@
 package: "android.security.keystore2"
+container: "system"
 
 flag {
-  name: "wal_db_journalmode_v2"
+  name: "wal_db_journalmode_v3"
   namespace: "hardware_backed_security"
   description: "This flag controls changing journalmode to wal"
   bug: "191777960"

@@ -49,9 +49,9 @@ rust_defaults {
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
         "libkeystore2_flags_rust",
+        "libkeystore2_hal_names_rust",
         "libkeystore2_km_compat",
         "libkeystore2_selinux",
-        "libkeystore2_hal_names_rust",
         "liblazy_static",
         "liblibc",
         "liblog_event_list",
@@ -90,9 +90,9 @@ rust_library {
         "keystore2_blob_test_utils",
     ],
     rustlibs: [
+        "libkeystore2_test_utils",
         "liblibsqlite3_sys",
         "librusqlite",
-        "libkeystore2_test_utils",
     ],
 }
 
@@ -107,15 +107,15 @@ rust_test {
         "libandroid_logger",
         "libhex",
         "libkeystore2_test_utils",
+        "libkeystore2_with_test_utils",
         "liblibsqlite3_sys",
         "libnix",
         "librusqlite",
-        "libkeystore2_with_test_utils",
     ],
     // The test should always include watchdog.
     features: [
-        "watchdog",
         "keystore2_blob_test_utils",
+        "watchdog",
     ],
     require_root: true,
 }
@@ -158,6 +158,7 @@ rust_binary {
 aconfig_declarations {
     name: "keystore2_flags",
     package: "android.security.keystore2",
+    container: "system",
     srcs: ["aconfig/flags.aconfig"],
 }
 

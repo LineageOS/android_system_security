@@ -21,9 +21,14 @@ package {
     default_applicable_licenses: ["system_security_license"],
 }
 
-cc_test_library {
+// This is expected to be cc_test_library but due to issue mentioned in b/298668920, b/314110490
+// we are creating cc_library and using static library to link with `keystore_client_tests`.
+cc_library {
     name: "libkeystore-engine",
 
+    defaults: [
+        "keystore2_use_latest_aidl_ndk_shared",
+    ],
     srcs: [
         "android_engine.cpp",
         "keystore2_engine.cpp",
@@ -36,7 +41,7 @@ cc_test_library {
     ],
 
     shared_libs: [
-        "android.system.keystore2-V3-ndk",
+        "android.system.keystore2-V4-ndk",
         "libbinder_ndk",
         "libcrypto",
         "libcutils",

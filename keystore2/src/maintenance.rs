@@ -14,7 +14,7 @@
 
 //! This module implements IKeystoreMaintenance AIDL interface.
 
-use crate::database::{KeyEntryLoadBits, KeyType, MonotonicRawTime};
+use crate::database::{BootTime, KeyEntryLoadBits, KeyType};
 use crate::error::map_km_error;
 use crate::error::map_or_log_err;
 use crate::error::Error;
@@ -24,7 +24,8 @@ use crate::ks_err;
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::{SuperKeyManager, UserState};
 use crate::utils::{
-    check_key_permission, check_keystore_permission, uid_to_android_user, watchdog as wd,
+    check_get_app_uids_affected_by_sid_permissions, check_key_permission,
+    check_keystore_permission, uid_to_android_user, watchdog as wd,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     IKeyMintDevice::IKeyMintDevice, SecurityLevel::SecurityLevel,
@@ -227,7 +228,7 @@ impl Maintenance {
         // Security critical permission check. This statement must return on fail.
         check_keystore_permission(KeystorePerm::ReportOffBody).context(ks_err!())?;
 
-        DB.with(|db| db.borrow_mut().update_last_off_body(MonotonicRawTime::now()));
+        DB.with(|db| db.borrow_mut().update_last_off_body(BootTime::now()));
         Ok(())
     }
 
@@ -285,6 +286,18 @@ impl Maintenance {
         log::info!("In delete_all_keys.");
 
         Maintenance::call_on_all_security_levels("deleteAllKeys", |dev| dev.deleteAllKeys())
+    }
+
+    fn get_app_uids_affected_by_sid(
+        user_id: i32,
+        secure_user_id: i64,
+    ) -> Result<std::vec::Vec<i64>> {
+        // This method is intended to be called by Settings and discloses a list of apps
+        // associated with a user, so it requires the "android.permission.MANAGE_USERS"
+        // permission (to avoid leaking list of apps to unauthorized callers).
+        check_get_app_uids_affected_by_sid_permissions().context(ks_err!())?;
+        DB.with(|db| db.borrow_mut().get_app_uids_affected_by_sid(user_id, secure_user_id))
+            .context(ks_err!("Failed to get app UIDs affected by SID"))
     }
 }
 
@@ -362,5 +375,15 @@ impl IKeystoreMaintenance for Maintenance {
         log::warn!("deleteAllKeys()");
         let _wp = wd::watch_millis("IKeystoreMaintenance::deleteAllKeys", 500);
         map_or_log_err(Self::delete_all_keys(), Ok)
+    }
+
+    fn getAppUidsAffectedBySid(
+        &self,
+        user_id: i32,
+        secure_user_id: i64,
+    ) -> BinderResult<std::vec::Vec<i64>> {
+        log::info!("getAppUidsAffectedBySid(secure_user_id={secure_user_id:?})");
+        let _wp = wd::watch_millis("IKeystoreMaintenance::getAppUidsAffectedBySid", 500);
+        map_or_log_err(Self::get_app_uids_affected_by_sid(user_id, secure_user_id), Ok)
     }
 }

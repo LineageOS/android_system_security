@@ -13,6 +13,7 @@
 // limitations under the License.
 
 package {
+    default_team: "trendy_team_java_core_libraries",
     // See: http://go/android-license-faq
     //   SPDX-license-identifier-Apache-2.0
     default_applicable_licenses: ["system_security_license"],
@@ -36,7 +37,7 @@ rust_defaults {
     edition: "2021",
     rustlibs: [
         "libanyhow",
-        "libbssl_ffi",
+        "libbssl_sys",
         "libclap",
         "libcutils_socket_bindgen",
         "liblogger",
@@ -70,7 +71,7 @@ rust_test {
     srcs: ["src/main.rs"],
     rustlibs: [
         "libanyhow",
-        "libbssl_ffi",
+        "libbssl_sys",
         "libclap",
         "libcutils_socket_bindgen",
         "liblogger",

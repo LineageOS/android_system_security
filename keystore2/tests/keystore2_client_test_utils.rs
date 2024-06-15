@@ -15,6 +15,7 @@
 use nix::unistd::{Gid, Uid};
 use serde::{Deserialize, Serialize};
 
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use openssl::bn::BigNum;
@@ -88,6 +89,19 @@ pub fn device_id_attestation_feature_exists() -> bool {
     pm.hasSystemFeature(DEVICE_ID_ATTESTATION_FEATURE, 0).expect("hasSystemFeature failed.")
 }
 
+/// Determines whether to skip device id attestation tests on GSI build with API level < 34.
+pub fn skip_device_id_attest_tests() -> bool {
+    // b/298586194, there are some devices launched with Android T, and they will be receiving
+    // only system update and not vendor update, newly added attestation properties
+    // (ro.product.*_for_attestation) reading logic would not be available for such devices
+    // hence skipping this test for such scenario.
+
+    // This file is only present on GSI builds.
+    let gsi_marker = PathBuf::from("/system/system_ext/etc/init/init.gsi.rc");
+
+    get_vsr_api_level() < 34 && gsi_marker.as_path().is_file()
+}
+
 #[macro_export]
 macro_rules! skip_test_if_no_app_attest_key_feature {
     () => {
@@ -101,6 +115,24 @@ macro_rules! skip_test_if_no_app_attest_key_feature {
 macro_rules! skip_test_if_no_device_id_attestation_feature {
     () => {
         if !device_id_attestation_feature_exists() {
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! skip_device_id_attestation_tests {
+    () => {
+        if skip_device_id_attest_tests() {
+            return;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! skip_tests_if_keymaster_impl_present {
+    () => {
+        if !key_generations::has_default_keymint() {
             return;
         }
     };
@@ -479,15 +511,38 @@ pub fn get_system_prop(name: &str) -> Vec<u8> {
     }
 }
 
+fn get_integer_system_prop(name: &str) -> Option<i32> {
+    let val = get_system_prop(name);
+    if val.is_empty() {
+        return None;
+    }
+    let val = std::str::from_utf8(&val).ok()?;
+    val.parse::<i32>().ok()
+}
+
+pub fn get_vsr_api_level() -> i32 {
+    if let Some(api_level) = get_integer_system_prop("ro.vendor.api_level") {
+        return api_level;
+    }
+
+    let vendor_api_level = get_integer_system_prop("ro.board.api_level")
+        .or_else(|| get_integer_system_prop("ro.board.first_api_level"));
+    let product_api_level = get_integer_system_prop("ro.product.first_api_level")
+        .or_else(|| get_integer_system_prop("ro.build.version.sdk"));
+
+    match (vendor_api_level, product_api_level) {
+        (Some(v), Some(p)) => std::cmp::min(v, p),
+        (Some(v), None) => v,
+        (None, Some(p)) => p,
+        _ => panic!("Could not determine VSR API level"),
+    }
+}
+
 /// Determines whether the SECOND-IMEI can be used as device attest-id.
 pub fn is_second_imei_id_attestation_required(
     keystore2: &binder::Strong<dyn IKeystoreService>,
 ) -> bool {
-    let api_level = std::str::from_utf8(&get_system_prop("ro.vendor.api_level"))
-        .unwrap()
-        .parse::<i32>()
-        .unwrap();
-    keystore2.getInterfaceVersion().unwrap() >= 3 && api_level > 33
+    keystore2.getInterfaceVersion().unwrap() >= 3 && get_vsr_api_level() > 33
 }
 
 /// Run a service command and collect the output.

@@ -532,11 +532,17 @@ impl SuperKeyManager {
                 (Some(&EncryptedBy::Password), Some(salt), Some(iv), Some(tag)) => {
                     // Note that password encryption is AES no matter the value of algorithm.
                     let key = pw
-                        .derive_key(salt, AES_256_KEY_LENGTH)
-                        .context(ks_err!("Failed to generate key from password."))?;
+                        .derive_key_hkdf(salt, AES_256_KEY_LENGTH)
+                        .context(ks_err!("Failed to derive key from password."))?;
 
-                    aes_gcm_decrypt(blob, iv, tag, &key)
-                        .context(ks_err!("Failed to decrypt key blob."))?
+                    aes_gcm_decrypt(blob, iv, tag, &key).or_else(|_e| {
+                        // Handle old key stored before the switch to HKDF.
+                        let key = pw
+                            .derive_key_pbkdf2(salt, AES_256_KEY_LENGTH)
+                            .context(ks_err!("Failed to derive key from password (PBKDF2)."))?;
+                        aes_gcm_decrypt(blob, iv, tag, &key)
+                            .context(ks_err!("Failed to decrypt key blob."))
+                    })?
                 }
                 (enc_by, salt, iv, tag) => {
                     return Err(Error::Rc(ResponseCode::VALUE_CORRUPTED)).context(ks_err!(
@@ -563,14 +569,20 @@ impl SuperKeyManager {
     }
 
     /// Encrypts the super key from a key derived from the password, before storing in the database.
+    /// This does not stretch the password; i.e., it assumes that the password is a high-entropy
+    /// synthetic password, not a low-entropy user provided password.
     pub fn encrypt_with_password(
         super_key: &[u8],
         pw: &Password,
     ) -> Result<(Vec<u8>, BlobMetaData)> {
         let salt = generate_salt().context("In encrypt_with_password: Failed to generate salt.")?;
-        let derived_key = pw
-            .derive_key(&salt, AES_256_KEY_LENGTH)
-            .context(ks_err!("Failed to derive password."))?;
+        let derived_key = if android_security_flags::fix_unlocked_device_required_keys_v2() {
+            pw.derive_key_hkdf(&salt, AES_256_KEY_LENGTH)
+                .context(ks_err!("Failed to derive key from password."))?
+        } else {
+            pw.derive_key_pbkdf2(&salt, AES_256_KEY_LENGTH)
+                .context(ks_err!("Failed to derive password."))?
+        };
         let mut metadata = BlobMetaData::new();
         metadata.add(BlobMetaEntry::EncryptedBy(EncryptedBy::Password));
         metadata.add(BlobMetaEntry::Salt(salt));
@@ -856,85 +868,114 @@ impl SuperKeyManager {
         Ok(())
     }
 
-    /// Wipe the user's UnlockedDeviceRequired super keys from memory.
+    /// Protects the user's UnlockedDeviceRequired super keys in a way such that they can only be
+    /// unlocked by the enabled unlock methods.
     pub fn lock_unlocked_device_required_keys(
         &mut self,
         db: &mut KeystoreDB,
         user_id: UserId,
         unlocking_sids: &[i64],
+        weak_unlock_enabled: bool,
     ) {
-        log::info!(
-            "Locking UnlockedDeviceRequired super keys for user {}; unlocking_sids={:?}",
-            user_id,
-            unlocking_sids
-        );
         let entry = self.data.user_keys.entry(user_id).or_default();
-        if !unlocking_sids.is_empty() {
-            if let (Some(aes), Some(ecdh)) = (
-                entry.unlocked_device_required_symmetric.as_ref().cloned(),
-                entry.unlocked_device_required_private.as_ref().cloned(),
-            ) {
-                let res = (|| -> Result<()> {
-                    let key_desc = KeyMintDevice::internal_descriptor(format!(
-                        "biometric_unlock_key_{}",
-                        user_id
-                    ));
-                    let encrypting_key = generate_aes256_key()?;
-                    let km_dev: KeyMintDevice =
-                        KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
-                            .context(ks_err!("KeyMintDevice::get failed"))?;
-                    let mut key_params = vec![
-                        KeyParameterValue::Algorithm(Algorithm::AES),
-                        KeyParameterValue::KeySize(256),
-                        KeyParameterValue::BlockMode(BlockMode::GCM),
-                        KeyParameterValue::PaddingMode(PaddingMode::NONE),
-                        KeyParameterValue::CallerNonce,
-                        KeyParameterValue::KeyPurpose(KeyPurpose::DECRYPT),
-                        KeyParameterValue::MinMacLength(128),
-                        KeyParameterValue::AuthTimeout(BIOMETRIC_AUTH_TIMEOUT_S),
-                        KeyParameterValue::HardwareAuthenticatorType(
-                            HardwareAuthenticatorType::FINGERPRINT,
-                        ),
-                    ];
-                    for sid in unlocking_sids {
-                        key_params.push(KeyParameterValue::UserSecureID(*sid));
-                    }
-                    let key_params: Vec<KmKeyParameter> =
-                        key_params.into_iter().map(|x| x.into()).collect();
-                    km_dev.create_and_store_key(
-                        db,
-                        &key_desc,
-                        KeyType::Client, /* TODO Should be Super b/189470584 */
-                        |dev| {
-                            let _wp = wd::watch_millis(
-                                "In lock_unlocked_device_required_keys: calling importKey.",
-                                500,
-                            );
-                            dev.importKey(
-                                key_params.as_slice(),
-                                KeyFormat::RAW,
-                                &encrypting_key,
-                                None,
-                            )
-                        },
-                    )?;
-                    entry.biometric_unlock = Some(BiometricUnlock {
-                        sids: unlocking_sids.into(),
-                        key_desc,
-                        symmetric: LockedKey::new(&encrypting_key, &aes)?,
-                        private: LockedKey::new(&encrypting_key, &ecdh)?,
-                    });
-                    Ok(())
-                })();
-                // There is no reason to propagate an error here upwards. We must clear the keys
-                // from memory in any case.
-                if let Err(e) = res {
-                    log::error!("Error setting up biometric unlock: {:#?}", e);
+        if unlocking_sids.is_empty() {
+            if android_security_flags::fix_unlocked_device_required_keys_v2() {
+                entry.biometric_unlock = None;
+            }
+        } else if let (Some(aes), Some(ecdh)) = (
+            entry.unlocked_device_required_symmetric.as_ref().cloned(),
+            entry.unlocked_device_required_private.as_ref().cloned(),
+        ) {
+            // If class 3 biometric unlock methods are enabled, create a biometric-encrypted copy of
+            // the keys.  Do this even if weak unlock methods are enabled too; in that case we'll
+            // also retain a plaintext copy of the keys, but that copy will be wiped later if weak
+            // unlock methods expire.  So we need the biometric-encrypted copy too just in case.
+            let res = (|| -> Result<()> {
+                let key_desc =
+                    KeyMintDevice::internal_descriptor(format!("biometric_unlock_key_{}", user_id));
+                let encrypting_key = generate_aes256_key()?;
+                let km_dev: KeyMintDevice = KeyMintDevice::get(SecurityLevel::TRUSTED_ENVIRONMENT)
+                    .context(ks_err!("KeyMintDevice::get failed"))?;
+                let mut key_params = vec![
+                    KeyParameterValue::Algorithm(Algorithm::AES),
+                    KeyParameterValue::KeySize(256),
+                    KeyParameterValue::BlockMode(BlockMode::GCM),
+                    KeyParameterValue::PaddingMode(PaddingMode::NONE),
+                    KeyParameterValue::CallerNonce,
+                    KeyParameterValue::KeyPurpose(KeyPurpose::DECRYPT),
+                    KeyParameterValue::MinMacLength(128),
+                    KeyParameterValue::AuthTimeout(BIOMETRIC_AUTH_TIMEOUT_S),
+                    KeyParameterValue::HardwareAuthenticatorType(
+                        HardwareAuthenticatorType::FINGERPRINT,
+                    ),
+                ];
+                for sid in unlocking_sids {
+                    key_params.push(KeyParameterValue::UserSecureID(*sid));
                 }
+                let key_params: Vec<KmKeyParameter> =
+                    key_params.into_iter().map(|x| x.into()).collect();
+                km_dev.create_and_store_key(
+                    db,
+                    &key_desc,
+                    KeyType::Client, /* TODO Should be Super b/189470584 */
+                    |dev| {
+                        let _wp = wd::watch_millis(
+                            "In lock_unlocked_device_required_keys: calling importKey.",
+                            500,
+                        );
+                        dev.importKey(key_params.as_slice(), KeyFormat::RAW, &encrypting_key, None)
+                    },
+                )?;
+                entry.biometric_unlock = Some(BiometricUnlock {
+                    sids: unlocking_sids.into(),
+                    key_desc,
+                    symmetric: LockedKey::new(&encrypting_key, &aes)?,
+                    private: LockedKey::new(&encrypting_key, &ecdh)?,
+                });
+                Ok(())
+            })();
+            if let Err(e) = res {
+                log::error!("Error setting up biometric unlock: {:#?}", e);
+                // The caller can't do anything about the error, and for security reasons we still
+                // wipe the keys (unless a weak unlock method is enabled).  So just log the error.
             }
         }
+        // Wipe the plaintext copy of the keys, unless a weak unlock method is enabled.
+        if !weak_unlock_enabled {
+            entry.unlocked_device_required_symmetric = None;
+            entry.unlocked_device_required_private = None;
+        }
+        Self::log_status_of_unlocked_device_required_keys(user_id, entry);
+    }
+
+    pub fn wipe_plaintext_unlocked_device_required_keys(&mut self, user_id: UserId) {
+        let entry = self.data.user_keys.entry(user_id).or_default();
         entry.unlocked_device_required_symmetric = None;
         entry.unlocked_device_required_private = None;
+        Self::log_status_of_unlocked_device_required_keys(user_id, entry);
+    }
+
+    pub fn wipe_all_unlocked_device_required_keys(&mut self, user_id: UserId) {
+        let entry = self.data.user_keys.entry(user_id).or_default();
+        entry.unlocked_device_required_symmetric = None;
+        entry.unlocked_device_required_private = None;
+        entry.biometric_unlock = None;
+        Self::log_status_of_unlocked_device_required_keys(user_id, entry);
+    }
+
+    fn log_status_of_unlocked_device_required_keys(user_id: UserId, entry: &UserSuperKeys) {
+        let status = match (
+            // Note: the status of the symmetric and private keys should always be in sync.
+            // So we only check one here.
+            entry.unlocked_device_required_symmetric.is_some(),
+            entry.biometric_unlock.is_some(),
+        ) {
+            (false, false) => "fully protected",
+            (false, true) => "biometric-encrypted",
+            (true, false) => "retained in plaintext",
+            (true, true) => "retained in plaintext, with biometric-encrypted copy too",
+        };
+        log::info!("UnlockedDeviceRequired super keys for user {user_id} are {status}.");
     }
 
     /// User has unlocked, not using a password. See if any of our stored auth tokens can be used
@@ -945,6 +986,16 @@ impl SuperKeyManager {
         user_id: UserId,
     ) -> Result<()> {
         let entry = self.data.user_keys.entry(user_id).or_default();
+        if android_security_flags::fix_unlocked_device_required_keys_v2()
+            && entry.unlocked_device_required_symmetric.is_some()
+            && entry.unlocked_device_required_private.is_some()
+        {
+            // If the keys are already cached in plaintext, then there is no need to decrypt the
+            // biometric-encrypted copy.  Both copies can be present here if the user has both
+            // class 3 biometric and weak unlock methods enabled, and the device was unlocked before
+            // the weak unlock methods expired.
+            return Ok(());
+        }
         if let Some(biometric) = entry.biometric_unlock.as_ref() {
             let (key_id_guard, key_entry) = db
                 .load_key_entry(
